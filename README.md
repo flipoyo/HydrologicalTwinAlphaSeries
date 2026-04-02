@@ -1,6 +1,8 @@
 # HydrologicalTwinAlphaSeries
 
-HydrologicalTwinAlphaSeries is the standalone scientific backend for the CaWaQS alpha.x series. It owns the hydrological twin domain model, post-processing services, API facade, and backend configuration objects so the visualization layer can remain a separate application.
+HydrologicalTwinAlphaSeries is the standalone scientific backend for CaWaQS-ViZ. It is a POC for HydrologicalTwin. 
+
+It owns the hydrological twin domain model, post-processing services, API facade, and backend configuration objects so the visualization layer can remain a separate application.
 
 This repository is designed to be developed independently from the QGIS application layer and consumed by cawaqsviz through an editable install from a Git submodule checkout.
 
