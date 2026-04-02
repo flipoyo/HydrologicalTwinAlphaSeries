@@ -1,3 +1,5 @@
+import pytest
+
 from hydrological_twin_alpha_series.ht.hydrological_twin import HydrologicalTwin
 from hydrological_twin_alpha_series.security import (
     ACCESS_POLICY_ATTR,
@@ -9,16 +11,15 @@ from hydrological_twin_alpha_series.security import (
 
 
 def test_private_access_requires_explicit_public_annotations():
-    try:
+    with pytest.raises(TypeError) as exc_info:
         @private_access
         class InvalidFacade:
             def exposed(self):
                 return "missing"
-    except TypeError as exc:
-        assert "InvalidFacade uses @private_access" in str(exc)
-        assert "exposed" in str(exc)
-    else:
-        raise AssertionError("Expected @private_access to reject undecorated public methods.")
+
+    error_message = str(exc_info.value)
+    assert "InvalidFacade uses @private_access" in error_message
+    assert "exposed" in error_message
 
 
 def test_private_access_tracks_public_methods():
