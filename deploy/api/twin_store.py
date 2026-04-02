@@ -20,7 +20,7 @@ def get_twin() -> Optional[HydrologicalTwin]:
     return _twin
 
 
-def set_twin(twin: HydrologicalTwin) -> None:
-    """Replace the singleton twin instance."""
+def set_twin(twin: Optional[HydrologicalTwin]) -> None:
+    """Replace the singleton twin instance (use *None* to clear)."""
     global _twin  # noqa: PLW0603
     _twin = twin
