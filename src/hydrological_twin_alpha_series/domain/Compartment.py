@@ -23,29 +23,28 @@
 #
 # ***************************************************************************/
 
+from os import sep
 from typing import Protocol, Union
 
-from hydrological_twin_alpha_series.config import Config, ConfigGeometry, ConfigProject
+from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
 from hydrological_twin_alpha_series.config.constants import module_caw, obs_types, out_caw_folder
 from hydrological_twin_alpha_series.domain.Extraction import Extraction
 from hydrological_twin_alpha_series.domain.Mesh import Mesh
 from hydrological_twin_alpha_series.domain.Observations import Observation
 
-from os import sep
-
 
 class GeoLayerProvider(Protocol):
-    def get_layer(self, layer_name: str):
-        ...
+    def get_layer(self, layer_name: str): ...
 
 
 class Compartment:
     """
-    CaWaQS compartment class. 
-    
-    .. NOTE:: 
+    CaWaQS compartment class.
+
+    .. NOTE::
         One compartment is initialized per CaWaQS compartment
     """
+
     def __init__(
         self,
         id_compartment: int,
@@ -53,7 +52,7 @@ class Compartment:
         config_proj: ConfigProject,
         out_caw_directory: str,
         obs_directory: str,
-        geo_provider: GeoLayerProvider
+        geo_provider: GeoLayerProvider,
     ):
         """
         Constructor method
@@ -109,7 +108,7 @@ class Compartment:
         """
         return module_caw[id_compartment]
 
-    def defineLayerGisName(self, id_compartment:int, config:ConfigGeometry):
+    def defineLayerGisName(self, id_compartment: int, config: ConfigGeometry):
         """
         Define Gis Layer name attached to the compartment
 
@@ -119,13 +118,9 @@ class Compartment:
         :type config: Config
         :return: A list of gis layer linked to the compartment
         """
-        return [
-            gis_layer
-            for s_l in config.resolutionNames[id_compartment]
-            for gis_layer in s_l
-        ]
+        return [gis_layer for s_l in config.resolutionNames[id_compartment] for gis_layer in s_l]
 
-    def defineOutCawPath(self, out_caw_directory:str, id_compartment:int):
+    def defineOutCawPath(self, out_caw_directory: str, id_compartment: int):
         """
         Definie path of outputs in CaWaQS outputs directory for the define compartment
 
@@ -136,9 +131,7 @@ class Compartment:
         :return: path of outputs in CaWaQS outputs directory of the compartment (ex : ../OUTPUT_AQ)
         """
 
-        path_output_compartment = (
-            out_caw_directory + sep + out_caw_folder[id_compartment] + sep
-        )
+        path_output_compartment = out_caw_directory + sep + out_caw_folder[id_compartment] + sep
 
         print(path_output_compartment)
 
@@ -163,7 +156,9 @@ class Compartment:
             id_compartment, self.layers_gis_names, layer_gdfs, config, self.out_caw_directory
         )
 
-    def defineObsCompartment(self, id_compartment: int, config: ConfigGeometry) -> Union[Observation, None]:
+    def defineObsCompartment(
+        self, id_compartment: int, config: ConfigGeometry
+    ) -> Union[Observation, None]:
         """
         Define Observation of the defined compartment
 
@@ -184,8 +179,7 @@ class Compartment:
                 for layer_name in self.layers_gis_names
             }
             obs = Observation(
-                id_compartment, id_compartment, config, self.out_caw_directory,
-                obs_gdf, mesh_gdfs
+                id_compartment, id_compartment, config, self.out_caw_directory, obs_gdf, mesh_gdfs
             )
             print("Observations has been created")
             return obs
@@ -194,7 +188,9 @@ class Compartment:
             print("Any observations for this compartment", flush=True)
             return None
 
-    def defineExtCompartment(self, id_compartment: int, config: ConfigGeometry) -> Union[Extraction, None]:
+    def defineExtCompartment(
+        self, id_compartment: int, config: ConfigGeometry
+    ) -> Union[Extraction, None]:
         """
         Define Extraction points of the defined compartment
 
@@ -220,7 +216,7 @@ class Compartment:
                 config=config,
                 out_caw_directory=self.out_caw_directory,
                 ext_gdf=ext_gdf,
-                mesh_gdfs=mesh_gdfs
+                mesh_gdfs=mesh_gdfs,
             )
             print("Extraction has been created")
             return ext

@@ -1,15 +1,15 @@
-#/***************************************************************************
+# /***************************************************************************
 # CaWaQSViz
 #
 # Description
-#							 -------------------
-#		begin				: 2023
-#		git sha				: $Format:%H$
-#		copyright			: (C) 2023 by Lise-Marie GIROD
-#		email				: lise-marie.girod@minesparis.psl.eu
+# -------------------
+# begin				: 2023
+# git sha				: $Format:%H$
+# copyright			: (C) 2023 by Lise-Marie GIROD
+# email				: lise-marie.girod@minesparis.psl.eu
 # ***************************************************************************/
 #
-#/***************************************************************************
+# /***************************************************************************
 # *																		    *
 # *   This program is free software; you can redistribute it and/or modify  *
 # *   it under the terms of the GNU General Public License as published by  *
@@ -24,16 +24,15 @@
 #
 # ***************************************************************************/
 
-from typing import Dict, List, Union
 import os
+from typing import Dict, List, Union
 
-
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import shapely
-from shapely.ops import unary_union
 from scipy.spatial import cKDTree
+from shapely.ops import unary_union
 
 sep = os.sep
 
@@ -76,7 +75,9 @@ class SpatialIndex:
         _, idx = self._tree.query(query_point, k=1)
         return idx[0]
 
-    def get_nearest_cell_id(self, point_geom: shapely.Point, id_col: Union[str, int]) -> Union[int, None]:
+    def get_nearest_cell_id(
+        self, point_geom: shapely.Point, id_col: Union[str, int]
+    ) -> Union[int, None]:
         """
         Get the cell ID of the nearest feature to a point.
 
@@ -111,7 +112,9 @@ class SpatialIndex:
             return None
         return self.gdf.iloc[idx]
 
-    def get_nearest_k_indices(self, point_geom: shapely.Point, k: int = 1) -> Union[np.ndarray, None]:
+    def get_nearest_k_indices(
+        self, point_geom: shapely.Point, k: int = 1
+    ) -> Union[np.ndarray, None]:
         """
         Get indices of the k nearest features to a point.
 
@@ -155,9 +158,7 @@ def clear_spatial_index_cache() -> None:
 
 
 def get_nearest_cell(
-    point_geom: shapely.Point,
-    mesh_gdf: gpd.GeoDataFrame,
-    id_col: Union[str, int]
+    point_geom: shapely.Point, mesh_gdf: gpd.GeoDataFrame, id_col: Union[str, int]
 ) -> Union[int, None]:
     """
     Find the nearest cell to a point using cached spatial index.
@@ -175,10 +176,7 @@ def get_nearest_cell(
     return spatial_idx.get_nearest_cell_id(point_geom, id_col)
 
 
-def get_nearest_row(
-    point_geom: shapely.Point,
-    gdf: gpd.GeoDataFrame
-) -> Union[pd.Series, None]:
+def get_nearest_row(point_geom: shapely.Point, gdf: gpd.GeoDataFrame) -> Union[pd.Series, None]:
     """
     Find the nearest feature row to a point using cached spatial index.
 
@@ -257,7 +255,7 @@ def verify_crs_match(crs_a, crs_b, context: str = "") -> None:
     :raises CRSMismatchError: If both CRS are defined and do not match
     """
     if crs_a is None or crs_b is None:
-        return   # one side unknown — cannot verify, pass silently
+        return  # one side unknown — cannot verify, pass silently
     if crs_a != crs_b:
         ctx = f" in {context}" if context else ""
         raise CRSMismatchError(
@@ -287,8 +285,7 @@ def reproject_to_match(
     if target_crs is None:
         ctx = f" for {context}" if context else ""
         raise ValueError(
-            f"Cannot reproject{ctx}: target CRS is None. "
-            "The reference layer has no CRS defined."
+            f"Cannot reproject{ctx}: target CRS is None. The reference layer has no CRS defined."
         )
     if gdf.crs == target_crs:
         return gdf

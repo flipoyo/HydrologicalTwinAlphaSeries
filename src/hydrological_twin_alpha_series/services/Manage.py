@@ -1,15 +1,15 @@
-#/***************************************************************************
+# /***************************************************************************
 # CaWaQSViz
 #
 # Description
-#							 -------------------
-#		begin				: 2023
-#		git sha				: $Format:%H$
-#		copyright			: (C) 2023 by Lise-Marie GIROD
-#		email				: lise-marie.girod@minesparis.psl.eu
+# -------------------
+# begin				: 2023
+# git sha				: $Format:%H$
+# copyright			: (C) 2023 by Lise-Marie GIROD
+# email				: lise-marie.girod@minesparis.psl.eu
 # ***************************************************************************/
 #
-#/***************************************************************************
+# /***************************************************************************
 # *																		    *
 # *   This program is free software; you can redistribute it and/or modify  *
 # *   it under the terms of the GNU General Public License as published by  *
@@ -23,32 +23,27 @@
 #
 # ***************************************************************************/
 
-from ipaddress import collapse_addresses
 import os
-from os import path, sep
-import numpy as np
+import re
 import time
 from datetime import datetime, timedelta
-import pandas as pd
+from os import sep
 from typing import Union
-import re
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
 
 # plotly.offline.init_notebook_mode()
 # display(HTML(
 #     '<script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_SVG"></script>'
 # ))
-
 from hydrological_twin_alpha_series.config.constants import (
-    module_caw,
     nbRecs,
-    obs_config,
     paramRecs,
-    reversed_module_caw,
 )
 from hydrological_twin_alpha_series.domain.Compartment import Compartment
 from hydrological_twin_alpha_series.tools.spatial_utils import combine_geometries, get_nearest_row
-
-import geopandas as gpd
 
 # Import simobs
 """
@@ -69,17 +64,17 @@ class Manage:
             pass
 
         def calcInteranualBVariableNumpy(
-            self, 
-            data: np.ndarray, 
-            param: str, 
-            out_folder: str, 
-            agg: str, 
-            fz: str, 
+            self,
+            data: np.ndarray,
+            param: str,
+            out_folder: str,
+            agg: str,
+            fz: str,
             sdate: int,
             edate: int,
             cutsdate: str,
             cutedate: str,
-            pluriannual: bool = False
+            pluriannual: bool = False,
         ) -> tuple:
             """
             Calculate interannual budget of a hydrological variable using NumPy.
@@ -110,103 +105,118 @@ class Manage:
             print("Calculate Interannual Budget (NumPy)")
             print(f"Aggregation type : {agg}")
             print(f"Frequency : {fz}")
-            print(f'Pluriannual : {pluriannual}')
-            
+            print(f"Pluriannual : {pluriannual}")
+
             # Spatial aggregation: mean across all cells
             # data shape is (ncells, ndays), so axis=0 averages across cells → (ndays,)
             data_spatial_mean = np.mean(data, axis=0)
-            
+
             # Generate date range
             start_date = datetime.strptime(cutsdate, "%Y-%m-%d")
             end_date = datetime.strptime(cutedate, "%Y-%m-%d")
             n_days = (end_date - start_date).days + 1
             dates = np.array([start_date + timedelta(days=i) for i in range(n_days)])
-            
+
             # Ensure data length matches dates
             if len(data_spatial_mean) != len(dates):
                 min_len = min(len(data_spatial_mean), len(dates))
                 data_spatial_mean = data_spatial_mean[:min_len]
                 dates = dates[:min_len]
-            
+
             # Define aggregation function
-            agg_funcs = {
-                'mean': np.mean,
-                'sum': np.sum,
-                'max': np.max,
-                'min': np.min
-            }
+            agg_funcs = {"mean": np.mean, "sum": np.sum, "max": np.max, "min": np.min}
             agg_func = agg_funcs.get(agg, np.mean)
-            
+
             # Temporal aggregation based on frequency
-            if fz == 'Y' and not pluriannual:
+            if fz == "Y" and not pluriannual:
                 # Yearly aggregation (one bar per year)
                 years = np.array([d.year for d in dates])
                 unique_years = np.unique(years)
-                aggregated_data = np.array([
-                    agg_func(data_spatial_mean[years == year])
-                    for year in unique_years
-                ])
+                aggregated_data = np.array(
+                    [agg_func(data_spatial_mean[years == year]) for year in unique_years]
+                )
                 date_labels = unique_years.astype(str)
 
-            elif fz == 'Y' and pluriannual:
+            elif fz == "Y" and pluriannual:
                 # Yearly pluriannual: aggregate each year, then average across years
                 years = np.array([d.year for d in dates])
                 unique_years = np.unique(years)
-                yearly_values = np.array([
-                    agg_func(data_spatial_mean[years == year])
-                    for year in unique_years
-                ])
+                yearly_values = np.array(
+                    [agg_func(data_spatial_mean[years == year]) for year in unique_years]
+                )
                 aggregated_data = np.array([np.mean(yearly_values)])
                 date_labels = np.array([f"Mean {unique_years[0]}-{unique_years[-1]}"])
-                
-            elif fz == 'M' and not pluriannual:
+
+            elif fz == "M" and not pluriannual:
                 # Monthly aggregation (each month separately)
-                year_months = np.array([d.strftime('%Y-%m') for d in dates])
+                year_months = np.array([d.strftime("%Y-%m") for d in dates])
                 unique_year_months = np.unique(year_months)
-                aggregated_data = np.array([
-                    agg_func(data_spatial_mean[year_months == ym]) 
-                    for ym in unique_year_months
-                ])
+                aggregated_data = np.array(
+                    [agg_func(data_spatial_mean[year_months == ym]) for ym in unique_year_months]
+                )
                 date_labels = unique_year_months
-                
-            elif fz == 'M' and pluriannual:
+
+            elif fz == "M" and pluriannual:
                 # Monthly aggregation (same month across years)
                 months = np.array([d.month for d in dates])
-                month_names = ['January', 'February', 'March', 'April', 'May', 'June',
-                            'July', 'August', 'September', 'October', 'November', 'December']
-                
+                month_names = [
+                    "January",
+                    "February",
+                    "March",
+                    "April",
+                    "May",
+                    "June",
+                    "July",
+                    "August",
+                    "September",
+                    "October",
+                    "November",
+                    "December",
+                ]
+
                 # Group by month and calculate mean across years
                 unique_months = np.unique(months)
-                aggregated_data = np.array([
-                    np.mean([agg_func(data_spatial_mean[(months == month) & 
-                            (np.array([d.year for d in dates]) == year)])
-                            for year in np.unique([d.year for d in dates])
-                            if np.any((months == month) & (np.array([d.year for d in dates]) == year))])
-                    for month in unique_months
-                ])
-                date_labels = np.array([month_names[m-1] for m in unique_months])
-                
-            elif fz == 'D' and not pluriannual:
+                aggregated_data = np.array(
+                    [
+                        np.mean(
+                            [
+                                agg_func(
+                                    data_spatial_mean[
+                                        (months == month)
+                                        & (np.array([d.year for d in dates]) == year)
+                                    ]
+                                )
+                                for year in np.unique([d.year for d in dates])
+                                if np.any(
+                                    (months == month) & (np.array([d.year for d in dates]) == year)
+                                )
+                            ]
+                        )
+                        for month in unique_months
+                    ]
+                )
+                date_labels = np.array([month_names[m - 1] for m in unique_months])
+
+            elif fz == "D" and not pluriannual:
                 # Daily (no aggregation)
                 aggregated_data = data_spatial_mean
-                date_labels = np.array([d.strftime('%Y-%m-%d') for d in dates])
-                
-            elif fz == 'D' and pluriannual:
+                date_labels = np.array([d.strftime("%Y-%m-%d") for d in dates])
+
+            elif fz == "D" and pluriannual:
                 # Daily aggregation (same day across years)
-                day_of_year = np.array([d.strftime('%m-%d') for d in dates])
+                day_of_year = np.array([d.strftime("%m-%d") for d in dates])
                 unique_days = np.unique(day_of_year)
-                aggregated_data = np.array([
-                    agg_func(data_spatial_mean[day_of_year == day])
-                    for day in unique_days
-                ])
+                aggregated_data = np.array(
+                    [agg_func(data_spatial_mean[day_of_year == day]) for day in unique_days]
+                )
                 date_labels = unique_days
-                
+
             else:
-                raise ValueError('Aggregation type not recognized. Please choose between Y, M or D')
-            
+                raise ValueError("Aggregation type not recognized. Please choose between Y, M or D")
+
             print(f"Aggregated shape: {aggregated_data.shape}")
             print(f"Date labels shape: {date_labels.shape}")
-            
+
             return aggregated_data, date_labels, param
 
         def calcInteranualHVariableNumpy(
@@ -215,7 +225,7 @@ class Manage:
             dates: np.ndarray,
             compartment,
             output_folder: str,
-            output_name: str
+            output_name: str,
         ) -> tuple:
             """
             Calculate hydrological regime using NumPy arrays.
@@ -233,86 +243,108 @@ class Manage:
             :rtype: tuple
             """
             print(
-                f"Calculate Interannual Hydrological Regime for {compartment.compartment} compartment",
+                "Calculate Interannual Hydrological Regime for "
+                f"{compartment.compartment} compartment",
                 flush=True,
             )
-            
+
             # Get observation points
             obs_points = [obs_point for obs_point in compartment.obs.obs_points]
-            
+
             # Extract data for each observation point
             obs_point_data = []
             obs_point_names = []
-            
+
             for obs_point in obs_points:
                 # Extract column for this observation point
-                cell_data = data[obs_point.id_cell,:]
+                cell_data = data[obs_point.id_cell, :]
                 obs_point_data.append(cell_data)
                 obs_point_names.append(f"{obs_point.name} - {obs_point.id_cell}")
-            
+
             # Stack all observation points as rows (shape: n_obs_points x n_timesteps)
             # this matches sim_matrix convention: rows = cells (obs points), columns = days
             obs_data_array = np.vstack(obs_point_data)
-            
+
             # Monthly resampling
             # Extract year and month from datetime64 arrays
-            years = dates.astype('datetime64[Y]').astype(int) + 1970
-            months = dates.astype('datetime64[M]').astype(int) % 12 + 1
-            
+            years = dates.astype("datetime64[Y]").astype(int) + 1970
+            months = dates.astype("datetime64[M]").astype(int) % 12 + 1
+
             # Create year-month combinations
             year_months = np.array([f"{y:04d}-{m:02d}" for y, m in zip(years, months)])
             unique_year_months = np.unique(year_months)
-            
+
             # Calculate monthly means
             monthly_data = []
             for ym in unique_year_months:
                 # mask over time (days); obs_data_array has days on axis 1
                 mask = year_months == ym
-                monthly_mean = np.mean(obs_data_array[:, mask], axis=1)  # mean over selected days -> per-obs value
+                monthly_mean = np.mean(
+                    obs_data_array[:, mask], axis=1
+                )  # mean over selected days -> per-obs value
                 monthly_data.append(monthly_mean)
-            
+
             monthly_data = np.array(monthly_data)  # shape: (n_months, n_obs_points)
-            
+
             # Extract month names for grouping
-            month_names_order = ['January', 'February', 'March', 'April', 'May', 'June',
-                                'July', 'August', 'September', 'October', 'November', 'December']
-            
-            monthly_months = np.array([int(ym.split('-')[1]) for ym in unique_year_months])
-            
+            month_names_order = [
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            ]
+
+            monthly_months = np.array([int(ym.split("-")[1]) for ym in unique_year_months])
+
             # Group by month (average across years)
             unique_months = np.unique(monthly_months)
             interannual_data = []
             month_labels = []
-            
+
             for month_num in unique_months:
                 mask = monthly_months == month_num
                 month_mean = np.mean(monthly_data[mask, :], axis=0)
                 interannual_data.append(month_mean)
                 month_labels.append(month_names_order[month_num - 1])
-            
+
             interannual_data = np.array(interannual_data)  # shape: (12, n_obs_points)
             month_labels = np.array(month_labels)
-            
+
             # Save to CSV
             csv_path = output_folder + sep + compartment.compartment + "_" + output_name + ".csv"
-            
+
             # Combine month labels with data
-            header = '\t'.join(obs_point_names)
-            
+            header = "\t".join(obs_point_names)
+
             # Save with month labels as first column (for reference)
-            with open(csv_path, 'w') as f:
-                f.write('Month\t' + header + '\n')
+            with open(csv_path, "w") as f:
+                f.write("Month\t" + header + "\n")
                 for i, month_label in enumerate(month_labels):
-                    row_data = '\t'.join([f'{val:.6f}' for val in interannual_data[i, :]])
-                    f.write(f'{month_label}\t{row_data}\n')
-            
+                    row_data = "\t".join([f"{val:.6f}" for val in interannual_data[i, :]])
+                    f.write(f"{month_label}\t{row_data}\n")
+
             print(f"Saved to: {csv_path}")
             print("Done", flush=True)
-            
+
             return interannual_data, obs_point_names, month_labels
 
-
-        def calcSimRunoffRatio(self, surf_surf_area:list, catch_surf_area:list, id_surf_mesh:list, matrixRunOff:np.array, matrixRain:np.array, matrixEtr:np.array)->float:
+        def calcSimRunoffRatio(
+            self,
+            surf_surf_area: list,
+            catch_surf_area: list,
+            id_surf_mesh: list,
+            matrixRunOff: np.array,
+            matrixRain: np.array,
+            matrixEtr: np.array,
+        ) -> float:
             """Calculated Simulated Runoff ratio
 
             :param catch_surf_area: list of intersect catchement and surface cell area
@@ -329,32 +361,39 @@ class Manage:
             print("RATION RUNOFF/RAIN CALCULATION ...")
             pe = 0
             runoff = 0
-                        
+
             for s_inter, s_surf, id_mesh in zip(catch_surf_area, surf_surf_area, id_surf_mesh):
                 # print(f"id catch : {s['ID_CATCH']} - id surf cell : {id_surf_mesh}")
                 # s_inter = s["SURF_INTER"]
-                rain = np.nansum(matrixRain[id_mesh - 1]) * (s_inter/s_surf)
-                etr = np.nansum(matrixEtr[id_mesh - 1]) * (s_inter/s_surf)
+                rain = np.nansum(matrixRain[id_mesh - 1]) * (s_inter / s_surf)
+                etr = np.nansum(matrixEtr[id_mesh - 1]) * (s_inter / s_surf)
                 pe += rain - etr
-                
-                r = (
-                    np.nansum(matrixRunOff[id_mesh - 1]) 
-                ) * (s_inter/s_surf)
+
+                r = (np.nansum(matrixRunOff[id_mesh - 1])) * (s_inter / s_surf)
                 runoff += r
-                
-                print(f'Ratio surf surf inter : {(s_inter/s_surf)}')
-                print(f'rain : {rain}')
-                print(f'etr : {etr}')
-                print(f'runoff : {r}')
-                
+
+                print(f"Ratio surf surf inter : {(s_inter / s_surf)}")
+                print(f"rain : {rain}")
+                print(f"etr : {etr}")
+                print(f"runoff : {r}")
+
             Qr = runoff / pe
             # print(f"Run_off coeff : {Qr}")
-            
-            print(f'ID Cells : {id_surf_mesh}\nSimulated run-off:{runoff}\nPe : {pe}\nQr : {Qr}\nCumulativ Surface : {sum(catch_surf_area)}')
+
+            print(
+                "ID Cells : "
+                f"{id_surf_mesh}\n"
+                f"Simulated run-off:{runoff}\n"
+                f"Pe : {pe}\n"
+                f"Qr : {Qr}\n"
+                f"Cumulativ Surface : {sum(catch_surf_area)}"
+            )
 
             return Qr
 
-        def calcObsRunoffRatio(self, catch_surf_area:list, id_surf_mesh:list, matrixRain:np.array, Obsdata:np.array)->float: 
+        def calcObsRunoffRatio(
+            self, catch_surf_area: list, id_surf_mesh: list, matrixRain: np.array, Obsdata: np.array
+        ) -> float:
             """
             Calculated Observed Runoff ratio
 
@@ -364,7 +403,7 @@ class Manage:
             :type id_surf_mesh: list
             :param matrixRain: Rain daily matrix
             :type matrixRain: np.array
-            :param Obsdata: Observated daily discharge matrix 
+            :param Obsdata: Observated daily discharge matrix
             :type Obsdata:np.array
             :return: Runoff ration coefficient
             :rtype: float
@@ -377,33 +416,28 @@ class Manage:
                 rain += np.nansum(matrixRain[id_mesh - 1]) * (24 * 3600) * s * 1e-6
 
             runoff = np.nansum(Obsdata) * np.nansum(catch_surf_area)
-                
+
             Qr = runoff / rain
             # print(f"Run_off coeff : {Qr}")
-            
-            print(f'Observed run-off:{runoff}\nrain : {rain}\nQr : {Qr}')
+
+            print(f"Observed run-off:{runoff}\nrain : {rain}\nQr : {Qr}")
 
             return Qr
-
 
     class Temporal:
         def __init__(self):
             pass
 
         def readSimDataFromBin(
-            self,
-            compartment: Compartment,
-            outtype: str,
-            syear: int,
-            eyear: int
+            self, compartment: Compartment, outtype: str, syear: int, eyear: int
         ):
-            
+
             print("Reading Outputs from binary files")
             total_ndays = (
                 datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
                 - datetime.strptime(f"{syear}-07-31", "%Y-%m-%d")
             ).days - 1
-            
+
             count_day = 0
             outfolder_path = compartment.out_caw_path
             ncells = compartment.mesh.ncells
@@ -427,8 +461,8 @@ class Manage:
 
             # read sim data in binary file for every years
             for y in range(syear, eyear):
-                print(f"Period reading : {y} - {y+1}")
-                
+                print(f"Period reading : {y} - {y + 1}")
+
                 ## output file path
                 outFileName = (
                     outfolder_path
@@ -442,7 +476,7 @@ class Manage:
                     + ".bin"
                 )
                 print(outFileName)
-                
+
                 ## check if the current year is bissextile and return days number
                 _, ndays = self.check_bissextile(y + 1)
 
@@ -455,21 +489,20 @@ class Manage:
 
                 if readOutNCells != ncells:
                     print(
-                        "WARNING : the number of cells read in the configuration is different from the number of cells in the Caw output : \n"
+                        "WARNING : the number of cells read in the configuration "
+                        "is different from the number of cells in the Caw output :\n"
                         + f"\tNumber of cells reading from configuration : {ncells}\n"
                         + f"\tNumber of cells reading in caw output : {readOutNCells}"
                     )
                 else:
-                    print(
-                        "Year outfile has been read. Recovering data...", flush=True
-                    )
+                    print("Year outfile has been read. Recovering data...", flush=True)
 
                 # VECTORIZED: Reshape readarray directly to (ndays, nparams, ncells)
                 array_reshaped = readarray.reshape(ndays, nparams, ncells)
-                
+
                 # VECTORIZED: Transpose to (nparams, ncells, ndays) and assign in one operation
-                simMatrix[:, :, count_day:count_day + ndays] = array_reshaped.transpose(1, 2, 0)
-                
+                simMatrix[:, :, count_day : count_day + ndays] = array_reshaped.transpose(1, 2, 0)
+
                 print(f"Added values in sim matrix from {count_day} day to {count_day + ndays}")
                 count_day += ndays
                 print("Done", flush=True)
@@ -477,72 +510,69 @@ class Manage:
 
             return simMatrix
 
-        def checkTempFile(self, temp_dir, compartment, outtype, param) -> Union[tuple[int, int, str], None]:
-                # list all numpy file in temp directory
-                pattern = re.compile(rf"{compartment.compartment}_{outtype}_(\d{{8}})_{param}.npy")
-                
+        def checkTempFile(
+            self, temp_dir, compartment, outtype, param
+        ) -> Union[tuple[int, int, str], None]:
+            # list all numpy file in temp directory
+            pattern = re.compile(rf"{compartment.compartment}_{outtype}_(\d{{8}})_{param}.npy")
 
-                for filename in os.listdir(temp_dir):
-                    if filename.endswith(".npy"):
-                        match = pattern.search(filename)
-                        if match:
-                            dates = match.group(1) 
+            for filename in os.listdir(temp_dir):
+                if filename.endswith(".npy"):
+                    match = pattern.search(filename)
+                    if match:
+                        dates = match.group(1)
 
-                            return int(dates[:4]), int(dates[4:]), filename
-                
-                else : 
-                    print("No temporary file found")
-                    return None
+                        return int(dates[:4]), int(dates[4:]), filename
+
+            else:
+                print("No temporary file found")
+                return None
 
         def readSimData(
             self,
-            compartment:Compartment,
-            outtype:str,
-            param:str,
+            compartment: Compartment,
+            outtype: str,
+            param: str,
             id_layer,
-            syear:int,
-            eyear:int,
+            syear: int,
+            eyear: int,
             list_surf=[],
             list_point=None,
             tempDirectory=None,
-        )->np.array:
+        ) -> np.array:
 
-
-            if compartment.regime == 'Transient':
+            if compartment.regime == "Transient":
                 stime = time.time()
-                
+
                 end = datetime(eyear, 7, 31)
                 start = datetime(syear, 8, 1)
                 total_ndays = (end - start).days - 1
 
-                count_day = 0
                 print(f"Simulated period count {total_ndays} days")
-                
-                check_temp_file = self.checkTempFile(
-                    tempDirectory,
-                    compartment, 
-                    outtype, 
-                    param
-                    )
 
-                if check_temp_file is not None :
-                    start_temp_year , end_temp_year, temp_file_name = check_temp_file
+                check_temp_file = self.checkTempFile(tempDirectory, compartment, outtype, param)
+
+                if check_temp_file is not None:
+                    start_temp_year, end_temp_year, temp_file_name = check_temp_file
                     temp_file_path = os.path.join(tempDirectory, temp_file_name)
 
                     print(
-                        f"Sim Matrix has already been read. Get it form .npy file : {temp_file_path}"
+                        "Sim Matrix has already been read. "
+                        f"Get it form .npy file : {temp_file_path}"
                     )
-                    try :
+                    try:
                         simMatrix = np.load(temp_file_path)
                         etime = time.time()
                         print(f"READING SIM DATA : {etime - stime} seconds")
 
-                    
-                    except Exception as e: 
+                    except Exception:
                         os.remove(temp_file_path)
-                        print(f"File {temp_file_path} has been removed because of an error, try to read from binary files")
+                        print(
+                            f"File {temp_file_path} has been removed because of "
+                            "an error, try to read from binary files"
+                        )
 
-                    if syear < start_temp_year :
+                    if syear < start_temp_year:
                         simMatrixBefore = self.readSimDataFromBin(
                             compartment, outtype, syear, start_temp_year
                         )
@@ -550,16 +580,16 @@ class Manage:
                             paramRecs[compartment.compartment + "_" + outtype].index(param)
                         ]
 
-                    if eyear > end_temp_year : 
+                    if eyear > end_temp_year:
                         simMatrixAfter = self.readSimDataFromBin(
                             compartment, outtype, end_temp_year, eyear
-                        )      
+                        )
                         simMatrixAfter = simMatrixAfter[
                             paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]              
+                        ]
 
                     # concatenate simMatrix
-                    if syear < start_temp_year and eyear > end_temp_year :
+                    if syear < start_temp_year and eyear > end_temp_year:
                         simMatrix = np.hstack((simMatrixBefore, simMatrix, simMatrixAfter))
                         ys = syear
                         ye = eyear
@@ -568,8 +598,7 @@ class Manage:
                         temp_file_path = os.path.join(tempDirectory, temp_file_name)
                         np.save(temp_file_path, simMatrix)
 
-
-                    elif syear < start_temp_year and eyear <= end_temp_year :
+                    elif syear < start_temp_year and eyear <= end_temp_year:
                         simMatrix = np.hstack((simMatrixBefore, simMatrix))
                         ys = syear
                         ye = end_temp_year
@@ -578,8 +607,7 @@ class Manage:
                         temp_file_path = os.path.join(tempDirectory, temp_file_name)
                         np.save(temp_file_path, simMatrix)
 
-
-                    elif syear >= start_temp_year and eyear > end_temp_year :
+                    elif syear >= start_temp_year and eyear > end_temp_year:
                         simMatrix = np.hstack((simMatrix, simMatrixAfter))
                         ys = start_temp_year
                         ye = eyear
@@ -587,18 +615,13 @@ class Manage:
                         temp_file_name = f"{compartment.compartment}_{outtype}_{ys}{ye}_{param}.npy"
                         temp_file_path = os.path.join(tempDirectory, temp_file_name)
                         np.save(temp_file_path, simMatrix)
-                                  
+
                     return simMatrix
 
-                if check_temp_file is None :
-                    
-                    simMatrix = self.readSimDataFromBin(
-                        compartment, outtype, syear, eyear
-                    )
-                    
-                    for id_p, para in enumerate(
-                        paramRecs[compartment.compartment + "_" + outtype]
-                    ):
+                if check_temp_file is None:
+                    simMatrix = self.readSimDataFromBin(compartment, outtype, syear, eyear)
+
+                    for id_p, para in enumerate(paramRecs[compartment.compartment + "_" + outtype]):
                         temp_file_path = (
                             tempDirectory
                             + sep
@@ -618,20 +641,18 @@ class Manage:
 
                     return simMatrix[
                         paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]
-            
+                    ]
 
-
-            elif compartment.regime == 'Steady' : 
+            elif compartment.regime == "Steady":
                 stime = time.time()
                 dtype = dtype = np.dtype(
-                        [
-                            ("begin", np.int32),
-                            ("values", np.float64, (50468,)),
-                            ("end", np.int32),
-                        ]
-                    )
-                
+                    [
+                        ("begin", np.int32),
+                        ("values", np.float64, (50468,)),
+                        ("end", np.int32),
+                    ]
+                )
+
                 temp_file_path = (
                     tempDirectory
                     + sep
@@ -643,53 +664,43 @@ class Manage:
                     + ".npy"
                 )
 
-
-                if os.path.exists(temp_file_path) : 
+                if os.path.exists(temp_file_path):
                     simMatrix = np.load(temp_file_path)
                     etime = time.time()
                     print(f"READING SIM DATA : {etime - stime} seconds")
 
                     return simMatrix
-                
-                else : 
+
+                else:
                     outfolder_path = compartment.out_caw_path
                     outFileName = (
-                            outfolder_path
-                            + sep
-                            + compartment.compartment
-                            + "_"
-                            + outtype
-                            + ".00"
-                            + ".bin"
-                        )
+                        outfolder_path
+                        + sep
+                        + compartment.compartment
+                        + "_"
+                        + outtype
+                        + ".00"
+                        + ".bin"
+                    )
                     ncells = compartment.mesh.ncells
                     nparams = nbRecs[compartment.compartment + "_" + outtype]
                     total_ndays = (
                         datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
                         - datetime.strptime(f"{syear}-07-31", "%Y-%m-%d")
-                        ).days - 1
-                    
+                    ).days - 1
 
                     data = np.fromfile(outFileName, dtype=dtype)
-                    simMatrix = np.empty(
-                                (nparams, ncells, total_ndays), 
-                                dtype=np.float64
-                                )
+                    simMatrix = np.empty((nparams, ncells, total_ndays), dtype=np.float64)
                     for nparam in range(nparams):
-                        for day in range(total_ndays) : 
-                            for n_cell in range(ncells) : 
-                                simMatrix[nparam, n_cell, day] = data['values'][nparam][n_cell]
-                                
-                                
-                    
-                                
+                        for day in range(total_ndays):
+                            for n_cell in range(ncells):
+                                simMatrix[nparam, n_cell, day] = data["values"][nparam][n_cell]
+
                     etime = time.time()
                     print(f"READING SIM DATA : {etime - stime} seconds")
-                    print(f'Sim matrix has been save in TEMP folder')
-                    
-                    for id_p, para in enumerate(
-                        paramRecs[compartment.compartment + "_" + outtype]
-                    ):
+                    print("Sim matrix has been save in TEMP folder")
+
+                    for id_p, para in enumerate(paramRecs[compartment.compartment + "_" + outtype]):
                         temp_file_path = (
                             tempDirectory
                             + sep
@@ -705,16 +716,16 @@ class Manage:
                             print(f"Saved sim data in : {temp_file_path}")
                     return simMatrix[
                         paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]
+                    ]
 
         def readObsData(
             self,
-            compartment:Compartment,
+            compartment: Compartment,
             id_col_data: int,
             id_col_time: int,
             sdate: str,
             edate: str,
-        )-> Union[tuple, None]:
+        ) -> Union[tuple, None]:
             """
             Reading observation data from .dat file
 
@@ -741,21 +752,23 @@ class Manage:
             print(f"Starting sim date : {str(sdate)}", flush=True)
             print(f"Ending sim date : {str(edate)}", flush=True)
 
-            def getObsDataPath(obs_directory, obs_name)->Union[str, None]:
-                if obs_path == '' :
-                    print(f"Observation directory is not defined. No obs data will be read.")
+            def getObsDataPath(obs_directory, obs_name) -> Union[str, None]:
+                if obs_path == "":
+                    print("Observation directory is not defined. No obs data will be read.")
 
                     return None
-                else :
+                else:
                     path = None
 
                     for root, dirs, files in os.walk(obs_directory):
-                        if str(obs_name) + ".dat" in files :
-                            path =  os.path.join(root, obs_name + ".dat")
+                        if str(obs_name) + ".dat" in files:
+                            path = os.path.join(root, obs_name + ".dat")
 
-                    if path is None :
-                        raise FileNotFoundError(f"File {obs_name}.dat hasn't been found in {obs_directory}")
-                    else :
+                    if path is None:
+                        raise FileNotFoundError(
+                            f"File {obs_name}.dat hasn't been found in {obs_directory}"
+                        )
+                    else:
                         return path
 
             stime = time.time()
@@ -770,8 +783,8 @@ class Manage:
             # Generate date array as numpy datetime64
             dates = np.arange(
                 np.datetime64(sdate_str),
-                np.datetime64(edate_str) + np.timedelta64(1, 'D'),
-                dtype='datetime64[D]'
+                np.datetime64(edate_str) + np.timedelta64(1, "D"),
+                dtype="datetime64[D]",
             )
             n_days = len(dates)
 
@@ -780,15 +793,15 @@ class Manage:
 
             # read record data from obs directory
             for obs_point in obs_points:
-                print(f'obs point : {obs_point}')
+                print(f"obs point : {obs_point}")
                 obs_point_path = getObsDataPath(obs_path, obs_point.id_point)
 
-                if obs_point_path is None :
+                if obs_point_path is None:
                     return None
 
                 point_ids.append(obs_point.id_point)
 
-                if obs_point_path != '':
+                if obs_point_path != "":
                     # Use pandas only for robust .dat file parsing
                     raw = pd.read_csv(
                         obs_point_path,
@@ -798,7 +811,7 @@ class Manage:
                         parse_dates=True,
                     )
                     obs_values = raw[id_col_data].values.astype(np.float64)
-                    obs_dates = raw.index.values.astype('datetime64[D]')
+                    obs_dates = raw.index.values.astype("datetime64[D]")
 
                     # Allocate NaN row, fill matching dates via searchsorted
                     row = np.full(n_days, np.nan)
@@ -808,59 +821,73 @@ class Manage:
                     row[indices[valid]] = obs_values[valid]
                     point_data_list.append(row)
 
-                else :
-                    print(f'Warning : {obs_point.name} hasn\'t been found in observation data folder.')
+                else:
+                    print(
+                        f"Warning : {obs_point.name} hasn't been found in observation data folder."
+                    )
                     point_data_list.append(np.full(n_days, np.nan))
 
             data = np.vstack(point_data_list)  # shape (n_points, n_timesteps)
 
-            print(f'OBS DATA shape : {data.shape}')
+            print(f"OBS DATA shape : {data.shape}")
             etime = time.time()
             print(f"READING OBS DATA : {etime - stime} seconds")
             return data, dates, point_ids
 
-
-        def readSimSteady(self, compartment) : 
-            print('READING SIM DATA')
+        def readSimSteady(self, compartment):
+            print("READING SIM DATA")
             # simulated dataframe initialisation
-            dfSim = pd.DataFrame(index = [0])
-            
+            dfSim = pd.DataFrame(index=[0])
+
             # reading correspond file
-            correspFile = pd.read_csv(os.path.join(
-                compartment.out_caw_directory, 'AQ_param_overview.txt', 
-                ), sep=r'\s+')
-            
+            correspFile = pd.read_csv(
+                os.path.join(
+                    compartment.out_caw_directory,
+                    "AQ_param_overview.txt",
+                ),
+                sep=r"\s+",
+            )
+
             # Reading Hend file for each aq layer
-            for layerName in compartment.layers_gis_names : 
-                simdata = pd.read_csv(os.path.join(
-                    compartment.out_caw_directory,  
-                    f'Hend_{layerName}.txt'
-                    ), header=None, sep=r'\s+', index_col=0)
-                
+            for layerName in compartment.layers_gis_names:
+                simdata = pd.read_csv(
+                    os.path.join(compartment.out_caw_directory, f"Hend_{layerName}.txt"),
+                    header=None,
+                    sep=r"\s+",
+                    index_col=0,
+                )
+
                 ## reverse inderx and columnes
                 simdata = simdata.T
                 simdata.index = [0]
-                
+
                 id_layer = compartment.layers_gis_names.index(layerName) + 1
-                correspLayer = correspFile.loc[correspFile['ID_LAYER'] == id_layer]
-                simdata = simdata.rename(columns = {k:v for k, v in zip(correspLayer['ID_INTERN'].values, correspLayer['ID_ABS'].values)})
-                dfSim = pd.concat([dfSim, simdata], axis = 1)
-                
-            
-                
+                correspLayer = correspFile.loc[correspFile["ID_LAYER"] == id_layer]
+                simdata = simdata.rename(
+                    columns={
+                        k: v
+                        for k, v in zip(
+                            correspLayer["ID_INTERN"].values, correspLayer["ID_ABS"].values
+                        )
+                    }
+                )
+                dfSim = pd.concat([dfSim, simdata], axis=1)
+
             return dfSim
-        
-        def readObsSteady(self, 
-                          compartment:Compartment, 
-                          id_col_time:int, 
-                          id_col_data:int, 
-                          obs_aggr:Union[str,float], 
-                          obs_point=None, 
-                          cutsdate=None, 
-                          cutedate=None)->pd.DataFrame: 
+
+        def readObsSteady(
+            self,
+            compartment: Compartment,
+            id_col_time: int,
+            id_col_data: int,
+            obs_aggr: Union[str, float],
+            obs_point=None,
+            cutsdate=None,
+            cutedate=None,
+        ) -> pd.DataFrame:
             """
-            Reading steady observation function 
-            
+            Reading steady observation function
+
             Translate a temporal chronicle to steady chronicle
 
             :param compartment: Hydrological compartiment object
@@ -869,21 +896,24 @@ class Manage:
             :type id_col_time: int
             :param id_col_data: columns id containing data vector in observed data
             :type id_col_data: int
-            :return: Dataframe countaining observed values (index : [0], columns : mesurement point id)
+            :return: Dataframe countaining observed values
+                (index : [0], columns : mesurement point id)
             :rtype: pd.DataFrame
             """
             print("READING OBS DATA", flush=True)
 
-            def getObsDataPath(obs_directory, obs_name)->str:
+            def getObsDataPath(obs_directory, obs_name) -> str:
                 for parent_folder, child_folder, files in os.walk(obs_directory):
                     if obs_name + ".dat" in files:
                         path = os.path.join(parent_folder, obs_name + ".dat")
-                        print(f'Path of observed data : {path}')
+                        print(f"Path of observed data : {path}")
                         return path
-                    else : 
-                        print(f'WARNING : {obs_name} hasn\'t be found in given recorded data folder.')
-                        return ''
-                        
+                    else:
+                        print(
+                            f"WARNING : {obs_name} hasn't be found in given recorded data folder."
+                        )
+                        return ""
+
             stime = time.time()
             obs_path = compartment.obs_path  # observation data path
             obs_obj = compartment.obs  # observation object
@@ -892,17 +922,15 @@ class Manage:
             obs_points = obs_obj.obs_points
 
             # init mesurement dataframe which contain all observation time series
-            mesurements = pd.DataFrame(
-                index=[0]
-            )
+            mesurements = pd.DataFrame(index=[0])
 
-            if obs_point is None :
+            if obs_point is None:
                 # read record data from obs directory
                 for obs_point in obs_points:
-                    print(f'obs point : {obs_point}')
+                    print(f"obs point : {obs_point}")
                     obs_point_path = getObsDataPath(obs_path, obs_point.id_cell)
                     # print(f'path : {obs_point_path}')
-                    if obs_point_path != '': 
+                    if obs_point_path != "":
                         data = pd.read_csv(
                             obs_point_path,
                             sep=r"\s+",
@@ -912,20 +940,20 @@ class Manage:
                         )
                         # extract recorded data
                         data = data[[id_col_data]]
-                        
+
                         if cutsdate is not None and cutedate is not None:
                             data = data.loc[cutsdate:cutedate]
-                            print(f'Reading observation periode : {cutsdate} - {cutedate}')
-                        else : 
-                            print(f'Observation chronicles are read in full')
+                            print(f"Reading observation periode : {cutsdate} - {cutedate}")
+                        else:
+                            print("Observation chronicles are read in full")
 
-                        if obs_aggr == 'mean' :
+                        if obs_aggr == "mean":
                             data = data.mean()
-                        elif obs_aggr == 'min' :
+                        elif obs_aggr == "min":
                             data = data.min()
-                        elif obs_aggr == 'max' :
+                        elif obs_aggr == "max":
                             data = data.max()
-                        else :
+                        else:
                             data = data.quantile(obs_aggr)
 
                         data = pd.DataFrame(data)
@@ -934,13 +962,13 @@ class Manage:
                         data.index = [0]
                         # ­data = data.loc[sdate : edate]
                         # add recorded data to mesurement dataframe
-                        
+
                         mesurements.loc[0, obs_point.id_cell] = data.loc[0, obs_point.id_cell]
-            else :
-                print(f'obs point : {obs_point}')
+            else:
+                print(f"obs point : {obs_point}")
                 obs_point_path = getObsDataPath(obs_path, obs_point.id_cell)
                 # print(f'path : {obs_point_path}')
-                if obs_point_path != '': 
+                if obs_point_path != "":
                     data = pd.read_csv(
                         obs_point_path,
                         sep=r"\s+",
@@ -951,13 +979,13 @@ class Manage:
                     # extract recorded data
                     data = data[[id_col_data]]
 
-                    if obs_aggr == 'mean' :
+                    if obs_aggr == "mean":
                         data = data.mean()
-                    elif obs_aggr == 'min' :
+                    elif obs_aggr == "min":
                         data = data.min()
-                    elif obs_aggr == 'max' :
+                    elif obs_aggr == "max":
                         data = data.max()
-                    else :
+                    else:
                         data = data.quantile(obs_aggr)
 
                     data = pd.DataFrame(data)
@@ -966,22 +994,22 @@ class Manage:
                     data.index = [0]
                     # ­data = data.loc[sdate : edate]
                     # add recorded data to mesurement dataframe
-                    
+
                     mesurements[obs_point.id_cell] = data[obs_point.id_cell]
-                
-                    
-            print(f'MESUREMENTS : {mesurements}')   
+
+            print(f"MESUREMENTS : {mesurements}")
             etime = time.time()
             print(f"READING OBS DATA : {etime - stime} seconds")
             # return obs dataframe
-            return mesurements               
+            return mesurements
 
-        def check_bissextile(self, year:int)->(bool, int):
+        def check_bissextile(self, year: int) -> (bool, int):
             """Check if the given year is bissextile
 
             :param year: Year to check
             :type year: int
-            :return: True if its a bissextile year, False if not. The number of day in the year is given too
+            :return: True if its a bissextile year, False if not.
+                The number of day in the year is given too
             :rtype: (bool, int)
             """
 
@@ -991,14 +1019,14 @@ class Manage:
                 return (False, 365)
 
         def simMatrixToDf(
-            self, 
-            matrix:np.array, 
-            sdate:str, 
-            edate:str, 
-            cutsdate:str=None, 
-            cutedate:str=None, 
-            cell_ids=None
-            )->pd.DataFrame:
+            self,
+            matrix: np.array,
+            sdate: str,
+            edate: str,
+            cutsdate: str = None,
+            cutedate: str = None,
+            cell_ids=None,
+        ) -> pd.DataFrame:
             """_summary_
 
             :param matrix: Simulated matrix
@@ -1007,26 +1035,23 @@ class Manage:
             :type sdate: str
             :param edate: Ending date of the simulation (format : %Y/%M/%d)
             :type edate: str
-            :param cutsdate:  Starting date of the desired exctractionPeriod, defaults to None (format : %Y/%M/%d)
+            :param cutsdate: Starting date of the desired exctractionPeriod,
+                defaults to None (format : %Y/%M/%d)
             :type cutsdate: str, optional
-            :param cutedate: Ending date of the desired exctractionPeriod, defaults to None (format : %Y/%M/%d)
+            :param cutedate: Ending date of the desired exctractionPeriod,
+                defaults to None (format : %Y/%M/%d)
             :type cutedate: str, optional
             :return: Simulated Dataframe
             :rtype: pd.DataFrame
             """
 
-            
             print("Convert SimMatrix in numpy format to dataframe")
 
-            dates = pd.date_range(start=f'{sdate}-08-01', end=f'{edate}-07-31')
+            dates = pd.date_range(start=f"{sdate}-08-01", end=f"{edate}-07-31")
 
-            if cell_ids is not  None:
-                df_sim = pd.DataFrame(
-                    matrix.T,
-                    index=dates,
-                    columns=cell_ids
-                )
-            else : 
+            if cell_ids is not None:
+                df_sim = pd.DataFrame(matrix.T, index=dates, columns=cell_ids)
+            else:
                 df_sim = pd.DataFrame(
                     matrix.T,
                     index=dates,
@@ -1041,14 +1066,13 @@ class Manage:
             print(df_sim.head(), flush=True)
             return df_sim
 
-
         def aggregate_matrix(
-            self, 
-            df:pd.DataFrame, 
-            agg_dimension:Union[str, float],
-            fz:str,
-            plurianual_agg:bool,
-            compartment:Compartment=None
+            self,
+            df: pd.DataFrame,
+            agg_dimension: Union[str, float],
+            fz: str,
+            plurianual_agg: bool,
+            compartment: Compartment = None,
         ) -> pd.DataFrame:
             """
             Aggragate given matrix according specified aggragator on a specied matrix
@@ -1067,31 +1091,30 @@ class Manage:
             print("\tAggragator : ", agg_dimension, flush=True)
             print("\tFz : ", fz, flush=True)
             print("\tPlurianual Agg : ", plurianual_agg, flush=True)
-            
-            if fz == 'Annual': 
+
+            if fz == "Annual":
                 if agg_dimension == "sum":
-                        df =  pd.DataFrame(df.resample("A-AUG").sum())
+                    df = pd.DataFrame(df.resample("A-AUG").sum())
 
                 elif agg_dimension == "mean":
-                        df = pd.DataFrame(df.resample("A-AUG").mean())
+                    df = pd.DataFrame(df.resample("A-AUG").mean())
 
                 elif agg_dimension == "min":
-                        df =  pd.DataFrame(df.resample("A-AUG").min())
-                        
+                    df = pd.DataFrame(df.resample("A-AUG").min())
+
                 elif agg_dimension == "max":
-                        df =  pd.DataFrame(df.resample("A-AUG").max())
-                           
-                elif agg_dimension == "quantile" :
-                    df = df.quantile(q = agg_dimension, axis = 0)
-                
-                df.index = df.index.strftime('%Y')
-                
-                if plurianual_agg is True : 
-                    df = pd.DataFrame(df.mean()).T 
-                    df.index = ["Z(x, y)"]             
-                
-                
-            if fz == 'Monthly' and plurianual_agg: 
+                    df = pd.DataFrame(df.resample("A-AUG").max())
+
+                elif agg_dimension == "quantile":
+                    df = df.quantile(q=agg_dimension, axis=0)
+
+                df.index = df.index.strftime("%Y")
+
+                if plurianual_agg is True:
+                    df = pd.DataFrame(df.mean()).T
+                    df.index = ["Z(x, y)"]
+
+            if fz == "Monthly" and plurianual_agg:
                 if agg_dimension == "sum":
                     df = df.resample("M").sum()
 
@@ -1100,24 +1123,23 @@ class Manage:
 
                 elif agg_dimension == "min":
                     df = df.resample("M").min()
-                    
+
                 elif agg_dimension == "min":
                     df = df.resample("M").min()
-                
-                elif agg_dimension == "quantile" :
-                    df = df.quantile(agg_dimension, axis = 0)
-                    
-                df.index = df.index.strftime('%m-%Y')
-                
-                if plurianual_agg is True : 
-                    df.index = pd.to_datetime(df.index).strftime('%m')
+
+                elif agg_dimension == "quantile":
+                    df = df.quantile(agg_dimension, axis=0)
+
+                df.index = df.index.strftime("%m-%Y")
+
+                if plurianual_agg is True:
+                    df.index = pd.to_datetime(df.index).strftime("%m")
                     df = df.groupby(df.index).mean()
-                
+
             print(df, flush=True)
             print("Done", flush=True)
-            
+
             return df
-                
 
     class Spatial:
         def __init__(self):
@@ -1219,6 +1241,7 @@ class Manage:
             savepath = os.path.join(exd.post_process_directory, "TEMP", "OUTPCROOPCELLSLIST.dat")
 
             print("\tBuilding outcropping cells")
+
             def checkLayerContainsCell(point, polygone):
                 return polygone.contains(point)
 
@@ -1237,9 +1260,7 @@ class Manage:
 
                     for cell in layer.layer:
                         # shapely geometry uses .centroid property
-                        if not checkLayerContainsCell(
-                            cell.geometry.centroid, outcropCells_geom
-                        ):
+                        if not checkLayerContainsCell(cell.geometry.centroid, outcropCells_geom):
                             outcropCells.append(cell)
                             count += 1
 

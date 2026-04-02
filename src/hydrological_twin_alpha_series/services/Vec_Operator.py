@@ -1,14 +1,11 @@
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
-from os import sep
-import os
-from typing import Tuple, Union,  Optional, List      
-from datetime import datetime    
-        
+
 from hydrological_twin_alpha_series.domain.Compartment import Compartment
 
-        
-class Operator:        
+
+class Operator:
     def __init__(self):
         pass
 
@@ -16,10 +13,10 @@ class Operator:
         """Return the numpy aggregation function for the given agg specifier."""
         if isinstance(agg, str):
             agg_funcs = {
-                'mean': np.nanmean,
-                'sum': np.nansum,
-                'min': np.nanmin,
-                'max': np.nanmax,
+                "mean": np.nanmean,
+                "sum": np.nansum,
+                "min": np.nanmin,
+                "max": np.nanmax,
             }
             if agg not in agg_funcs:
                 raise ValueError(
@@ -37,7 +34,7 @@ class Operator:
         arr: np.ndarray,
         dates: np.ndarray,
         fz: str,
-        agg: Union[str, float] = 'mean',
+        agg: Union[str, float] = "mean",
         year_end_month: int = 12,
         plurianual_agg: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -74,12 +71,12 @@ class Operator:
 
         agg_func = self._get_agg_func(agg)
 
-        if fz == 'Daily':
+        if fz == "Daily":
             date_labels = np.array([str(d) for d in dates])
 
             if plurianual_agg:
                 # Group by day-of-year and average across years
-                doy = (dates - dates.astype('datetime64[Y]')).astype(int) + 1
+                doy = (dates - dates.astype("datetime64[Y]")).astype(int) + 1
                 unique_doy = np.unique(doy)
 
                 aggregated_data = []
@@ -96,16 +93,14 @@ class Operator:
             print("Done", flush=True)
             return arr_agg, date_labels
 
-        elif fz == 'Annual':
+        elif fz == "Annual":
             # Compute fiscal/hydrological year for each date
-            cal_years = dates.astype('datetime64[Y]').astype(int) + 1970
-            cal_months = dates.astype('datetime64[M]').astype(int) % 12 + 1
+            cal_years = dates.astype("datetime64[Y]").astype(int) + 1970
+            cal_months = dates.astype("datetime64[M]").astype(int) % 12 + 1
 
             if year_end_month < 12:
                 # Dates after year_end_month belong to next fiscal year
-                fiscal_years = np.where(
-                    cal_months <= year_end_month, cal_years, cal_years + 1
-                )
+                fiscal_years = np.where(cal_months <= year_end_month, cal_years, cal_years + 1)
             else:
                 fiscal_years = cal_years
 
@@ -123,8 +118,8 @@ class Operator:
                 arr_agg = np.nanmean(arr_agg, axis=0, keepdims=True)
                 date_labels = np.array(["Mean"])
 
-        elif fz == 'Monthly':
-            year_month = dates.astype('datetime64[M]')
+        elif fz == "Monthly":
+            year_month = dates.astype("datetime64[M]")
             unique_months = np.unique(year_month)
 
             aggregated_data = []
@@ -134,15 +129,17 @@ class Operator:
 
             arr_agg = np.array(aggregated_data)
 
-            date_labels = np.array([
-                f"{int(str(m).split('-')[1]):02d}-{str(m).split('-')[0]}"
-                for m in unique_months.astype(str)
-            ])
+            date_labels = np.array(
+                [
+                    f"{int(str(m).split('-')[1]):02d}-{str(m).split('-')[0]}"
+                    for m in unique_months.astype(str)
+                ]
+            )
 
             if plurianual_agg:
-                months_of_year = np.array([
-                    int(str(m).split('-')[1]) for m in unique_months.astype(str)
-                ])
+                months_of_year = np.array(
+                    [int(str(m).split("-")[1]) for m in unique_months.astype(str)]
+                )
                 unique_month_nums = np.unique(months_of_year)
 
                 plurianual_data = []
@@ -179,19 +176,18 @@ class Operator:
         :return: Converted array, same shape as data
         :rtype: np.ndarray
         """
-        if target_unit == 'mm/j':
+        if target_unit == "mm/j":
             # m3/s -> mm/day: multiply by 86400 (s/day) * 1e3 (mm/m) / area (m2)
             return data * (86400.0 * 1e3 / cell_areas[:, np.newaxis])
-        elif target_unit == 'm3/j':
+        elif target_unit == "m3/j":
             return data * 86400.0
-        elif target_unit == 'l/s':
+        elif target_unit == "l/s":
             return data * 1e3
-        elif target_unit == 'm3/s':
+        elif target_unit == "m3/s":
             return data
         else:
             raise ValueError(
-                f"Unknown target unit: '{target_unit}'. "
-                f"Use 'mm/j', 'm3/j', 'l/s', or 'm3/s'."
+                f"Unknown target unit: '{target_unit}'. Use 'mm/j', 'm3/j', 'l/s', or 'm3/s'."
             )
 
     @staticmethod
@@ -214,16 +210,17 @@ class Operator:
         data: np.ndarray,
         operation: str,
         areas: np.ndarray = None,
-        compartment: Compartment = None
+        compartment: Compartment = None,
     ) -> np.ndarray:
         """
         Perform spatial averaging operations on simulation data.
-        
+
         :param data: Array (n_cells, n_timesteps) of simulated values
         :type data: np.ndarray
-        :param operation: Type of spatial average ('arithmetic', 'weighted', 'geometric', 'harmonic')
+        :param operation: Type of spatial average
+            ('arithmetic', 'weighted', 'geometric', 'harmonic')
         :type operation: str
-        :param areas: 1D array (n_cells,) of cell areas for weighted average. 
+        :param areas: 1D array (n_cells,) of cell areas for weighted average.
                     If None, extracted from compartment.
         :type areas: np.ndarray, optional
         :param compartment: Compartment object to extract areas from if not provided
@@ -231,46 +228,46 @@ class Operator:
         :return: 1D array (n_timesteps,) averaged over space
         :rtype: np.ndarray
         """
-        
+
         # Extract areas if not provided
         if areas is None:
             if compartment is None:
                 raise ValueError("Either 'areas' or 'compartment' must be provided")
-            
+
             areas = []
             for layer in compartment.mesh.mesh.values():
                 for cell in layer.layer:
                     areas.append(cell.area)
             areas = np.array(areas)
-        
+
         # Validate dimensions: rows = cells
         n_cells = data.shape[0]
         if len(areas) != n_cells:
             raise ValueError(
                 f"Areas length ({len(areas)}) does not match number of cells ({n_cells})"
             )
-        
+
         # Perform spatial averaging along axis=0 (cells)
-        if operation == 'arithmetic':
+        if operation == "arithmetic":
             # Simple mean across cells
             return np.mean(data, axis=0)
-        
-        elif operation == 'weighted':
+
+        elif operation == "weighted":
             # Area-weighted mean
             total_area = np.sum(areas)
             weights = areas[:, np.newaxis]  # Shape (n_cells, 1) for broadcasting
             return np.sum(data * weights, axis=0) / total_area
-        
-        elif operation == 'geometric':
+
+        elif operation == "geometric":
             # Geometric mean: (∏ xi)^(1/n)
             # Handle potential zeros/negatives with small epsilon
             return np.exp(np.mean(np.log(np.abs(data) + 1e-10), axis=0))
-        
-        elif operation == 'harmonic':
+
+        elif operation == "harmonic":
             # Harmonic mean: n / (∑ 1/xi)
             # Handle potential zeros with small epsilon
             return n_cells / np.sum(1.0 / (data + 1e-10), axis=0)
-        
+
         else:
             raise ValueError(
                 f"Unknown operation: '{operation}'. "
@@ -288,8 +285,8 @@ class Extractor:
         cell_ids: Optional[List[int]] = None,
         compartment: Optional[Compartment] = None,
         spatial_operator: Optional[str] = None,
-        spatial_manager = None,
-        **operator_kwargs
+        spatial_manager=None,
+        **operator_kwargs,
     ) -> np.ndarray:
         """
         Extract data for specific cells based on their IDs or spatial operator.
@@ -304,7 +301,8 @@ class Extractor:
         :type cell_ids: Optional[List[int]]
         :param compartment: Compartment object (required for spatial operators)
         :type compartment: Optional[Compartment]
-        :param spatial_operator: Name of spatial operator ('catchment_cells' or 'aquifer_outcropping')
+        :param spatial_operator: Name of spatial operator
+            ('catchment_cells' or 'aquifer_outcropping')
         :type spatial_operator: Optional[str]
         :param spatial_manager: Instance of Manage.Spatial() (required for spatial operators)
         :param operator_kwargs: Additional kwargs for the spatial operator
@@ -340,7 +338,7 @@ class Extractor:
                 operator=spatial_operator,
                 compartment=compartment,
                 spatial_manager=spatial_manager,
-                **operator_kwargs
+                **operator_kwargs,
             )
 
         if cell_ids is None:
@@ -350,11 +348,7 @@ class Extractor:
         return data[cell_ids, :]
 
     def _get_cell_ids_from_operator(
-        self,
-        operator: str,
-        compartment: Compartment,
-        spatial_manager,
-        **kwargs
+        self, operator: str, compartment: Compartment, spatial_manager, **kwargs
     ) -> List[int]:
         """
         Translate spatial operator name into list of cell IDs.
@@ -367,8 +361,11 @@ class Extractor:
         :param compartment: Compartment object with mesh and configuration
         :type compartment: Compartment
         :param spatial_manager: Instance of Manage.Spatial()
-        :param kwargs: Operator-specific parameters **kwargs collects all additional keyword arguments into a dictionary called kwargs
-                        This allows the function to accept a variable number of named parameters without listing them all explicitly
+        :param kwargs: Operator-specific parameters.
+            ``**kwargs`` collects all additional keyword arguments into a
+            dictionary called kwargs. This allows the function to accept a
+            variable number of named parameters without listing them all
+            explicitly.
         :return: List of cell IDs identified by the operator
         :rtype: List[int]
 
@@ -385,19 +382,17 @@ class Extractor:
         if operator == "catchment_cells":
             # Get catchment cells upstream of observation point
             return spatial_manager.getCatchmentCellsIds(
-                obs_point=kwargs['obs_point'],
-                network_gis_layer=kwargs['network_gis_layer'],
-                network_col_name_cell=kwargs['network_col_name_cell'],
-                network_col_name_fnode=kwargs['network_col_name_fnode'],
-                network_col_name_tnode=kwargs['network_col_name_tnode']
+                obs_point=kwargs["obs_point"],
+                network_gis_layer=kwargs["network_gis_layer"],
+                network_col_name_cell=kwargs["network_col_name_cell"],
+                network_col_name_fnode=kwargs["network_col_name_fnode"],
+                network_col_name_tnode=kwargs["network_col_name_tnode"],
             )
 
         elif operator == "aquifer_outcropping":
             # Get aquifer outcropping cells (returns Cell objects)
             outcrop_cells = spatial_manager.buildAqOutcropping(
-                exd=kwargs['exd'],
-                aq_compartment=compartment,
-                save=kwargs.get('save', True)
+                exd=kwargs["exd"], aq_compartment=compartment, save=kwargs.get("save", True)
             )
             # Extract cell IDs from Cell objects
             return [cell.id_abs for cell in outcrop_cells]
@@ -407,17 +402,17 @@ class Extractor:
                 f"Spatial operator '{operator}' not supported. "
                 f"Available: 'catchment_cells', 'aquifer_outcropping'"
             )
-    
+
     def extract_temporal(
         self,
         data: np.ndarray,
         dates: np.ndarray,
         start_date: Union[str, np.datetime64],
-        end_date: Union[str, np.datetime64]
+        end_date: Union[str, np.datetime64],
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract data for a specific time period based on date range.
-        
+
         :param data: Array (n_cells, n_timesteps) of simulated values
         :type data: np.ndarray
         :param dates: Array of datetime64 objects corresponding to columns in data
@@ -428,7 +423,7 @@ class Extractor:
         :type end_date: Union[str, np.datetime64]
         :return: Tuple of (extracted_data, extracted_dates)
         :rtype: Tuple[np.ndarray, np.ndarray]
-        
+
         Example:
             >>> # Extract only data from 2020-2022
             >>> data_subset, dates_subset = extractor.extract_temporal(
@@ -440,27 +435,25 @@ class Extractor:
             start_date = np.datetime64(start_date)
         if isinstance(end_date, str):
             end_date = np.datetime64(end_date)
-        
+
         # Create boolean mask for the date range
         mask = (dates >= start_date) & (dates <= end_date)
-        
+
         # Extract data and dates
         extracted_data = data[:, mask]
         extracted_dates = dates[mask]
-        
+
         print(f"Extracted {extracted_data.shape[1]} timesteps from {start_date} to {end_date}")
-        
+
         return extracted_data, extracted_dates
+
 
 class Comparator:
     def __init__(self):
         pass
 
     def calc_performance_metrics(
-        self,
-        sim: np.ndarray,
-        obs: np.ndarray,
-        metrics: List[str] = None
+        self, sim: np.ndarray, obs: np.ndarray, metrics: List[str] = None
     ) -> dict:
         """
         Calculate performance metrics between simulated and observed data.
@@ -506,8 +499,8 @@ class Comparator:
         if "nash" in metrics:
             # Nash-Sutcliffe Efficiency
             mean_obs = np.mean(obs_clean)
-            numerator = np.sum((obs_clean - sim_clean)**2)
-            denominator = np.sum((obs_clean - mean_obs)**2)
+            numerator = np.sum((obs_clean - sim_clean) ** 2)
+            denominator = np.sum((obs_clean - mean_obs) ** 2)
             nse = 1 - (numerator / denominator) if denominator > 0 else np.nan
             results["nash"] = nse
 
@@ -517,19 +510,23 @@ class Comparator:
                 r = np.corrcoef(sim_clean, obs_clean)[0, 1]
                 alpha = np.std(sim_clean) / np.std(obs_clean) if np.std(obs_clean) > 0 else np.nan
                 beta = np.mean(sim_clean) / np.mean(obs_clean) if np.mean(obs_clean) > 0 else np.nan
-                kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+                kge = 1 - np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2)
                 results["kge"] = kge
             else:
                 results["kge"] = np.nan
 
         if "rmse" in metrics:
             # Root Mean Square Error
-            rmse = np.sqrt(np.mean((obs_clean - sim_clean)**2))
+            rmse = np.sqrt(np.mean((obs_clean - sim_clean) ** 2))
             results["rmse"] = rmse
 
         if "pbias" in metrics:
             # Percent Bias
-            pbias = 100 * np.sum(sim_clean - obs_clean) / np.sum(obs_clean) if np.sum(obs_clean) != 0 else np.nan
+            pbias = (
+                100 * np.sum(sim_clean - obs_clean) / np.sum(obs_clean)
+                if np.sum(obs_clean) != 0
+                else np.nan
+            )
             results["pbias"] = pbias
 
         if "mae" in metrics:
@@ -541,7 +538,7 @@ class Comparator:
             # Coefficient of Determination
             if len(obs_clean) > 1:
                 corr_matrix = np.corrcoef(sim_clean, obs_clean)
-                r2 = corr_matrix[0, 1]**2
+                r2 = corr_matrix[0, 1] ** 2
                 results["r2"] = r2
             else:
                 results["r2"] = np.nan
@@ -574,8 +571,3 @@ class Comparator:
             results["sum_ratio"] = np.sum(sim_clean) / sum_o if sum_o != 0 else np.nan
 
         return results
-
-
-
-
-

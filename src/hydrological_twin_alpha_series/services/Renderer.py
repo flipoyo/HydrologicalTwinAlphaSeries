@@ -6,18 +6,18 @@ No I/O (file reading/caching) happens here.
 """
 
 import os
+import time
+from typing import List, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, List, Tuple
+import plotly.graph_objects as go
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import time
 
 
 class Renderer:
-
     # ------------------------------------------------------------------
     # 1. Budget bar plot
     # ------------------------------------------------------------------
@@ -27,7 +27,7 @@ class Renderer:
         plot_title: str,
         output_folder: str = None,
         output_name: str = None,
-        yaxis_unit: str = 'mm',
+        yaxis_unit: str = "mm",
     ):
         """
         Plot interannual Budget bar chart (Plotly interactive + Matplotlib static).
@@ -53,34 +53,30 @@ class Renderer:
             if not np.array_equal(labels, date_labels):
                 print(f"Warning: Date labels mismatch for {var}")
 
-            fig.add_trace(go.Bar(
-                x=date_labels,
-                y=data_array,
-                name=var,
-                marker_color=colors[i % len(colors)]
-            ))
+            fig.add_trace(
+                go.Bar(x=date_labels, y=data_array, name=var, marker_color=colors[i % len(colors)])
+            )
 
             data_sums.append(np.sum(data_array))
 
         fig.update_layout(
-            barmode='group',
-            template='plotly_white',
+            barmode="group",
+            template="plotly_white",
             title=plot_title,
-            xaxis_title='',
-            yaxis_title=f'<b>Water level</b><br>[{yaxis_unit}]',
-            xaxis=dict(type='category', showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)'),
-            yaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)'),
-            legend_title_text='Water Balance variables'
+            xaxis_title="",
+            yaxis_title=f"<b>Water level</b><br>[{yaxis_unit}]",
+            xaxis=dict(type="category", showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)"),
+            yaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)"),
+            legend_title_text="Water Balance variables",
         )
 
-        text = "".join([
-            f"<b>{var}</b> : {round(value, 1)} {yaxis_unit}<br>"
-            for var, value in zip(variables, data_sums)
-        ])
-        fig.add_annotation(
-            text=text, x=1, y=1,
-            xref='paper', yref='paper', showarrow=False
+        text = "".join(
+            [
+                f"<b>{var}</b> : {round(value, 1)} {yaxis_unit}<br>"
+                for var, value in zip(variables, data_sums)
+            ]
         )
+        fig.add_annotation(text=text, x=1, y=1, xref="paper", yref="paper", showarrow=False)
 
         fig.show()
 
@@ -93,26 +89,27 @@ class Renderer:
             data_array = data_dict[var][0]
             offset = width * i - (width * len(variables) / 2) + width / 2
             ax.bar(
-                x_pos + offset,
-                data_array,
-                width=width,
-                label=var,
-                color=colors[i % len(colors)]
+                x_pos + offset, data_array, width=width, label=var, color=colors[i % len(colors)]
             )
 
-        ax.set_xlabel('')
-        ax.set_ylabel(f'Water level\n[{yaxis_unit}]')
+        ax.set_xlabel("")
+        ax.set_ylabel(f"Water level\n[{yaxis_unit}]")
         ax.set_title(plot_title)
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(date_labels, rotation=45, ha='right')
-        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15),
-                  fancybox=True, shadow=True, ncol=len(variables))
-        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.set_xticklabels(date_labels, rotation=45, ha="right")
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.15),
+            fancybox=True,
+            shadow=True,
+            ncol=len(variables),
+        )
+        ax.grid(True, linestyle="--", alpha=0.7)
         ax.set_axisbelow(True)
 
         if output_folder and output_name:
-            save_path = os.path.join(output_folder, output_name + '.png')
-            plt.savefig(save_path, dpi=200, bbox_inches='tight')
+            save_path = os.path.join(output_folder, output_name + ".png")
+            plt.savefig(save_path, dpi=200, bbox_inches="tight")
             print(f"Saved static plot to: {save_path}")
 
         plt.close(fig_mpl)
@@ -131,7 +128,7 @@ class Renderer:
         interractiv: bool,
         staticpng: bool,
         staticpdf: bool,
-        years: Union[str, None] = None
+        years: Union[str, None] = None,
     ):
         """
         Plot interannual hydrological regime.
@@ -168,15 +165,15 @@ class Renderer:
             fig.add_trace(traces[0])
 
             fig.update_layout(
-                width=1000, height=700, autosize=True,
+                width=1000,
+                height=700,
+                autosize=True,
                 template="plotly_white",
                 xaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)"),
                 yaxis=dict(showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)"),
             )
 
-            fig.update_yaxes(
-                title_text=f"<b>Hydrological Regime - {var}</b><br>[{units}]"
-            )
+            fig.update_yaxes(title_text=f"<b>Hydrological Regime - {var}</b><br>[{units}]")
             fig.update_xaxes(title_text="")
 
             fig.update_layout(
@@ -186,8 +183,10 @@ class Renderer:
                         direction="down",
                         pad={"r": 10, "t": 10},
                         showactive=True,
-                        x=0.1, xanchor="left",
-                        y=1.1, yanchor="top",
+                        x=0.1,
+                        xanchor="left",
+                        y=1.1,
+                        yanchor="top",
                     )
                 ]
             )
@@ -199,18 +198,18 @@ class Renderer:
                 fig = plt.figure(figsize=(15, 10))
                 ax = plt.gca()
 
-                if var == 'Discharge':
+                if var == "Discharge":
                     units_label = "$[m^3.s^{-1}]$"
                 else:
                     units_label = "$[m\\ above\\ sea\\ level]$"
 
-                ax.bar(month_labels, data[:, i], color='royalblue')
-                ax.set_ylabel(f'{var} {units_label}')
-                ax.set_title(f'{var} - {mp}')
+                ax.bar(month_labels, data[:, i], color="royalblue")
+                ax.set_ylabel(f"{var} {units_label}")
+                ax.set_title(f"{var} - {mp}")
 
-                savepath_file = os.path.join(savepath, f'{var}_{mp}_{years}.png')
+                savepath_file = os.path.join(savepath, f"{var}_{mp}_{years}.png")
 
-                ax.grid(True, linestyle='--', alpha=0.7)
+                ax.grid(True, linestyle="--", alpha=0.7)
                 ax.set_axisbelow(True)
 
                 if var != "Discharge":
@@ -218,29 +217,29 @@ class Renderer:
                     y_max = np.max(data[:, i])
                     ax.set_ylim(y_min - 0.05 * abs(y_min), y_max + 0.05 * abs(y_max))
 
-                fig.savefig(savepath_file, dpi=200, bbox_inches='tight')
+                fig.savefig(savepath_file, dpi=200, bbox_inches="tight")
                 plt.close(fig)
                 print(f"Saved PNG: {savepath_file}")
 
         if staticpdf is True:
-            savepath_file = os.path.join(savepath, f'{var}_{years}.pdf')
+            savepath_file = os.path.join(savepath, f"{var}_{years}.pdf")
             with PdfPages(savepath_file) as pdf:
                 for i, mp in enumerate(obs_point_names):
-                    print(f'OBSERVATION POINT : {mp}')
+                    print(f"OBSERVATION POINT : {mp}")
 
                     fig = plt.figure(figsize=(15, 10))
                     ax = plt.gca()
 
-                    if var == 'Discharge':
+                    if var == "Discharge":
                         units_label = "$[m^3.s^{-1}]$"
                     else:
                         units_label = "$[m\\ above\\ sea\\ level]$"
 
-                    ax.bar(month_labels, data[:, i], color='royalblue')
-                    ax.set_ylabel(f'{var} {units_label}')
-                    ax.set_title(f'{var} - {mp}')
+                    ax.bar(month_labels, data[:, i], color="royalblue")
+                    ax.set_ylabel(f"{var} {units_label}")
+                    ax.set_title(f"{var} - {mp}")
 
-                    ax.grid(True, linestyle='--', alpha=0.7)
+                    ax.grid(True, linestyle="--", alpha=0.7)
                     ax.set_axisbelow(True)
 
                     if var != "Discharge":
@@ -278,16 +277,17 @@ class Renderer:
 
         fig, ax = plt.subplots()
 
-        df_sim["sim"].plot(
-            ax=ax, color="red", legend="Simulated", linewidth=0.5
-        )
+        df_sim["sim"].plot(ax=ax, color="red", legend="Simulated", linewidth=0.5)
 
-        title = f"{point_name} - {point_id_cell}\n(id caw cell : {point_id_cell}, id_layer : {point_id_layer})"
+        title = (
+            f"{point_name} - {point_id_cell}\n"
+            f"(id caw cell : {point_id_cell}, id_layer : {point_id_layer})"
+        )
         ax.set_title(title, fontsize=10)
         ax.set_ylabel(ylabel)
 
         ax.grid(True, linestyle="--", alpha=0.7)
-        ax.legend(loc='upper left')
+        ax.legend(loc="upper left")
 
         return fig
 
@@ -335,11 +335,12 @@ class Renderer:
         )
 
         # Plot sim values
-        df_sim_obs["sim"].plot(
-            ax=ax, color="red", legend="Simulated", linewidth=0.5
-        )
+        df_sim_obs["sim"].plot(ax=ax, color="red", legend="Simulated", linewidth=0.5)
 
-        title = f"{obs_point_name} - {obs_point_id_cell}\n(id caw cell : {obs_point_id_cell}, id_layer : {obs_point_id_layer})"
+        title = (
+            f"{obs_point_name} - {obs_point_id_cell}\n"
+            f"(id caw cell : {obs_point_id_cell}, id_layer : {obs_point_id_layer})"
+        )
         ax.set_title(title, fontsize=10)
 
         if criteria is not None:
@@ -350,9 +351,12 @@ class Renderer:
                 [f"{key}: {round(value, 2)}\n" for key, value in criteria.items()]
             )
             ax.text(
-                0.95, 0.95, crits_text,
+                0.95,
+                0.95,
+                crits_text,
                 transform=ax.transAxes,
-                ha="right", va="top",
+                ha="right",
+                va="top",
                 fontsize=8,
                 multialignment="right",
                 usetex=False,
@@ -361,7 +365,7 @@ class Renderer:
         ax.set_ylabel(ylabel)
 
         ax.grid(True, linestyle="--", alpha=0.7)
-        ax.legend(loc='upper left')
+        ax.legend(loc="upper left")
 
         return fig
 
@@ -386,8 +390,10 @@ class Renderer:
 
         Unit conversion is handled upstream in _prepare_sim_obs_data.
 
-        :param simdf: Simulation DataFrame (index=dates, columns=cell_ids as int, already unit-converted)
-        :param obs_df: Observation DataFrame (index=dates, columns=obs_point_ids, already unit-converted) or None
+        :param simdf: Simulation DataFrame (index=dates, columns=cell_ids as int,
+            already unit-converted)
+        :param obs_df: Observation DataFrame (index=dates, columns=obs_point_ids,
+            already unit-converted) or None
         :param obs_points: List of dicts with keys: name, id_cell, id_layer, id_point, criteria
         :param ext_points: List of dicts with keys: name, id_cell, id_layer
         :param pdf_file_path: Full path for the output PDF
@@ -398,23 +404,27 @@ class Renderer:
         :param plotenddate: End date for plot range
         """
         stime = time.time()
-        print('PLOTTING PDF')
+        print("PLOTTING PDF")
 
         with PdfPages(pdf_file_path) as pdf:
             if obs_points is not None and obs_points != []:
                 for obs_point in obs_points:
-                    print(f'OBSERVATION POINT : {obs_point}')
+                    print(f"OBSERVATION POINT : {obs_point}")
 
-                    sim = simdf[[obs_point['id_cell']]]
-                    sim.columns = ['sim']
+                    sim = simdf[[obs_point["id_cell"]]]
+                    sim.columns = ["sim"]
 
-                    if obs_df is not None and obs_point['id_point'] in obs_df.columns:
-                        obs = obs_df[[obs_point['id_point']]]
-                        obs.columns = ['obs']
+                    if obs_df is not None and obs_point["id_point"] in obs_df.columns:
+                        obs = obs_df[[obs_point["id_point"]]]
+                        obs.columns = ["obs"]
                     else:
-                        obs = pd.DataFrame(index=sim.index, columns=['obs'])
-                        obs['obs'] = np.NaN
-                        print(f"Warning : {obs_point['id_point']} hasn't been found in observation data folder.")
+                        obs = pd.DataFrame(index=sim.index, columns=["obs"])
+                        obs["obs"] = np.NaN
+                        print(
+                            "Warning : "
+                            f"{obs_point['id_point']} hasn't been found in "
+                            "observation data folder."
+                        )
 
                     df_sim_obs = pd.concat([sim, obs], axis=1)
 
@@ -425,11 +435,11 @@ class Renderer:
 
                     fig = Renderer.plot_sim_obs(
                         df_sim_obs=df_sim_obs_to_plot,
-                        obs_point_name=obs_point['name'],
-                        obs_point_id_cell=obs_point['id_cell'],
-                        obs_point_id_layer=obs_point['id_layer'],
+                        obs_point_name=obs_point["name"],
+                        obs_point_id_cell=obs_point["id_cell"],
+                        obs_point_id_layer=obs_point["id_layer"],
                         ylabel=ylabel,
-                        criteria=obs_point.get('criteria'),
+                        criteria=obs_point.get("criteria"),
                         crit_start=crit_start,
                         crit_end=crit_end,
                     )
@@ -442,16 +452,16 @@ class Renderer:
 
             if ext_points is not None and ext_points != []:
                 for ext_point in ext_points:
-                    print(f'EXTRACTION POINT : {ext_point}')
+                    print(f"EXTRACTION POINT : {ext_point}")
 
-                    sim = simdf[[ext_point['id_cell']]]
-                    sim.columns = ['sim']
+                    sim = simdf[[ext_point["id_cell"]]]
+                    sim.columns = ["sim"]
 
                     fig = Renderer.plot_sim(
                         df_sim=sim,
-                        point_name=ext_point['name'],
-                        point_id_cell=ext_point['id_cell'],
-                        point_id_layer=ext_point['id_layer'],
+                        point_name=ext_point["name"],
+                        point_id_cell=ext_point["id_cell"],
+                        point_id_layer=ext_point["id_layer"],
                         ylabel=ylabel,
                     )
 
@@ -494,10 +504,9 @@ class Renderer:
 
         if df_other_variable is None:
             rows = 1
-            n_traces = 2
         else:
             rows = 2
-            n_traces = 2 + len(df_other_variable.columns)
+            2 + len(df_other_variable.columns)
 
         fig = make_subplots(rows=rows, cols=1, shared_xaxes=True)
         annotations = []
@@ -529,8 +538,10 @@ class Renderer:
             annotations.append(
                 dict(
                     text=text,
-                    x=1, y=1,
-                    xref="paper", yref="paper",
+                    x=1,
+                    y=1,
+                    xref="paper",
+                    yref="paper",
                     showarrow=False,
                     align="left",
                     font=dict(size=16),
@@ -547,7 +558,8 @@ class Renderer:
                     line=dict(color="red", width=0.8),
                     visible=n_obs < 1,
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
 
             fig.add_trace(
@@ -559,7 +571,8 @@ class Renderer:
                     marker=dict(color="green", size=5),
                     visible=n_obs < 1,
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
 
             # Adding other variables if provided
@@ -569,10 +582,11 @@ class Renderer:
                         go.Scatter(
                             x=df_other_variable.index,
                             y=df_other_variable[v],
-                            mode=other_variable_config[v]['kind'],
-                            name=other_variable_config[v]['legend'],
+                            mode=other_variable_config[v]["kind"],
+                            name=other_variable_config[v]["legend"],
                         ),
-                        row=2, col=1
+                        row=2,
+                        col=1,
                     )
 
         n_obs_points = len(sim_obs_data)
@@ -581,16 +595,23 @@ class Renderer:
         fig.update_layout(
             xaxis_title="",
             yaxis_title=ylabel,
-            width=1500, height=900,
+            width=1500,
+            height=900,
             autosize=True,
             template="plotly_white",
             xaxis=dict(
-                showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)",
-                title=dict(font=dict(size=18)), tickfont=dict(size=16),
+                showgrid=True,
+                gridwidth=1,
+                gridcolor="rgba(0,0,0,0.1)",
+                title=dict(font=dict(size=18)),
+                tickfont=dict(size=16),
             ),
             yaxis=dict(
-                showgrid=True, gridwidth=1, gridcolor="rgba(0,0,0,0.1)",
-                title=dict(font=dict(size=18)), tickfont=dict(size=16),
+                showgrid=True,
+                gridwidth=1,
+                gridcolor="rgba(0,0,0,0.1)",
+                title=dict(font=dict(size=18)),
+                tickfont=dict(size=16),
             ),
             annotations=[annotations[0]] if annotations else [],
         )
@@ -605,8 +626,7 @@ class Renderer:
                     {
                         "visible": [
                             True
-                            if j == obs_point_index * 2
-                            or j == obs_point_index * 2 + 1
+                            if j == obs_point_index * 2 or j == obs_point_index * 2 + 1
                             else False
                             for j in range(n_obs_points * 2)
                         ]
@@ -618,14 +638,17 @@ class Renderer:
         ]
 
         fig.update_layout(
-            width=1500, height=900,
+            width=1500,
+            height=900,
             updatemenus=[
                 {
                     "buttons": dropdown_buttons,
                     "direction": "down",
                     "showactive": True,
-                    "x": 0.1, "xanchor": "left",
-                    "y": 1.1, "yanchor": "top",
+                    "x": 0.1,
+                    "xanchor": "left",
+                    "y": 1.1,
+                    "yanchor": "top",
                 },
             ],
         )
@@ -633,6 +656,6 @@ class Renderer:
         fig.show()
 
         if out_file_path is not None:
-            fig.write_html(out_file_path, include_plotlyjs='cdn', full_html=True)
+            fig.write_html(out_file_path, include_plotlyjs="cdn", full_html=True)
 
         print("Done", flush=True)

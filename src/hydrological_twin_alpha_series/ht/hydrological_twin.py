@@ -1,37 +1,35 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
-from datetime import datetime, timedelta
-from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
+
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 
 # NOTE:
 # These imports assume that this `ht` subpackage lives inside the existing
-# `cawaqsviz` package, *at the same level* as Compartment / Mesh / Observations / Extraction / Manage.
+# `cawaqsviz` package, *at the same level* as
+# Compartment / Mesh / Observations / Extraction / Manage.
 from hydrological_twin_alpha_series.Compartment import Compartment
-from hydrological_twin_alpha_series.Extraction import Extraction
-from hydrological_twin_alpha_series.Manage import Manage
-from hydrological_twin_alpha_series.Mesh import Mesh
-from hydrological_twin_alpha_series.Observations import Observation
-from hydrological_twin_alpha_series.Renderer import Renderer
-from hydrological_twin_alpha_series.Vec_Operator import Comparator, Extractor, Operator
 from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
-from hydrological_twin_alpha_series.config.constants import module_caw, obs_config
+from hydrological_twin_alpha_series.config.constants import obs_config
+from hydrological_twin_alpha_series.Manage import Manage
+from hydrological_twin_alpha_series.Renderer import Renderer
 from hydrological_twin_alpha_series.security import private_access, public_access
 from hydrological_twin_alpha_series.tools.spatial_utils import verify_crs_match
+from hydrological_twin_alpha_series.Vec_Operator import Comparator, Extractor, Operator
 
 from .api_types import (
-    ExtractValuesResponse,
-    TemporalOpResponse,
-    SpatialAverageResponse,
-    ObservationsResponse,
     CompartmentInfo,
+    ExtractValuesResponse,
     LayerInfo,
     ObservationInfo,
+    ObservationsResponse,
+    SpatialAverageResponse,
+    TemporalOpResponse,
 )
 from .persistence import HTPersistenceMixin
 
@@ -129,10 +127,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     @public_access
     def list_compartments(self) -> List[CompartmentInfo]:
         """Return info for all registered compartments."""
-        return [
-            self.get_compartment_info(cid)
-            for cid in self.compartments
-        ]
+        return [self.get_compartment_info(cid) for cid in self.compartments]
 
     @public_access
     def get_layer_info(self, id_compartment: int, id_layer: int) -> LayerInfo:
@@ -146,7 +141,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             cell_areas=np.array([cell.area for cell in layer.layer]),
             cell_geometries=[cell.geometry for cell in layer.layer],
             layer_gis_name=comp.layers_gis_names[id_layer]
-                           if id_layer < len(comp.layers_gis_names) else "",
+            if id_layer < len(comp.layers_gis_names)
+            else "",
             crs=layer.crs,
         )
 
@@ -154,10 +150,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     def get_all_layers(self, id_compartment: int) -> List[LayerInfo]:
         """Return LayerInfo for every layer in a compartment's mesh."""
         comp = self.get_compartment(id_compartment)
-        return [
-            self.get_layer_info(id_compartment, lid)
-            for lid in comp.mesh.mesh
-        ]
+        return [self.get_layer_info(id_compartment, lid) for lid in comp.mesh.mesh]
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L2 — DATA LAYER  (Observations & Simulations I/O)           ║
@@ -213,20 +206,15 @@ class HydrologicalTwin(HTPersistenceMixin):
             tempDirectory=self.temp_directory,
         )
 
-
-        # Generate date array as datetime64 
-        #The np.arange trim with an open intervall [start date, end date)
+        # Generate date array as datetime64
+        # The np.arange trim with an open intervall [start date, end date)
         start_date = datetime.strptime(f"{syear}-08-01", "%Y-%m-%d")
         end_date = datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
-        dates = np.arange(
-            np.datetime64(start_date),
-            np.datetime64(end_date),
-            dtype='datetime64[D]'
-        )
+        dates = np.arange(np.datetime64(start_date), np.datetime64(end_date), dtype="datetime64[D]")
         # Ensure data length matches dates (time axis = columns)
         if sim_matrix.shape[1] != len(dates):
             min_len = min(sim_matrix.shape[1], len(dates))
-            sim_matrix = sim_matrix[:, :min_len]   # keep all cells, trim time columns
+            sim_matrix = sim_matrix[:, :min_len]  # keep all cells, trim time columns
             dates = dates[:min_len]
 
         # Apply date slicing if requested
@@ -251,7 +239,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 "cutedate": cutedate,
             },
         )
-    
+
     @public_access
     def read_observations(
         self,
@@ -484,23 +472,25 @@ class HydrologicalTwin(HTPersistenceMixin):
                 else:
                     obs_vals = np.full(len(obs_dates), np.nan)
 
-                obs_points_data.append({
-                    'name': obs_point.name,
-                    'id_cell': obs_point.id_cell,
-                    'id_layer': obs_point.id_layer,
-                    'id_point': obs_point.id_point,
-                    'sim': sim_vals,
-                    'obs': obs_vals,
-                })
+                obs_points_data.append(
+                    {
+                        "name": obs_point.name,
+                        "id_cell": obs_point.id_cell,
+                        "id_layer": obs_point.id_layer,
+                        "id_point": obs_point.id_point,
+                        "sim": sim_vals,
+                        "obs": obs_vals,
+                    }
+                )
 
         # Unit conversion for HYD: obs_unit is the TARGET display unit.
         # CaWaQS sim is in m3/s; obs are natively in l/s.
-        if comp.compartment == 'HYD' and obs_unit is not None:
+        if comp.compartment == "HYD" and obs_unit is not None:
             for pt in obs_points_data:
-                if obs_unit == 'm3/s':
-                    pt['obs'] = pt['obs'] * 1e-3
-                elif obs_unit == 'l/s':
-                    pt['sim'] = pt['sim'] * 1e3
+                if obs_unit == "m3/s":
+                    pt["obs"] = pt["obs"] * 1e-3
+                elif obs_unit == "l/s":
+                    pt["sim"] = pt["sim"] * 1e3
 
         # Slice obs to plot range
         if len(obs_dates) > 0 and plotstart is not None and plotend is not None:
@@ -509,26 +499,26 @@ class HydrologicalTwin(HTPersistenceMixin):
             obs_mask = (obs_dates >= d_start) & (obs_dates <= d_end)
             obs_dates = obs_dates[obs_mask]
             for pt in obs_points_data:
-                pt['obs'] = pt['obs'][obs_mask]
+                pt["obs"] = pt["obs"][obs_mask]
 
         # Apply steady-state obs aggregation
         if aggr is not None:
             for pt in obs_points_data:
-                obs = pt['obs']
-                if aggr == 'mean':
-                    pt['obs'] = np.full_like(obs, np.nanmean(obs))
-                elif aggr == 'min':
-                    pt['obs'] = np.full_like(obs, np.nanmin(obs))
-                elif aggr == 'max':
-                    pt['obs'] = np.full_like(obs, np.nanmax(obs))
+                obs = pt["obs"]
+                if aggr == "mean":
+                    pt["obs"] = np.full_like(obs, np.nanmean(obs))
+                elif aggr == "min":
+                    pt["obs"] = np.full_like(obs, np.nanmin(obs))
+                elif aggr == "max":
+                    pt["obs"] = np.full_like(obs, np.nanmax(obs))
                 elif isinstance(aggr, float):
-                    pt['obs'] = np.full_like(obs, np.nanquantile(obs, aggr))
+                    pt["obs"] = np.full_like(obs, np.nanquantile(obs, aggr))
 
         # Compute performance criteria per obs point
         if compute_criteria and obs_points_data:
             for pt in obs_points_data:
-                sim_for_crit = pt['sim']
-                obs_for_crit = pt['obs']
+                sim_for_crit = pt["sim"]
+                obs_for_crit = pt["obs"]
 
                 # Slice to criteria period if specified
                 if crit_start is not None and crit_end is not None:
@@ -545,7 +535,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                     sim_for_crit = sim_for_crit[:n]
                     obs_for_crit = obs_for_crit[:n]
 
-                pt['criteria'] = self.compute_performance_stats(
+                pt["criteria"] = self.compute_performance_stats(
                     sim=sim_for_crit,
                     obs=obs_for_crit,
                     metrics=criteria_metrics,
@@ -556,19 +546,21 @@ class HydrologicalTwin(HTPersistenceMixin):
         if comp.extraction is not None:
             for ext_point in comp.extraction.ext_point:
                 sim_vals = sim_response.data[ext_point.id_cell - 1, :]
-                ext_points_data.append({
-                    'name': ext_point.name,
-                    'id_cell': ext_point.id_cell,
-                    'id_layer': ext_point.id_layer,
-                    'sim': sim_vals,
-                })
+                ext_points_data.append(
+                    {
+                        "name": ext_point.name,
+                        "id_cell": ext_point.id_cell,
+                        "id_layer": ext_point.id_layer,
+                        "sim": sim_vals,
+                    }
+                )
 
         return {
-            'sim_dates': sim_dates,
-            'obs_dates': obs_dates,
-            'compartment_name': comp.compartment,
-            'obs_points': obs_points_data,
-            'ext_points': ext_points_data,
+            "sim_dates": sim_dates,
+            "obs_dates": obs_dates,
+            "compartment_name": comp.compartment,
+            "obs_points": obs_points_data,
+            "ext_points": ext_points_data,
         }
 
     @public_access
@@ -582,7 +574,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutsdate: str = None,
         cutedate: str = None,
         id_layer: int = 0,
-        target_unit: str = 'mm/j',
+        target_unit: str = "mm/j",
     ) -> ExtractValuesResponse:
         """Extract watbal values with vectorized unit conversion.
 
@@ -600,7 +592,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             cutedate=cutedate,
         )
 
-        if target_unit != 'm3/s':
+        if target_unit != "m3/s":
             layer_info = self.get_layer_info(id_compartment, id_layer)
             cell_areas = np.array(layer_info.cell_areas)
             response.data = Operator.convert_watbal_units(
@@ -679,16 +671,24 @@ class HydrologicalTwin(HTPersistenceMixin):
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
         response = self.extract_watbal_for_map(
-            id_compartment=id_compartment, outtype=outtype, param=param,
-            syear=syear, eyear=eyear,
-            cutsdate=cutsdate, cutedate=cutedate,
-            id_layer=id_layer, target_unit=target_unit,
+            id_compartment=id_compartment,
+            outtype=outtype,
+            param=param,
+            syear=syear,
+            eyear=eyear,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
+            id_layer=id_layer,
+            target_unit=target_unit,
         )
 
         agg_df = self.aggregate_for_map(
-            data=response.data, dates=response.dates,
-            agg=agg, frequency=frequency,
-            pluriannual=pluriannual, year_end_month=8,
+            data=response.data,
+            dates=response.dates,
+            agg=agg,
+            frequency=frequency,
+            pluriannual=pluriannual,
+            year_end_month=8,
             cell_ids=comp_info.cell_ids,
         )
 
@@ -721,24 +721,37 @@ class HydrologicalTwin(HTPersistenceMixin):
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
         rain = self.extract_watbal_for_map(
-            id_compartment=id_compartment, outtype="MB", param="rain",
-            syear=syear, eyear=eyear,
-            cutsdate=cutsdate, cutedate=cutedate,
-            id_layer=id_layer, target_unit="mm/j",
+            id_compartment=id_compartment,
+            outtype="MB",
+            param="rain",
+            syear=syear,
+            eyear=eyear,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
+            id_layer=id_layer,
+            target_unit="mm/j",
         )
         etr = self.extract_watbal_for_map(
-            id_compartment=id_compartment, outtype="MB", param="etr",
-            syear=syear, eyear=eyear,
-            cutsdate=cutsdate, cutedate=cutedate,
-            id_layer=id_layer, target_unit="mm/j",
+            id_compartment=id_compartment,
+            outtype="MB",
+            param="etr",
+            syear=syear,
+            eyear=eyear,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
+            id_layer=id_layer,
+            target_unit="mm/j",
         )
 
         pe_data = Operator.compute_effective_rainfall(rain.data, etr.data)
 
         agg_df = self.aggregate_for_map(
-            data=pe_data, dates=rain.dates,
-            agg=agg, frequency=frequency,
-            pluriannual=pluriannual, year_end_month=8,
+            data=pe_data,
+            dates=rain.dates,
+            agg=agg,
+            frequency=frequency,
+            pluriannual=pluriannual,
+            year_end_month=8,
             cell_ids=comp_info.cell_ids,
         )
 
@@ -777,24 +790,33 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp_info = self.get_compartment_info(id_compartment)
 
         response = self.extract_values(
-            id_compartment=id_compartment, outtype=outtype, param=param,
-            syear=syear, eyear=eyear,
+            id_compartment=id_compartment,
+            outtype=outtype,
+            param=param,
+            syear=syear,
+            eyear=eyear,
             id_layer=-9999,
-            cutsdate=cutsdate, cutedate=cutedate,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
         )
 
         agg_df = self.aggregate_for_map(
-            data=response.data, dates=response.dates,
-            agg=agg, frequency=frequency,
-            pluriannual=pluriannual, year_end_month=8,
+            data=response.data,
+            dates=response.dates,
+            agg=agg,
+            frequency=frequency,
+            pluriannual=pluriannual,
+            year_end_month=8,
             cell_ids=comp_info.cell_ids,
         )
 
         crs = layers[0].crs if layers else None
 
         gdf = Manage.Spatial.assemble_multi_layer_geodataframe(
-            agg_df=agg_df, layers=layers,
-            crs=crs, layer_id_offset=layer_id_offset,
+            agg_df=agg_df,
+            layers=layers,
+            crs=crs,
+            layer_id_offset=layer_id_offset,
         )
 
         if outcropping_cell_ids is not None:
@@ -822,6 +844,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         class _ExdStub:
             """Minimal stub providing the post_process_directory attribute."""
+
             def __init__(self, directory):
                 self.post_process_directory = directory
 
@@ -900,7 +923,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         plot_title: str,
         output_folder: str = None,
         output_name: str = None,
-        yaxis_unit: str = 'mm',
+        yaxis_unit: str = "mm",
     ):
         """Render budget bar plot. Delegates to Renderer."""
         Renderer.plot_budget_barplot(
@@ -984,42 +1007,45 @@ class HydrologicalTwin(HTPersistenceMixin):
         )
 
         # --- Convert NumPy → DataFrames for Renderer ---
-        sim_dates_idx = pd.DatetimeIndex(data['sim_dates'].astype('datetime64[D]'))
-        obs_dates_idx = pd.DatetimeIndex(data['obs_dates'].astype('datetime64[D]'))
+        sim_dates_idx = pd.DatetimeIndex(data["sim_dates"].astype("datetime64[D]"))
+        obs_dates_idx = pd.DatetimeIndex(data["obs_dates"].astype("datetime64[D]"))
 
         # Build simdf: one column per unique cell id (keyed by id_cell)
         sim_columns = {}
-        for pt in data['obs_points']:
-            if pt['id_cell'] not in sim_columns:
-                sim_columns[pt['id_cell']] = pt['sim']
-        for pt in data['ext_points']:
-            if pt['id_cell'] not in sim_columns:
-                sim_columns[pt['id_cell']] = pt['sim']
+        for pt in data["obs_points"]:
+            if pt["id_cell"] not in sim_columns:
+                sim_columns[pt["id_cell"]] = pt["sim"]
+        for pt in data["ext_points"]:
+            if pt["id_cell"] not in sim_columns:
+                sim_columns[pt["id_cell"]] = pt["sim"]
         simdf = pd.DataFrame(sim_columns, index=sim_dates_idx)
 
         # Build obs_df: one column per obs point id_point
         obs_df = None
-        if data['obs_points']:
+        if data["obs_points"]:
             obs_df = pd.DataFrame(
-                {pt['id_point']: pt['obs'] for pt in data['obs_points']},
+                {pt["id_point"]: pt["obs"] for pt in data["obs_points"]},
                 index=obs_dates_idx,
             )
 
         # Build obs/ext point info dicts (include pre-computed criteria)
         obs_points_info = [
-            {'name': pt['name'], 'id_cell': pt['id_cell'],
-             'id_layer': pt['id_layer'], 'id_point': pt['id_point'],
-             'criteria': pt.get('criteria')}
-            for pt in data['obs_points']
+            {
+                "name": pt["name"],
+                "id_cell": pt["id_cell"],
+                "id_layer": pt["id_layer"],
+                "id_point": pt["id_point"],
+                "criteria": pt.get("criteria"),
+            }
+            for pt in data["obs_points"]
         ]
         ext_points_info = [
-            {'name': pt['name'], 'id_cell': pt['id_cell'], 'id_layer': pt['id_layer']}
-            for pt in data['ext_points']
+            {"name": pt["name"], "id_cell": pt["id_cell"], "id_layer": pt["id_layer"]}
+            for pt in data["ext_points"]
         ]
 
         pdf_file_path = os.path.join(
-            directory,
-            name_file + "_" + plotstartdate + "_" + plotenddate + ".pdf"
+            directory, name_file + "_" + plotstartdate + "_" + plotenddate + ".pdf"
         )
 
         Renderer.render_simobs_pdf(
@@ -1061,7 +1087,13 @@ class HydrologicalTwin(HTPersistenceMixin):
         """
         # Default criteria metrics for interactive rendering
         interactive_criteria_metrics = [
-            "n_obs", "avg_ratio", "pbias", "std_ratio", "rmse", "nash", "kge",
+            "n_obs",
+            "avg_ratio",
+            "pbias",
+            "std_ratio",
+            "rmse",
+            "nash",
+            "kge",
         ]
 
         data = self._prepare_sim_obs_data(
@@ -1082,18 +1114,18 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         # --- Convert NumPy → per-point DataFrames for Renderer ---
         # Unit conversion already applied upstream in _prepare_sim_obs_data
-        sim_dates_idx = pd.DatetimeIndex(data['sim_dates'].astype('datetime64[D]'))
-        obs_dates_idx = pd.DatetimeIndex(data['obs_dates'].astype('datetime64[D]'))
+        sim_dates_idx = pd.DatetimeIndex(data["sim_dates"].astype("datetime64[D]"))
+        obs_dates_idx = pd.DatetimeIndex(data["obs_dates"].astype("datetime64[D]"))
 
         sim_obs_data = []
         criteria_per_point = []
-        for pt in data['obs_points']:
-            sim_series = pd.Series(pt['sim'], index=sim_dates_idx, name='sim')
-            obs_series = pd.Series(pt['obs'], index=obs_dates_idx, name='obs')
+        for pt in data["obs_points"]:
+            sim_series = pd.Series(pt["sim"], index=sim_dates_idx, name="sim")
+            obs_series = pd.Series(pt["obs"], index=obs_dates_idx, name="obs")
             df_sim_obs = pd.concat([sim_series, obs_series], axis=1)
             df_sim_obs = df_sim_obs.loc[plotstart:plotend]
-            sim_obs_data.append((df_sim_obs, pt['name']))
-            criteria_per_point.append(pt.get('criteria'))
+            sim_obs_data.append((df_sim_obs, pt["name"]))
+            criteria_per_point.append(pt.get("criteria"))
 
         Renderer.render_simobs_interactive(
             sim_obs_data=sim_obs_data,
@@ -1248,7 +1280,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             compartment=comp,
             spatial_operator=spatial_operator,
             spatial_manager=self.spatial,
-            **operator_kwargs
+            **operator_kwargs,
         )
 
         # Save to CSV if requested
@@ -1256,25 +1288,25 @@ class HydrologicalTwin(HTPersistenceMixin):
         if output_csv_path is not None:
             suffix = f"_{spatial_operator}" if spatial_operator else "_area"
             csv_path = Path(
-                output_csv_path +
-                f"/{comp.compartment}_{param}_{outtype}_{syear}-{eyear}{suffix}.csv"
+                output_csv_path
+                + f"/{comp.compartment}_{param}_{outtype}_{syear}-{eyear}{suffix}.csv"
             )
 
             # Create header with cell indices
             n_cells = subset_data.shape[0]
             if cell_ids is not None:
-                header = 'Date\t' + '\t'.join([f'Cell_{cid}' for cid in cell_ids])
+                header = "Date\t" + "\t".join([f"Cell_{cid}" for cid in cell_ids])
             else:
                 # If using spatial operator, use generic numbering
-                header = 'Date\t' + '\t'.join([f'Cell_{i}' for i in range(n_cells)])
+                header = "Date\t" + "\t".join([f"Cell_{i}" for i in range(n_cells)])
 
             # Save with dates
-            with open(csv_path, 'w') as f:
-                f.write(header + '\n')
+            with open(csv_path, "w") as f:
+                f.write(header + "\n")
                 for t, date in enumerate(full_response.dates):
                     date_str = str(date)[:10]
-                    row_data = '\t'.join(f'{val:.6f}' for val in subset_data[:, t])
-                    f.write(f'{date_str}\t{row_data}\n')
+                    row_data = "\t".join(f"{val:.6f}" for val in subset_data[:, t])
+                    f.write(f"{date_str}\t{row_data}\n")
 
         # Build metadata
         meta = {
@@ -1390,10 +1422,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         # Perform spatial averaging
         averaged_data = Operator.sp_operator(
-            data=data,
-            operation=operation,
-            areas=areas,
-            compartment=comp
+            data=data, operation=operation, areas=areas, compartment=comp
         )
 
         return SpatialAverageResponse(

@@ -1,15 +1,15 @@
-#/***************************************************************************
+# /***************************************************************************
 # CaWaQSViz
 #
 # Description
-#							 -------------------
-#		begin				: 2023
-#		git sha				: $Format:%H$
-#		copyright			: (C) 2023 by Lise-Marie GIROD
-#		email				: lise-marie.girod@minesparis.psl.eu
+# -------------------
+# begin				: 2023
+# git sha				: $Format:%H$
+# copyright			: (C) 2023 by Lise-Marie GIROD
+# email				: lise-marie.girod@minesparis.psl.eu
 # ***************************************************************************/
 #
-#/***************************************************************************
+# /***************************************************************************
 # *																		    *
 # *   This program is free software; you can redistribute it and/or modify  *
 # *   it under the terms of the GNU General Public License as published by  *
@@ -23,21 +23,21 @@
 #
 # ***************************************************************************/
 
+import os
 from typing import Dict, List, Union
 
 import geopandas as gpd
 import shapely
 
 from hydrological_twin_alpha_series.config.constants import (
-    link_obs_mesh,
-    obs_types,
-    out_caw_folder,
     reversed_module_caw,
 )
 from hydrological_twin_alpha_series.domain.Extraction import Extraction, ExtractionPoint
-from hydrological_twin_alpha_series.tools.spatial_utils import get_nearest_cell, read_hyd_corresp_file
+from hydrological_twin_alpha_series.tools.spatial_utils import (
+    get_nearest_cell,
+    read_hyd_corresp_file,
+)
 
-import os
 sep = os.sep  # Ensure compatibility with different OS path separators
 
 
@@ -58,13 +58,22 @@ class ObsPoint(ExtractionPoint):
     :param id_mesh: ID of the mesh to which the observation point belongs
     :type id_mesh: int
     """
-    def __init__(self, id_cell: int, id_point: Union[str, None], geometry_point: shapely.Point, name: str, id_layer: int, id_mesh: int):
+
+    def __init__(
+        self,
+        id_cell: int,
+        id_point: Union[str, None],
+        geometry_point: shapely.Point,
+        name: str,
+        id_layer: int,
+        id_mesh: int,
+    ):
         super().__init__(
             id_cell=id_cell,
             geometry_point=geometry_point,
             name=name,
             id_layer=id_layer,
-            id_mesh=id_mesh
+            id_mesh=id_mesh,
         )
 
         self.id_point = id_point  # id point : data file should have the same name as the id_cell
@@ -73,7 +82,10 @@ class ObsPoint(ExtractionPoint):
         print(self.__repr__())
 
     def __repr__(self):
-        return f"{self.name} : {self.id_point} (linked to cell {self.id_cell} of layer {self.id_layer} of mesh {self.id_mesh})"
+        return (
+            f"{self.name} : {self.id_point} (linked to cell {self.id_cell} "
+            f"of layer {self.id_layer} of mesh {self.id_mesh})"
+        )
 
 
 class Observation(Extraction):
@@ -95,6 +107,7 @@ class Observation(Extraction):
     :param mesh_gdfs: Dictionary mapping layer names to mesh GeoDataFrames
     :type mesh_gdfs: Dict[str, gpd.GeoDataFrame]
     """
+
     def __init__(
         self,
         id_obs: int,
@@ -102,7 +115,7 @@ class Observation(Extraction):
         config,
         out_caw_directory: str,
         obs_gdf: gpd.GeoDataFrame,
-        mesh_gdfs: Dict[str, gpd.GeoDataFrame]
+        mesh_gdfs: Dict[str, gpd.GeoDataFrame],
     ):
         self.id_type = id_obs
         self.id_compartment = id_compartment
@@ -110,7 +123,7 @@ class Observation(Extraction):
         self.out_caw_directory = out_caw_directory
 
         self.obs_gdf = obs_gdf
-        self.crs = obs_gdf.crs           # pyproj.CRS or None — CRS of the observation point layer
+        self.crs = obs_gdf.crs  # pyproj.CRS or None — CRS of the observation point layer
         self.mesh_gdfs = mesh_gdfs
 
         self.obs_type = self.defineExtType()
@@ -145,7 +158,7 @@ class Observation(Extraction):
 
         # Get column names/indices
         id_point_col = None
-        if config.obsIdsColCells[id_obs] != '':
+        if config.obsIdsColCells[id_obs] != "":
             id_point_col_idx = int(config.obsIdsColCells[id_obs])
             id_point_col = self.obs_gdf.columns[id_point_col_idx]
 
@@ -175,10 +188,10 @@ class Observation(Extraction):
 
             # Define closer cell in layer in mesh
             if cell_col is not None:
-                print('Define Cell id from dbf')
+                print("Define Cell id from dbf")
                 id_cell = row[cell_col]
 
-                if self.id_compartment == reversed_module_caw['HYD']:
+                if self.id_compartment == reversed_module_caw["HYD"]:
                     try:
                         corr = read_hyd_corresp_file(self.out_caw_directory)
                         id_cell = corr["ID_ABS"].loc[id_cell]
@@ -186,7 +199,7 @@ class Observation(Extraction):
                         pass  # keep GIS id_cell as-is
 
             else:
-                print('Define Cell id from closer cell function')
+                print("Define Cell id from closer cell function")
                 # Get the mesh layer and find nearest cell
                 layer_name = self.config.resolutionNames[self.id_compartment][0][id_layer]
                 mesh_gdf = self.mesh_gdfs[layer_name]
@@ -211,7 +224,7 @@ class Observation(Extraction):
                         geometry_point=geometry_point,
                         name=name_point,
                         id_layer=id_layer,
-                        id_mesh=self.id_mesh
+                        id_mesh=self.id_mesh,
                     )
                 )
 

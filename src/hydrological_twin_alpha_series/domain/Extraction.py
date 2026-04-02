@@ -1,15 +1,15 @@
-#/***************************************************************************
+# /***************************************************************************
 # CaWaQSViz
 #
 # Description
-#							 -------------------
-#		begin				: 2023
-#		git sha				: $Format:%H$
-#		copyright			: (C) 2023 by Lise-Marie GIROD
-#		email				: lise-marie.girod@minesparis.psl.eu
+# -------------------
+# begin				: 2023
+# git sha				: $Format:%H$
+# copyright			: (C) 2023 by Lise-Marie GIROD
+# email				: lise-marie.girod@minesparis.psl.eu
 # ***************************************************************************/
 #
-#/***************************************************************************
+# /***************************************************************************
 # *																		    *
 # *   This program is free software; you can redistribute it and/or modify  *
 # *   it under the terms of the GNU General Public License as published by  *
@@ -23,7 +23,8 @@
 #
 # ***************************************************************************/
 
-from typing import Dict, List, Union
+import os
+from typing import Dict, List
 
 import geopandas as gpd
 import shapely
@@ -34,13 +35,15 @@ from hydrological_twin_alpha_series.config.constants import (
     out_caw_folder,
     reversed_module_caw,
 )
-from hydrological_twin_alpha_series.tools.spatial_utils import get_nearest_cell, read_hyd_corresp_file
+from hydrological_twin_alpha_series.tools.spatial_utils import (
+    get_nearest_cell,
+    read_hyd_corresp_file,
+)
 
-import os
 sep = os.sep
 
 
-class ExtractionPoint():
+class ExtractionPoint:
     """
     Extraction Point Class
 
@@ -55,7 +58,10 @@ class ExtractionPoint():
     :param id_mesh: ID of the mesh to which the extraction point belongs
     :type id_mesh: int
     """
-    def __init__(self, id_cell: int, geometry_point: shapely.Point, name: str, id_layer: int, id_mesh: int):
+
+    def __init__(
+        self, id_cell: int, geometry_point: shapely.Point, name: str, id_layer: int, id_mesh: int
+    ):
         self.id_cell = id_cell
         self.geometry = geometry_point
         self.name = name
@@ -63,10 +69,13 @@ class ExtractionPoint():
         self.id_layer = id_layer
 
     def __repr__(self):
-        return f"Extraction Point ({self.name}) : linked to cell {self.id_cell} of layer {self.id_layer} of mesh {self.id_mesh}"
+        return (
+            f"Extraction Point ({self.name}) : linked to cell {self.id_cell} "
+            f"of layer {self.id_layer} of mesh {self.id_mesh}"
+        )
 
 
-class Extraction():
+class Extraction:
     def __init__(
         self,
         id_type: int,
@@ -74,7 +83,7 @@ class Extraction():
         config,
         out_caw_directory: str,
         ext_gdf: gpd.GeoDataFrame,
-        mesh_gdfs: Dict[str, gpd.GeoDataFrame]
+        mesh_gdfs: Dict[str, gpd.GeoDataFrame],
     ):
         """
         Extraction class constructor
@@ -175,17 +184,17 @@ class Extraction():
 
             # Define cell id
             if cell_col is not None:
-                print('Define Cell id from dbf')
+                print("Define Cell id from dbf")
                 id_cell = row[cell_col]
 
-                if self.id_compartment == reversed_module_caw['HYD']:
+                if self.id_compartment == reversed_module_caw["HYD"]:
                     try:
                         corr = read_hyd_corresp_file(self.out_caw_directory)
                         id_cell = corr["ID_ABS"].loc[id_cell]
                     except FileNotFoundError:
                         pass  # keep GIS id_cell as-is
             else:
-                print('Define Cell id from closer cell function')
+                print("Define Cell id from closer cell function")
                 # Get the mesh layer and find nearest cell
                 layer_name = self.config.resolutionNames[self.id_compartment][0][id_layer]
                 mesh_gdf = self.mesh_gdfs[layer_name]
@@ -209,7 +218,7 @@ class Extraction():
                         geometry_point=geometry_point,
                         name=name_point,
                         id_layer=id_layer,
-                        id_mesh=self.id_compartment
+                        id_mesh=self.id_compartment,
                     )
                 )
             else:
