@@ -6,6 +6,13 @@ It owns the hydrological twin domain model, post-processing services, API facade
 
 This repository is designed to be developed independently from the QGIS application layer and consumed by cawaqsviz through an editable install from a Git submodule checkout.
 
+## Authorship
+
+- Project Manager: Nicolas Flipo
+- Main Developper: Simone Mazzarelli
+- Other contributors to come: Tristan Bourgeois, Nicolas Gallois, ...
+- Proto implementation as CaWaQS-ViZ backend: Lise-Marie Girod
+
 ## Layout
 
 - `src/hydrological_twin_alpha_series/domain`: compartment, mesh, observation, and extraction entities
