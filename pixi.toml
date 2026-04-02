@@ -1,0 +1,19 @@
+[workspace]
+authors = ["CaWaQS contributors"]
+channels = ["conda-forge"]
+name = "HydrologicalTwinAlphaSeries"
+platforms = ["linux-64"]
+version = "0.1.0-alpha"
+
+[tasks]
+run = "python -m hydrological_twin_alpha_series"
+test = "pytest"
+lint = "ruff check src tests"
+
+[dependencies]
+python = "3.11.*"
+pytest = ">=8,<9"
+ruff = ">=0.12,<1"
+
+[pypi-dependencies]
+hydrological-twin-alpha-series = { path = ".", editable = true }

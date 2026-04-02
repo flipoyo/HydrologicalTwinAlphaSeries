@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hydrological-twin-alpha-series"
+version = "0.1.0-alpha"
+description = "Standalone backend package for the CaWaQS alpha-series hydrological twin workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "EPL-2.0"
+authors = [
+    { name = "CaWaQS contributors" },
+]
+dependencies = [
+    "geopandas>=1.1.2,<2",
+    "matplotlib>=3.10.8,<4",
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<3",
+    "plotly>=5.19,<7",
+    "scipy>=1.17.1,<2",
+    "shapely>=2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hydrological_twin_alpha_series"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

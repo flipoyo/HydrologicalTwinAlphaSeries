@@ -1,0 +1,94 @@
+# HydrologicalTwinAlphaSeries
+
+HydrologicalTwinAlphaSeries is the standalone scientific backend for the CaWaQS alpha.x series. It owns the hydrological twin domain model, post-processing services, API facade, and backend configuration objects so the visualization layer can remain a separate application.
+
+This repository is designed to be developed independently from the QGIS application layer and consumed by cawaqsviz through an editable install from a Git submodule checkout.
+
+## Layout
+
+- `src/hydrological_twin_alpha_series/domain`: compartment, mesh, observation, and extraction entities
+- `src/hydrological_twin_alpha_series/services`: analysis, rendering, and vector operators
+- `src/hydrological_twin_alpha_series/ht`: `HydrologicalTwin` facade and API types
+- `src/hydrological_twin_alpha_series/config`: backend constants and configuration models
+- `src/hydrological_twin_alpha_series/tools`: shared utilities
+- `tests`: smoke coverage for imports and backend construction
+- `docs`: backend-focused API examples and architecture notes
+
+## Setup
+
+```bash
+pixi install
+```
+
+This installs the package in editable mode from the local checkout.
+
+## Minimal Usage
+
+```python
+from hydrological_twin_alpha_series import ConfigGeometry, ConfigProject, HydrologicalTwin
+
+config_geom = ConfigGeometry.fromDict(
+	{
+		"ids_compartment": [1],
+		"resolutionNames": {1: [["AQ_LAYER"]]},
+		"ids_col_cell": {1: 0},
+		"obsNames": {},
+		"obsIdsColCells": {},
+		"obsIdsColNames": {},
+		"obsIdsColLayers": {},
+		"obsIdsCell": {},
+		"extNames": {},
+		"extIdsColNames": {},
+		"extIdsColLayers": {},
+		"extIdsColCells": {},
+	}
+)
+config_proj = ConfigProject.fromDict(
+	{
+		"json_path_geometries": "geometry.json",
+		"projectName": "demo",
+		"cawOutDirectory": "/tmp/out",
+		"startSim": 2000,
+		"endSim": 2001,
+		"obsDirectory": "/tmp/obs",
+		"regime": "annual",
+	}
+)
+
+twin = HydrologicalTwin(
+	config_geom=config_geom,
+	config_proj=config_proj,
+	out_caw_directory=config_proj.cawOutDirectory,
+	obs_directory=config_proj.obsDirectory,
+)
+
+print(twin.list_compartments())
+```
+
+## Developer Workflow
+
+Run a package smoke check:
+
+```bash
+pixi run run
+```
+
+Run the tests:
+
+```bash
+pixi run test
+```
+
+Run linting:
+
+```bash
+pixi run lint
+```
+
+The integration smoke test that constructs a minimal `HydrologicalTwin` object lives in `tests/integration/test_hydrological_twin_smoke.py`.
+
+## Integration with cawaqsviz
+
+The intended integration point is a Git submodule mounted at `external/HydrologicalTwinAlphaSeries` inside the `cawaqsviz` repository. The cawaqsviz Pixi environment should install this package in editable mode instead of carrying a duplicated backend tree.
+
+Manual GitHub and submodule registration steps belong to the application repository workflow and are intentionally kept separate from this backend package setup.
