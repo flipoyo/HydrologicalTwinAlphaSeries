@@ -25,3 +25,14 @@ The long-term target is:
 - `cawaqsviz/external/HydrologicalTwinAlphaSeries`: Git submodule checkout of the backend repository
 
 The current source tree is structured to support that split without changing the public `HydrologicalTwin` facade.
+
+## Access policy exploration
+
+The recommended direction for this repository is to keep the facade private by default and mark supported entry points explicitly:
+
+- apply `@private_access` to the facade class
+- apply `@public_access` only to methods meant to be called by external applications such as `cawaqsviz`
+
+This approach is preferable to treating all methods as public and trying to mark a few as private afterwards, because it fails closed when the API grows. It should still be viewed as a contract and CI/CD gate rather than as a security sandbox, since Python does not provide true in-process access isolation.
+
+A fast CD check is feasible without adding Django-specific code: the import-time validation and `tests/unit/test_security_access.py` provide a lightweight gate that can be called from any Python or Django pipeline.

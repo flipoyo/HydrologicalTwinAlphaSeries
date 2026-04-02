@@ -89,6 +89,15 @@ pixi run lint
 
 The integration smoke test that constructs a minimal `HydrologicalTwin` object lives in `tests/integration/test_hydrological_twin_smoke.py`.
 
+## Security access policy exploration
+
+For the `HydrologicalTwin` facade, the repository now uses a private-by-default policy:
+
+- `@private_access` on the class means every non-underscored method must be declared explicitly
+- `@public_access` marks methods that are part of the supported external facade for callers such as CaWaQS-ViZ
+
+This is an API-governance pattern, not a hard security boundary: Python callers in the same process can still reach any object they already hold. The fast check is still useful in CI/CD because importing the class or running `pytest tests/unit/test_security_access.py` fails if a new public method is added without an explicit decorator. The same check can be reused in a Django-based delivery pipeline without depending on Django itself.
+
 ## Integration with cawaqsviz
 
 The intended integration point is a Git submodule mounted at `external/HydrologicalTwinAlphaSeries` inside the `cawaqsviz` repository. The cawaqsviz Pixi environment should install this package in editable mode instead of carrying a duplicated backend tree.

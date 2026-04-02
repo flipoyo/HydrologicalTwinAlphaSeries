@@ -21,6 +21,7 @@ from hydrological_twin_alpha_series.Renderer import Renderer
 from hydrological_twin_alpha_series.Vec_Operator import Comparator, Extractor, Operator
 from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
 from hydrological_twin_alpha_series.config.constants import module_caw, obs_config
+from hydrological_twin_alpha_series.security import private_access, public_access
 from hydrological_twin_alpha_series.tools.spatial_utils import verify_crs_match
 
 from .api_types import (
@@ -35,6 +36,7 @@ from .api_types import (
 from .persistence import HTPersistenceMixin
 
 
+@private_access
 class HydrologicalTwin(HTPersistenceMixin):
     """Monolithic backend facade for CaWaQS-ViZ.
 
@@ -96,6 +98,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     # ║  L1 — MODEL LAYER  (Compartment & Mesh metadata)             ║
     # ╚════════════════════════════════════════════════════════════════╝
 
+    @public_access
     def get_compartment(self, id_compartment: int) -> Compartment:
         """Return a registered Compartment.
 
@@ -108,6 +111,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
         return self.compartments[id_compartment]
 
+    @public_access
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
         comp = self.get_compartment(id_compartment)
@@ -122,6 +126,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             regime=comp.regime,
         )
 
+    @public_access
     def list_compartments(self) -> List[CompartmentInfo]:
         """Return info for all registered compartments."""
         return [
@@ -129,6 +134,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             for cid in self.compartments
         ]
 
+    @public_access
     def get_layer_info(self, id_compartment: int, id_layer: int) -> LayerInfo:
         """Return cell data for a specific mesh layer."""
         comp = self.get_compartment(id_compartment)
@@ -144,6 +150,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             crs=layer.crs,
         )
 
+    @public_access
     def get_all_layers(self, id_compartment: int) -> List[LayerInfo]:
         """Return LayerInfo for every layer in a compartment's mesh."""
         comp = self.get_compartment(id_compartment)
@@ -156,6 +163,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     # ║  L2 — DATA LAYER  (Observations & Simulations I/O)           ║
     # ╚════════════════════════════════════════════════════════════════╝
 
+    @public_access
     def get_observation_info(self, id_compartment: int) -> Optional[ObservationInfo]:
         """Return a serializable snapshot of observation metadata.
 
@@ -178,6 +186,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             mesh_ids=[p.id_mesh for p in obs.obs_points],
         )
 
+    @public_access
     def extract_values(
         self,
         id_compartment: int,
@@ -243,6 +252,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             },
         )
     
+    @public_access
     def read_observations(
         self,
         id_compartment: int,
@@ -312,11 +322,13 @@ class HydrologicalTwin(HTPersistenceMixin):
             },
         )
 
+    @public_access
     def read_sim_steady(self, id_compartment: int) -> pd.DataFrame:
         """Read steady-state simulation data. Wraps Manage.Temporal.readSimSteady."""
         comp = self.get_compartment(id_compartment)
         return self.temporal.readSimSteady(comp)
 
+    @public_access
     def read_obs_steady(
         self,
         id_compartment: int,
@@ -340,6 +352,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     # ║  L3 — ESTIMATION LAYER  (comparison, filtering, inference)   ║
     # ╚════════════════════════════════════════════════════════════════╝
 
+    @public_access
     def compute_performance_stats(
         self,
         sim: np.ndarray,
@@ -558,6 +571,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             'ext_points': ext_points_data,
         }
 
+    @public_access
     def extract_watbal_for_map(
         self,
         id_compartment: int,
@@ -597,6 +611,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         return response
 
+    @public_access
     def aggregate_for_map(
         self,
         data: np.ndarray,
@@ -640,6 +655,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         df = pd.DataFrame(arr_agg, index=date_labels, columns=cell_ids)
         return df
 
+    @public_access
     def build_watbal_spatial_gdf(
         self,
         id_compartment: int,
@@ -683,6 +699,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             crs=layer_info.crs,
         )
 
+    @public_access
     def build_effective_rainfall_gdf(
         self,
         id_compartment: int,
@@ -732,6 +749,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             crs=layer_info.crs,
         )
 
+    @public_access
     def build_aq_spatial_gdf(
         self,
         id_compartment: int,
@@ -784,6 +802,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         return gdf
 
+    @public_access
     def build_aquifer_outcropping(
         self,
         id_compartment: int,
@@ -816,6 +835,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         )
         return np.array([cell.id for cell in cells])
 
+    @public_access
     def compute_budget_variable(
         self,
         data: np.ndarray,
@@ -846,6 +866,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             pluriannual=pluriannual,
         )
 
+    @public_access
     def compute_hydrological_regime(
         self,
         id_compartment: int,
@@ -872,6 +893,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     # ║  L5 — CARTOGRAPHIC LAYER  (visualization & rendering)       ║
     # ╚════════════════════════════════════════════════════════════════╝
 
+    @public_access
     def render_budget_barplot(
         self,
         data_dict: dict,
@@ -889,6 +911,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             yaxis_unit=yaxis_unit,
         )
 
+    @public_access
     def render_hydrological_regime(
         self,
         data: np.ndarray,
@@ -916,6 +939,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             years=years,
         )
 
+    @public_access
     def render_sim_obs_pdf(
         self,
         id_compartment: int,
@@ -1011,6 +1035,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             plotenddate=plotenddate,
         )
 
+    @public_access
     def render_sim_obs_interactive(
         self,
         id_compartment: int,
@@ -1093,6 +1118,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     # ║  once wired into the frontend.                               ║
     # ╚════════════════════════════════════════════════════════════════╝
 
+    @public_access
     def has_observations(self, id_compartment: int) -> bool:
         """Check if a compartment has observation data.
 
@@ -1101,6 +1127,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp = self.get_compartment(id_compartment)
         return comp.obs is not None
 
+    @public_access
     def extract_area_values(
         self,
         id_compartment: int,
@@ -1274,6 +1301,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             meta=meta,
         )
 
+    @public_access
     def apply_temporal_operator(
         self,
         arr: np.ndarray,
@@ -1340,6 +1368,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             meta=meta,
         )
 
+    @public_access
     def apply_spatial_average(
         self,
         id_compartment: int,
