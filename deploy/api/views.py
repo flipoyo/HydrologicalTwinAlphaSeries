@@ -148,9 +148,9 @@ def init_twin(request: Request) -> Response:
         )
         twin_store.set_twin(twin)
         return Response({"status": "initialised"}, status=status.HTTP_201_CREATED)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError):
         return Response(
-            {"error": str(exc)},
+            {"error": "Invalid configuration payload."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -173,8 +173,11 @@ def get_compartment(request: Request, id_compartment: int) -> Response:
         return err
     try:
         info = twin.get_compartment_info(id_compartment)
-    except KeyError as exc:
-        return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+    except KeyError:
+        return Response(
+            {"error": f"Compartment {id_compartment} not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
     return Response(_serialize_compartment_info(info))
 
 
@@ -186,8 +189,11 @@ def get_layers(request: Request, id_compartment: int) -> Response:
         return err
     try:
         layers = twin.get_all_layers(id_compartment)
-    except KeyError as exc:
-        return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+    except KeyError:
+        return Response(
+            {"error": f"Compartment {id_compartment} not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
     return Response([_serialize_layer_info(layer) for layer in layers])
 
 
@@ -199,8 +205,11 @@ def get_observations(request: Request, id_compartment: int) -> Response:
         return err
     try:
         info = twin.get_observation_info(id_compartment)
-    except KeyError as exc:
-        return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+    except KeyError:
+        return Response(
+            {"error": f"Compartment {id_compartment} not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
     if info is None:
         return Response(status=status.HTTP_204_NO_CONTENT)
     return Response(_serialize_observation_info(info))
