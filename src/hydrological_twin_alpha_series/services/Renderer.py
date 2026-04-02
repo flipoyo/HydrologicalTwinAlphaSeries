@@ -506,7 +506,6 @@ class Renderer:
             rows = 1
         else:
             rows = 2
-            2 + len(df_other_variable.columns)
 
         fig = make_subplots(rows=rows, cols=1, shared_xaxes=True)
         annotations = []
