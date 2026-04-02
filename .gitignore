@@ -38,3 +38,6 @@ Thumbs.db
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Django quick deployment
+db.sqlite3

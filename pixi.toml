@@ -17,3 +17,15 @@ ruff = ">=0.12,<1"
 
 [pypi-dependencies]
 hydrological-twin-alpha-series = { path = ".", editable = true }
+
+# -- Deploy feature (Django quick-deployment server) -------------------------
+[feature.deploy.pypi-dependencies]
+django = ">=5.1.14,<6"
+djangorestframework = ">=3.15.2,<4"
+
+[feature.deploy.tasks]
+serve = { cmd = "python deploy/manage.py runserver" }
+test-deploy = { cmd = "python deploy/manage.py test deploy.tests", env = { PYTHONPATH = "deploy" } }
+
+[environments]
+deploy = ["deploy"]

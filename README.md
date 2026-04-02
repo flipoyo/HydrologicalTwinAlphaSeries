@@ -109,3 +109,30 @@ The integration smoke test that constructs a minimal `HydrologicalTwin` object l
 The intended integration point is a Git submodule mounted at `external/HydrologicalTwinAlphaSeries` inside the `cawaqsviz` repository. The cawaqsviz Pixi environment should install this package in editable mode instead of carrying a duplicated backend tree.
 
 Manual GitHub and submodule registration steps belong to the application repository workflow and are intentionally kept separate from this backend package setup.
+
+## Quick Deployment (Django)
+
+The `deploy/` directory contains a minimal Django + Django REST Framework application that exposes the `HydrologicalTwin` backend as a REST API. See [`deploy/README.md`](deploy/README.md) for full documentation.
+
+### Getting started
+
+```bash
+# Install the package with deploy extras
+pip install -e ".[deploy]"
+
+# Start the development server
+cd deploy
+python manage.py runserver
+```
+
+Or, with Pixi:
+
+```bash
+pixi run -e deploy serve
+```
+
+Then initialise the twin with a `POST /api/init/` request and query compartments, layers, and observations via `GET` endpoints. The browsable API is available at `http://127.0.0.1:8000/api/`.
+
+### CaWaQS-ViZ compatibility
+
+The Django layer is **additive** — no file inside `src/hydrological_twin_alpha_series/` is modified. The only change that needs to be transferred to cawaqsviz is the new `[deploy]` optional-dependency group in `pyproject.toml`. See [`deploy/README.md`](deploy/README.md) for a detailed compatibility matrix.
