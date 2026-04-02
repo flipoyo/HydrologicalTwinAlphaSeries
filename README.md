@@ -8,6 +8,8 @@ This repository is designed to be developed independently from the QGIS applicat
 
 ## Authorship
 
+The project metadata lists the named contributors below as authors; their current roles are:
+
 - Project Manager: Nicolas Flipo
 - Main Developer: Simone Mazzarelli
 - Other contributors to come: Tristan Bourgeois, Nicolas Gallois, ...
