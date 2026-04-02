@@ -87,6 +87,21 @@ Run linting:
 pixi run lint
 ```
 
+## Before Committing
+
+Run the same checks locally that the backend CI runs on GitHub Actions:
+
+```bash
+pixi install
+pixi run lint
+pixi run test
+pixi run run
+```
+
+`pixi run lint` validates the backend source tree and tests with Ruff, `pixi run test` runs the unit and integration tests, and `pixi run run` is a package smoke check for the command-line entry point.
+
+If you are editing the backend through the `cawaqsviz` checkout, run these commands from `external/HydrologicalTwinAlphaSeries/` before committing in the backend repository and then updating the submodule pointer in `cawaqsviz`.
+
 The integration smoke test that constructs a minimal `HydrologicalTwin` object lives in `tests/integration/test_hydrological_twin_smoke.py`.
 
 ## Integration with cawaqsviz
