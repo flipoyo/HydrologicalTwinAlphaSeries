@@ -1,5 +1,11 @@
 [workspace]
-authors = ["CaWaQS contributors"]
+authors = [
+    "Simone Mazzarelli",
+    "Nicolas Flipo",
+    "Tristan Bourgeois",
+    "Nicolas Gallois",
+    "Lise-Marie Girod",
+]
 channels = ["conda-forge"]
 name = "HydrologicalTwinAlphaSeries"
 platforms = ["linux-64"]

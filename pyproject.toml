@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "EPL-2.0"
 authors = [
-    { name = "CaWaQS contributors" },
+    { name = "Simone Mazzarelli" },
+    { name = "Nicolas Flipo" },
+    { name = "Tristan Bourgeois" },
+    { name = "Nicolas Gallois" },
+    { name = "Lise-Marie Girod" },
 ]
 dependencies = [
     "geopandas>=1.1.2,<2",
