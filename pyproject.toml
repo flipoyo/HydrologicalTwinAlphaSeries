@@ -10,10 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "EPL-2.0"
 authors = [
-    { name = "Simone Mazzarelli" },
     { name = "Nicolas Flipo" },
-    { name = "Tristan Bourgeois" },
-    { name = "Nicolas Gallois" },
+    { name = "Simone Mazzarelli" },
     { name = "Lise-Marie Girod" },
 ]
 dependencies = [
