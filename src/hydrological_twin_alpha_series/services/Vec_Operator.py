@@ -1,13 +1,11 @@
 
+from typing import List, Optional, Tuple, Union
+
 import numpy as np
-from os import sep
-import os
-from typing import Tuple, Union,  Optional, List      
-from datetime import datetime    
-        
+
 from hydrological_twin_alpha_series.domain.Compartment import Compartment
 
-        
+
 class Operator:        
     def __init__(self):
         pass
@@ -221,7 +219,8 @@ class Operator:
         
         :param data: Array (n_cells, n_timesteps) of simulated values
         :type data: np.ndarray
-        :param operation: Type of spatial average ('arithmetic', 'weighted', 'geometric', 'harmonic')
+        :param operation: Type of spatial average ('arithmetic', 'weighted',
+            'geometric', 'harmonic')
         :type operation: str
         :param areas: 1D array (n_cells,) of cell areas for weighted average. 
                     If None, extracted from compartment.
@@ -304,7 +303,8 @@ class Extractor:
         :type cell_ids: Optional[List[int]]
         :param compartment: Compartment object (required for spatial operators)
         :type compartment: Optional[Compartment]
-        :param spatial_operator: Name of spatial operator ('catchment_cells' or 'aquifer_outcropping')
+        :param spatial_operator: Name of spatial operator ('catchment_cells' or
+            'aquifer_outcropping')
         :type spatial_operator: Optional[str]
         :param spatial_manager: Instance of Manage.Spatial() (required for spatial operators)
         :param operator_kwargs: Additional kwargs for the spatial operator
@@ -367,8 +367,10 @@ class Extractor:
         :param compartment: Compartment object with mesh and configuration
         :type compartment: Compartment
         :param spatial_manager: Instance of Manage.Spatial()
-        :param kwargs: Operator-specific parameters **kwargs collects all additional keyword arguments into a dictionary called kwargs
-                        This allows the function to accept a variable number of named parameters without listing them all explicitly
+        :param kwargs: Operator-specific parameters. ``**kwargs`` collects all
+            additional keyword arguments into a dictionary called kwargs. This
+            allows the function to accept a variable number of named parameters
+            without listing them all explicitly.
         :return: List of cell IDs identified by the operator
         :rtype: List[int]
 
@@ -529,7 +531,11 @@ class Comparator:
 
         if "pbias" in metrics:
             # Percent Bias
-            pbias = 100 * np.sum(sim_clean - obs_clean) / np.sum(obs_clean) if np.sum(obs_clean) != 0 else np.nan
+            pbias = (
+                100 * np.sum(sim_clean - obs_clean) / np.sum(obs_clean)
+                if np.sum(obs_clean) != 0
+                else np.nan
+            )
             results["pbias"] = pbias
 
         if "mae" in metrics:
@@ -574,7 +580,6 @@ class Comparator:
             results["sum_ratio"] = np.sum(sim_clean) / sum_o if sum_o != 0 else np.nan
 
         return results
-
 
 
 

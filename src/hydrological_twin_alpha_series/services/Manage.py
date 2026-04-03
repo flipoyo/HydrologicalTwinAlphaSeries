@@ -23,32 +23,27 @@
 #
 # ***************************************************************************/
 
-from ipaddress import collapse_addresses
 import os
-from os import path, sep
-import numpy as np
+import re
 import time
 from datetime import datetime, timedelta
-import pandas as pd
+from os import sep
 from typing import Union
-import re
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
 
 # plotly.offline.init_notebook_mode()
 # display(HTML(
 #     '<script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_SVG"></script>'
 # ))
-
 from hydrological_twin_alpha_series.config.constants import (
-    module_caw,
     nbRecs,
-    obs_config,
     paramRecs,
-    reversed_module_caw,
 )
 from hydrological_twin_alpha_series.domain.Compartment import Compartment
 from hydrological_twin_alpha_series.tools.spatial_utils import combine_geometries, get_nearest_row
-
-import geopandas as gpd
 
 # Import simobs
 """
@@ -515,7 +510,6 @@ class Manage:
                 start = datetime(syear, 8, 1)
                 total_ndays = (end - start).days - 1
 
-                count_day = 0
                 print(f"Simulated period count {total_ndays} days")
                 
                 check_temp_file = self.checkTempFile(
@@ -538,7 +532,7 @@ class Manage:
                         print(f"READING SIM DATA : {etime - stime} seconds")
 
                     
-                    except Exception as e: 
+                    except Exception: 
                         os.remove(temp_file_path)
                         print(f"File {temp_file_path} has been removed because of an error, try to read from binary files")
 
@@ -685,7 +679,7 @@ class Manage:
                                 
                     etime = time.time()
                     print(f"READING SIM DATA : {etime - stime} seconds")
-                    print(f'Sim matrix has been save in TEMP folder')
+                    print('Sim matrix has been save in TEMP folder')
                     
                     for id_p, para in enumerate(
                         paramRecs[compartment.compartment + "_" + outtype]
@@ -743,7 +737,7 @@ class Manage:
 
             def getObsDataPath(obs_directory, obs_name)->Union[str, None]:
                 if obs_path == '' :
-                    print(f"Observation directory is not defined. No obs data will be read.")
+                    print("Observation directory is not defined. No obs data will be read.")
 
                     return None
                 else :
@@ -917,7 +911,7 @@ class Manage:
                             data = data.loc[cutsdate:cutedate]
                             print(f'Reading observation periode : {cutsdate} - {cutedate}')
                         else : 
-                            print(f'Observation chronicles are read in full')
+                            print('Observation chronicles are read in full')
 
                         if obs_aggr == 'mean' :
                             data = data.mean()

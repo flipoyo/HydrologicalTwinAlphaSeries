@@ -23,21 +23,21 @@
 #
 # ***************************************************************************/
 
+import os
 from typing import Dict, List, Union
 
 import geopandas as gpd
 import shapely
 
 from hydrological_twin_alpha_series.config.constants import (
-    link_obs_mesh,
-    obs_types,
-    out_caw_folder,
     reversed_module_caw,
 )
 from hydrological_twin_alpha_series.domain.Extraction import Extraction, ExtractionPoint
-from hydrological_twin_alpha_series.tools.spatial_utils import get_nearest_cell, read_hyd_corresp_file
+from hydrological_twin_alpha_series.tools.spatial_utils import (
+    get_nearest_cell,
+    read_hyd_corresp_file,
+)
 
-import os
 sep = os.sep  # Ensure compatibility with different OS path separators
 
 
@@ -58,7 +58,15 @@ class ObsPoint(ExtractionPoint):
     :param id_mesh: ID of the mesh to which the observation point belongs
     :type id_mesh: int
     """
-    def __init__(self, id_cell: int, id_point: Union[str, None], geometry_point: shapely.Point, name: str, id_layer: int, id_mesh: int):
+    def __init__(
+        self,
+        id_cell: int,
+        id_point: Union[str, None],
+        geometry_point: shapely.Point,
+        name: str,
+        id_layer: int,
+        id_mesh: int,
+    ):
         super().__init__(
             id_cell=id_cell,
             geometry_point=geometry_point,
@@ -73,7 +81,10 @@ class ObsPoint(ExtractionPoint):
         print(self.__repr__())
 
     def __repr__(self):
-        return f"{self.name} : {self.id_point} (linked to cell {self.id_cell} of layer {self.id_layer} of mesh {self.id_mesh})"
+        return (
+            f"{self.name} : {self.id_point} (linked to cell {self.id_cell} "
+            f"of layer {self.id_layer} of mesh {self.id_mesh})"
+        )
 
 
 class Observation(Extraction):

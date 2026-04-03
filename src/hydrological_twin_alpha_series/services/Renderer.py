@@ -6,14 +6,15 @@ No I/O (file reading/caching) happens here.
 """
 
 import os
+import time
+from typing import List, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from typing import Union, List, Tuple
+import plotly.graph_objects as go
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import time
 
 
 class Renderer:
@@ -282,7 +283,10 @@ class Renderer:
             ax=ax, color="red", legend="Simulated", linewidth=0.5
         )
 
-        title = f"{point_name} - {point_id_cell}\n(id caw cell : {point_id_cell}, id_layer : {point_id_layer})"
+        title = (
+            f"{point_name} - {point_id_cell}\n"
+            f"(id caw cell : {point_id_cell}, id_layer : {point_id_layer})"
+        )
         ax.set_title(title, fontsize=10)
         ax.set_ylabel(ylabel)
 
@@ -339,7 +343,10 @@ class Renderer:
             ax=ax, color="red", legend="Simulated", linewidth=0.5
         )
 
-        title = f"{obs_point_name} - {obs_point_id_cell}\n(id caw cell : {obs_point_id_cell}, id_layer : {obs_point_id_layer})"
+        title = (
+            f"{obs_point_name} - {obs_point_id_cell}\n"
+            f"(id caw cell : {obs_point_id_cell}, id_layer : {obs_point_id_layer})"
+        )
         ax.set_title(title, fontsize=10)
 
         if criteria is not None:
@@ -386,8 +393,10 @@ class Renderer:
 
         Unit conversion is handled upstream in _prepare_sim_obs_data.
 
-        :param simdf: Simulation DataFrame (index=dates, columns=cell_ids as int, already unit-converted)
-        :param obs_df: Observation DataFrame (index=dates, columns=obs_point_ids, already unit-converted) or None
+        :param simdf: Simulation DataFrame (index=dates, columns=cell_ids as int,
+            already unit-converted)
+        :param obs_df: Observation DataFrame (index=dates, columns=obs_point_ids,
+            already unit-converted) or None
         :param obs_points: List of dicts with keys: name, id_cell, id_layer, id_point, criteria
         :param ext_points: List of dicts with keys: name, id_cell, id_layer
         :param pdf_file_path: Full path for the output PDF
@@ -414,7 +423,10 @@ class Renderer:
                     else:
                         obs = pd.DataFrame(index=sim.index, columns=['obs'])
                         obs['obs'] = np.NaN
-                        print(f"Warning : {obs_point['id_point']} hasn't been found in observation data folder.")
+                        print(
+                            f"Warning : {obs_point['id_point']} hasn't been found "
+                            "in observation data folder."
+                        )
 
                     df_sim_obs = pd.concat([sim, obs], axis=1)
 
@@ -494,10 +506,8 @@ class Renderer:
 
         if df_other_variable is None:
             rows = 1
-            n_traces = 2
         else:
             rows = 2
-            n_traces = 2 + len(df_other_variable.columns)
 
         fig = make_subplots(rows=rows, cols=1, shared_xaxes=True)
         annotations = []

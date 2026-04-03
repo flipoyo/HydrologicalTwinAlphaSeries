@@ -24,16 +24,15 @@
 #
 # ***************************************************************************/
 
-from typing import Dict, List, Union
 import os
+from typing import Dict, List, Union
 
-
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import shapely
-from shapely.ops import unary_union
 from scipy.spatial import cKDTree
+from shapely.ops import unary_union
 
 sep = os.sep
 
@@ -76,7 +75,9 @@ class SpatialIndex:
         _, idx = self._tree.query(query_point, k=1)
         return idx[0]
 
-    def get_nearest_cell_id(self, point_geom: shapely.Point, id_col: Union[str, int]) -> Union[int, None]:
+    def get_nearest_cell_id(
+        self, point_geom: shapely.Point, id_col: Union[str, int]
+    ) -> Union[int, None]:
         """
         Get the cell ID of the nearest feature to a point.
 
@@ -111,7 +112,9 @@ class SpatialIndex:
             return None
         return self.gdf.iloc[idx]
 
-    def get_nearest_k_indices(self, point_geom: shapely.Point, k: int = 1) -> Union[np.ndarray, None]:
+    def get_nearest_k_indices(
+        self, point_geom: shapely.Point, k: int = 1
+    ) -> Union[np.ndarray, None]:
         """
         Get indices of the k nearest features to a point.
 
