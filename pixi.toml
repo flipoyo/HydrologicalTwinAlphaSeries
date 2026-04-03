@@ -1,9 +1,7 @@
 [workspace]
 authors = [
-    "Simone Mazzarelli",
     "Nicolas Flipo",
-    "Tristan Bourgeois",
-    "Nicolas Gallois",
+    "Simone Mazzarelli",
     "Lise-Marie Girod",
 ]
 channels = ["conda-forge"]
