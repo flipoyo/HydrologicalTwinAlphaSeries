@@ -23,15 +23,14 @@
 #
 # ***************************************************************************/
 
+from os import sep
 from typing import Protocol, Union
 
-from hydrological_twin_alpha_series.config import Config, ConfigGeometry, ConfigProject
+from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
 from hydrological_twin_alpha_series.config.constants import module_caw, obs_types, out_caw_folder
 from hydrological_twin_alpha_series.domain.Extraction import Extraction
 from hydrological_twin_alpha_series.domain.Mesh import Mesh
 from hydrological_twin_alpha_series.domain.Observations import Observation
-
-from os import sep
 
 
 class GeoLayerProvider(Protocol):
@@ -163,7 +162,9 @@ class Compartment:
             id_compartment, self.layers_gis_names, layer_gdfs, config, self.out_caw_directory
         )
 
-    def defineObsCompartment(self, id_compartment: int, config: ConfigGeometry) -> Union[Observation, None]:
+    def defineObsCompartment(
+        self, id_compartment: int, config: ConfigGeometry
+    ) -> Union[Observation, None]:
         """
         Define Observation of the defined compartment
 
@@ -194,7 +195,9 @@ class Compartment:
             print("Any observations for this compartment", flush=True)
             return None
 
-    def defineExtCompartment(self, id_compartment: int, config: ConfigGeometry) -> Union[Extraction, None]:
+    def defineExtCompartment(
+        self, id_compartment: int, config: ConfigGeometry
+    ) -> Union[Extraction, None]:
         """
         Define Extraction points of the defined compartment
 

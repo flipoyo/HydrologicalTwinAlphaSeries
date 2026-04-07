@@ -23,12 +23,14 @@
 #
 # ***************************************************************************/
 
-import geopandas as gpd
+import os
 from typing import Dict, List
 
-from hydrological_twin_alpha_series.config.constants import reversed_module_caw
+import geopandas as gpd
 import pandas as pd
-import os
+
+from hydrological_twin_alpha_series.config.constants import reversed_module_caw
+
 sep = os.sep  # Ensure compatibility with different OS path separators
 
 
@@ -36,7 +38,10 @@ class Mesh:
     """
     Mesh class
 
-    .. NOTE:: A single Mesh() is an attribute of the Compartment class. The mesh attribute of the Mesh() class is a dictionary containing all the layers of the mesh, identified by a key from 0 to n (0 being the most recent layer in the case of the aquifer compartment).
+    .. NOTE:: A single Mesh() is an attribute of the Compartment class. The mesh attribute
+        of the Mesh() class is a dictionary containing all the layers of the mesh,
+        identified by a key from 0 to n (0 being the most recent layer in the case of the
+        aquifer compartment).
     """
 
     def __init__(
@@ -246,9 +251,11 @@ class Mesh:
             if not os.path.isfile(corresp_file_path):
                 raise FileNotFoundError(
                     f"File {corresp_file_path} not found. "
-                    "Check your CaWaQS command file: either you didn't request any HYDraulic outputs "
+                    "Check your CaWaQS command file: either you didn't request any "
+                    "HYDraulic outputs "
                     "(nor discharge, nor water depth) or you requested FORMATTED results that "
-                    "CaWaQS-Viz doesn't handle yet. In the former case, request UNFORMATTED outputs."
+                    "CaWaQS-Viz doesn't handle yet. In the former case, request "
+                    "UNFORMATTED outputs."
                 )
 
             corr = pd.read_csv(corresp_file_path, index_col=2, sep=r"\s+")

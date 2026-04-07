@@ -23,7 +23,8 @@
 #
 # ***************************************************************************/
 
-from typing import Dict, List, Union
+import os
+from typing import Dict, List
 
 import geopandas as gpd
 import shapely
@@ -34,9 +35,11 @@ from hydrological_twin_alpha_series.config.constants import (
     out_caw_folder,
     reversed_module_caw,
 )
-from hydrological_twin_alpha_series.tools.spatial_utils import get_nearest_cell, read_hyd_corresp_file
+from hydrological_twin_alpha_series.tools.spatial_utils import (
+    get_nearest_cell,
+    read_hyd_corresp_file,
+)
 
-import os
 sep = os.sep
 
 
@@ -55,7 +58,14 @@ class ExtractionPoint():
     :param id_mesh: ID of the mesh to which the extraction point belongs
     :type id_mesh: int
     """
-    def __init__(self, id_cell: int, geometry_point: shapely.Point, name: str, id_layer: int, id_mesh: int):
+    def __init__(
+        self,
+        id_cell: int,
+        geometry_point: shapely.Point,
+        name: str,
+        id_layer: int,
+        id_mesh: int,
+    ):
         self.id_cell = id_cell
         self.geometry = geometry_point
         self.name = name
@@ -63,7 +73,10 @@ class ExtractionPoint():
         self.id_layer = id_layer
 
     def __repr__(self):
-        return f"Extraction Point ({self.name}) : linked to cell {self.id_cell} of layer {self.id_layer} of mesh {self.id_mesh}"
+        return (
+            f"Extraction Point ({self.name}) : linked to cell {self.id_cell} "
+            f"of layer {self.id_layer} of mesh {self.id_mesh}"
+        )
 
 
 class Extraction():

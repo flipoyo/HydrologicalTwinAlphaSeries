@@ -43,3 +43,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/hydrological_twin_alpha_series/services/Manage.py" = ["E501"]
