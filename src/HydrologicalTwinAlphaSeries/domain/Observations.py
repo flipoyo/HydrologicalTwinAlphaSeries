@@ -29,11 +29,11 @@ from typing import Dict, List, Union
 import geopandas as gpd
 import shapely
 
-from hydrological_twin_alpha_series.config.constants import (
+from HydrologicalTwinAlphaSeries.config.constants import (
     reversed_module_caw,
 )
-from hydrological_twin_alpha_series.domain.Extraction import Extraction, ExtractionPoint
-from hydrological_twin_alpha_series.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.domain.Extraction import Extraction, ExtractionPoint
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     get_nearest_cell,
     read_hyd_corresp_file,
 )

@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
-from hydrological_twin_alpha_series.domain.Compartment import Compartment
+from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 
 
 class Operator:        

@@ -13,13 +13,13 @@ import pandas as pd
 # These imports assume that this `ht` subpackage lives inside the existing
 # `cawaqsviz` package, *at the same level* as Compartment / Mesh /
 # Observations / Extraction / Manage.
-from hydrological_twin_alpha_series.Compartment import Compartment
-from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
-from hydrological_twin_alpha_series.config.constants import obs_config
-from hydrological_twin_alpha_series.Manage import Manage
-from hydrological_twin_alpha_series.Renderer import Renderer
-from hydrological_twin_alpha_series.tools.spatial_utils import verify_crs_match
-from hydrological_twin_alpha_series.Vec_Operator import Comparator, Extractor, Operator
+from HydrologicalTwinAlphaSeries.Compartment import Compartment
+from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
+from HydrologicalTwinAlphaSeries.config.constants import obs_config
+from HydrologicalTwinAlphaSeries.Manage import Manage
+from HydrologicalTwinAlphaSeries.Renderer import Renderer
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.Vec_Operator import Comparator, Extractor, Operator
 
 from .api_types import (
     CompartmentInfo,

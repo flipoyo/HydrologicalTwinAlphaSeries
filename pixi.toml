@@ -7,10 +7,10 @@ authors = [
 channels = ["conda-forge"]
 name = "HydrologicalTwinAlphaSeries"
 platforms = ["linux-64"]
-version = "0.1.0-alpha"
+version = "0.alpha.01"
 
 [tasks]
-run = "python -m hydrological_twin_alpha_series"
+run = "python -m HydrologicalTwinAlphaSeries"
 test = "pytest"
 lint = "ruff check src tests"
 

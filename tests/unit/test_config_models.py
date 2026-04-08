@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
+from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 
 
 def test_config_models_from_dict():

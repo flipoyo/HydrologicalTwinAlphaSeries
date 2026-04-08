@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series import __version__
+from HydrologicalTwinAlphaSeries import __version__
 
 
 def main() -> None:

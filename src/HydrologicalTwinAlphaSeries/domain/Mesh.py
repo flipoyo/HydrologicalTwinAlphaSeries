@@ -29,7 +29,7 @@ from typing import Dict, List
 import geopandas as gpd
 import pandas as pd
 
-from hydrological_twin_alpha_series.config.constants import reversed_module_caw
+from HydrologicalTwinAlphaSeries.config.constants import reversed_module_caw
 
 sep = os.sep  # Ensure compatibility with different OS path separators
 

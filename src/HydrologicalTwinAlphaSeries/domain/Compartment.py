@@ -26,11 +26,11 @@
 from os import sep
 from typing import Protocol, Union
 
-from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
-from hydrological_twin_alpha_series.config.constants import module_caw, obs_types, out_caw_folder
-from hydrological_twin_alpha_series.domain.Extraction import Extraction
-from hydrological_twin_alpha_series.domain.Mesh import Mesh
-from hydrological_twin_alpha_series.domain.Observations import Observation
+from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
+from HydrologicalTwinAlphaSeries.config.constants import module_caw, obs_types, out_caw_folder
+from HydrologicalTwinAlphaSeries.domain.Extraction import Extraction
+from HydrologicalTwinAlphaSeries.domain.Mesh import Mesh
+from HydrologicalTwinAlphaSeries.domain.Observations import Observation
 
 
 class GeoLayerProvider(Protocol):

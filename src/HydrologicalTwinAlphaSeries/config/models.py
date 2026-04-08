@@ -2,8 +2,8 @@ import json
 import os
 from os import sep
 
-from hydrological_twin_alpha_series.config.constants import module_caw
-from hydrological_twin_alpha_series.config.factory import FactoryClass
+from HydrologicalTwinAlphaSeries.config.constants import module_caw
+from HydrologicalTwinAlphaSeries.config.factory import FactoryClass
 
 
 class Config(FactoryClass):

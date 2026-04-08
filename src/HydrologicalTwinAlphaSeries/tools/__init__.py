@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     CRSMismatchError,
     SpatialIndex,
     clear_spatial_index_cache,

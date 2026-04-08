@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series import ConfigGeometry, ConfigProject, HydrologicalTwin, Manage
+from HydrologicalTwinAlphaSeries import ConfigGeometry, ConfigProject, HydrologicalTwin, Manage
 
 
 def test_hydrological_twin_can_be_constructed(tmp_path):

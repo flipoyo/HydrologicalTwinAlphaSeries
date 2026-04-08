@@ -3,8 +3,8 @@
 ## Construction
 
 ```python
-from hydrological_twin_alpha_series import HydrologicalTwin
-from hydrological_twin_alpha_series.config import ConfigGeometry, ConfigProject
+from HydrologicalTwinAlphaSeries import HydrologicalTwin
+from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 
 config_geom = ConfigGeometry(...)
 config_proj = ConfigProject(...)

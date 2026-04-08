@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series import Compartment, ConfigGeometry, HydrologicalTwin, Manage
+from HydrologicalTwinAlphaSeries import Compartment, ConfigGeometry, HydrologicalTwin, Manage
 
 
 def test_root_imports_are_available():

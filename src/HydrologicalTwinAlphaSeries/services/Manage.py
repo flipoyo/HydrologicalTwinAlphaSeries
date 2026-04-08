@@ -38,12 +38,12 @@ import pandas as pd
 # display(HTML(
 #     '<script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_SVG"></script>'
 # ))
-from hydrological_twin_alpha_series.config.constants import (
+from HydrologicalTwinAlphaSeries.config.constants import (
     nbRecs,
     paramRecs,
 )
-from hydrological_twin_alpha_series.domain.Compartment import Compartment
-from hydrological_twin_alpha_series.tools.spatial_utils import combine_geometries, get_nearest_row
+from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import combine_geometries, get_nearest_row
 
 # Import simobs
 """

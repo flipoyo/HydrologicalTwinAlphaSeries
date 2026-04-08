@@ -14,7 +14,7 @@ HydrologicalTwinAlphaSeries is the standalone backend package for the CaWaQS alp
 
 The backend package does not import from `cawaqsviz`. QGIS-specific behavior stays in `cawaqsviz/interface/GeoDataProvider.py`, which converts QGIS layers into GeoDataFrames before they are passed into backend domain objects.
 
-For compatibility during the migration, `cawaqsviz/backend` remains as a shim layer that re-exports symbols from `hydrological_twin_alpha_series`. The backend implementation itself now lives only in this package.
+For compatibility during the migration, `cawaqsviz/backend` remains as a shim layer that re-exports symbols from `HydrologicalTwinAlphaSeries`. The backend implementation itself now lives only in this package.
 
 ## Intended Repository Layout
 

@@ -29,13 +29,13 @@ from typing import Dict, List
 import geopandas as gpd
 import shapely
 
-from hydrological_twin_alpha_series.config.constants import (
+from HydrologicalTwinAlphaSeries.config.constants import (
     link_obs_mesh,
     obs_types,
     out_caw_folder,
     reversed_module_caw,
 )
-from hydrological_twin_alpha_series.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     get_nearest_cell,
     read_hyd_corresp_file,
 )

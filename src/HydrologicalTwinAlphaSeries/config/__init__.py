@@ -1,4 +1,4 @@
-from hydrological_twin_alpha_series.config.constants import (
+from HydrologicalTwinAlphaSeries.config.constants import (
     link_obs_mesh,
     mesh_to_compartment,
     module_caw,
@@ -9,8 +9,8 @@ from hydrological_twin_alpha_series.config.constants import (
     paramRecs,
     reversed_module_caw,
 )
-from hydrological_twin_alpha_series.config.factory import FactoryClass
-from hydrological_twin_alpha_series.config.models import Config, ConfigGeometry, ConfigProject
+from HydrologicalTwinAlphaSeries.config.factory import FactoryClass
+from HydrologicalTwinAlphaSeries.config.models import Config, ConfigGeometry, ConfigProject
 
 __all__ = [
     "Config",

@@ -17,11 +17,11 @@ The project metadata lists the named contributors below as authors; their curren
 
 ## Layout
 
-- `src/hydrological_twin_alpha_series/domain`: compartment, mesh, observation, and extraction entities
-- `src/hydrological_twin_alpha_series/services`: analysis, rendering, and vector operators
-- `src/hydrological_twin_alpha_series/ht`: `HydrologicalTwin` facade and API types
-- `src/hydrological_twin_alpha_series/config`: backend constants and configuration models
-- `src/hydrological_twin_alpha_series/tools`: shared utilities
+- `src/HydrologicalTwinAlphaSeries/domain`: compartment, mesh, observation, and extraction entities
+- `src/HydrologicalTwinAlphaSeries/services`: analysis, rendering, and vector operators
+- `src/HydrologicalTwinAlphaSeries/ht`: `HydrologicalTwin` facade and API types
+- `src/HydrologicalTwinAlphaSeries/config`: backend constants and configuration models
+- `src/HydrologicalTwinAlphaSeries/tools`: shared utilities
 - `tests`: smoke coverage for imports and backend construction
 - `docs`: backend-focused API examples and architecture notes
 
@@ -36,7 +36,7 @@ This installs the package in editable mode from the local checkout.
 ## Minimal Usage
 
 ```python
-from hydrological_twin_alpha_series import ConfigGeometry, ConfigProject, HydrologicalTwin
+from HydrologicalTwinAlphaSeries import ConfigGeometry, ConfigProject, HydrologicalTwin
 
 config_geom = ConfigGeometry.fromDict(
 	{
