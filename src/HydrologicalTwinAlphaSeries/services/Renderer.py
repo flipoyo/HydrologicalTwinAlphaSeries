@@ -134,10 +134,11 @@ class Renderer:
         var: str,
         units: str,
         savepath: str,
-        interractiv: bool,
-        staticpng: bool,
-        staticpdf: bool,
-        years: Union[str, None] = None
+        interactive: bool = True,
+        staticpng: bool = True,
+        staticpdf: bool = True,
+        years: Union[str, None] = None,
+        interractiv: Union[bool, None] = None,
     ):
         """
         Plot interannual hydrological regime.
@@ -148,11 +149,14 @@ class Renderer:
         :param var: Variable name (e.g. 'Discharge')
         :param units: Variable units
         :param savepath: Directory to save static plots
-        :param interractiv: Whether to show interactive plot
+        :param interactive: Whether to prepare the interactive plot
         :param staticpng: Whether to save static PNG files
         :param staticpdf: Whether to save static PDF file
         :param years: Year range string for filename
         """
+        if interractiv is not None:
+            interactive = interractiv
+
         if not staticpng and not staticpdf:
             raise ValueError(
                 "Hydrological regime rendering requires at least one static file output."
@@ -160,7 +164,7 @@ class Renderer:
 
         artefacts = []
 
-        if interractiv is True:
+        if interactive is True:
             fig = go.Figure()
 
             traces = [

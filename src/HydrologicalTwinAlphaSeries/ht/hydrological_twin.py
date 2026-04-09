@@ -1149,7 +1149,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             var=var,
             units=units,
             savepath=savepath,
-            interractiv=interractiv,
+            interactive=interractiv,
             staticpng=staticpng,
             staticpdf=staticpdf,
             years=years,
