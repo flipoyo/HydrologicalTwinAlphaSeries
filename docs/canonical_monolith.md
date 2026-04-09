@@ -77,8 +77,10 @@ EMPTY → CONFIGURED → LOADED → READY
 
 - **EMPTY**: Instance created, no configuration.
 - **CONFIGURED**: Configuration attached, no data loaded.
-- **LOADED**: Compartments registered, data accessible.
-- **READY**: All compartments validated, full operations available.
+- **LOADED**: Compartments registered, data accessible. All macro-methods are operational.
+- **READY**: All compartments validated and cross-checked. Reserved for future
+  validation logic (e.g., CRS consistency checks, observation coverage verification).
+  Currently, the transition from LOADED → READY is not yet automated.
 
 Invalid call sequences raise `InvalidStateError`.
 

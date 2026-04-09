@@ -203,7 +203,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         """Register a single compartment into the twin.
 
         Can be called repeatedly to add compartments one at a time after
-        ``load()`` has been called.  Requires state LOADED or READY.
+        ``load()`` has been called.  Requires state LOADED or later.
 
         Parameters
         ----------
@@ -211,8 +211,17 @@ class HydrologicalTwin(HTPersistenceMixin):
             CaWaQS compartment identifier.
         compartment : Compartment
             Fully constructed Compartment aggregate.
+
+        Raises
+        ------
+        TypeError
+            If *compartment* is not a :class:`Compartment` instance.
         """
         self._require_state("register_compartment")
+        if not isinstance(compartment, Compartment):
+            raise TypeError(
+                f"Expected a Compartment instance, got {type(compartment).__name__}"
+            )
         self.compartments[id_compartment] = compartment
 
     def describe(self, **kwargs: Any) -> TwinDescription:

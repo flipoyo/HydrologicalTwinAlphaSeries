@@ -119,11 +119,26 @@ class TestStateLifecycle:
         )
         twin.load(compartments={})
 
-        # register_compartment requires LOADED state
-        mock_comp = object()  # lightweight stand-in
+        # register_compartment requires LOADED state and a Compartment instance
+        from unittest.mock import MagicMock
+
+        from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
+        mock_comp = MagicMock(spec=Compartment)
         twin.register_compartment(id_compartment=99, compartment=mock_comp)
         assert 99 in twin.compartments
         assert twin.compartments[99] is mock_comp
+
+    def test_register_compartment_rejects_non_compartment(self, tmp_path):
+        twin = HydrologicalTwin()
+        twin.configure(
+            config_geom=_make_config_geom(),
+            config_proj=_make_config_proj(tmp_path),
+            out_caw_directory=str(tmp_path / "out"),
+            obs_directory=str(tmp_path / "obs"),
+        )
+        twin.load(compartments={})
+        with pytest.raises(TypeError, match="Expected a Compartment"):
+            twin.register_compartment(id_compartment=1, compartment=object())
 
     def test_register_compartment_before_load_raises(self, tmp_path):
         twin = HydrologicalTwin(
@@ -133,7 +148,13 @@ class TestStateLifecycle:
             obs_directory=str(tmp_path / "obs"),
         )
         with pytest.raises(InvalidStateError, match="LOADED"):
-            twin.register_compartment(id_compartment=1, compartment=object())
+            from unittest.mock import MagicMock
+
+            from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
+            twin.register_compartment(
+                id_compartment=1,
+                compartment=MagicMock(spec=Compartment),
+            )
 
 
 # ---------------------------------------------------------------------------
