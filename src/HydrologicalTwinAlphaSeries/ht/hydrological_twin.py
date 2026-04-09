@@ -1136,7 +1136,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         var: str,
         units: str,
         savepath: str,
-        interractiv: bool = True,
+        interractiv: bool = False,
         staticpng: bool = True,
         staticpdf: bool = True,
         years: str = None,

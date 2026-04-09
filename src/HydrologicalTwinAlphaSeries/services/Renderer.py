@@ -134,7 +134,7 @@ class Renderer:
         var: str,
         units: str,
         savepath: str,
-        interactive: bool = True,
+        interactive: bool = False,
         staticpng: bool = True,
         staticpdf: bool = True,
         years: Union[str, None] = None,
