@@ -47,7 +47,8 @@ Extract simulation matrices, observation data, or area subsets.
 Apply temporal aggregation (annual, monthly) or spatial averaging.
 
 ### `render(**kwargs)`
-Produce budget bar plots, sim-vs-obs charts, hydrological regime plots.
+Produce file artefacts such as budget bar plots, sim-vs-obs charts, and hydrological
+regime plots without launching interactive screen views.
 
 ### `export(**kwargs)`
 Export data as CSV, pickle snapshots, or GeoDataFrames.

@@ -38,7 +38,13 @@ class Renderer:
         :param output_folder: Directory for static image
         :param output_name: Name of saving file (without extension)
         """
+        if not output_folder or not output_name:
+            raise ValueError(
+                "Budget rendering requires 'output_folder' and 'output_name' to produce a file."
+            )
+
         colors = ["midnightblue", "forestgreen", "deepskyblue", "skyblue"]
+        artefacts = []
 
         variables = list(data_dict.keys())
         first_key = variables[0]
@@ -83,8 +89,6 @@ class Renderer:
             xref='paper', yref='paper', showarrow=False
         )
 
-        fig.show()
-
         # --- Matplotlib static ---
         fig_mpl, ax = plt.subplots(figsize=(12, 6))
         width = 0.8 / len(variables)
@@ -111,12 +115,13 @@ class Renderer:
         ax.grid(True, linestyle='--', alpha=0.7)
         ax.set_axisbelow(True)
 
-        if output_folder and output_name:
-            save_path = os.path.join(output_folder, output_name + '.png')
-            plt.savefig(save_path, dpi=200, bbox_inches='tight')
-            print(f"Saved static plot to: {save_path}")
+        save_path = os.path.join(output_folder, output_name + '.png')
+        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        artefacts.append(save_path)
+        print(f"Saved static plot to: {save_path}")
 
         plt.close(fig_mpl)
+        return artefacts
 
     # ------------------------------------------------------------------
     # 2. Hydrological regime
@@ -148,6 +153,12 @@ class Renderer:
         :param staticpdf: Whether to save static PDF file
         :param years: Year range string for filename
         """
+        if not staticpng and not staticpdf:
+            raise ValueError(
+                "Hydrological regime rendering requires at least one static file output."
+            )
+
+        artefacts = []
 
         if interractiv is True:
             fig = go.Figure()
@@ -192,9 +203,6 @@ class Renderer:
                     )
                 ]
             )
-
-            fig.show()
-
         if staticpng is True:
             for i, mp in enumerate(obs_point_names):
                 fig = plt.figure(figsize=(15, 10))
@@ -221,6 +229,7 @@ class Renderer:
 
                 fig.savefig(savepath_file, dpi=200, bbox_inches='tight')
                 plt.close(fig)
+                artefacts.append(savepath_file)
                 print(f"Saved PNG: {savepath_file}")
 
         if staticpdf is True:
@@ -253,6 +262,9 @@ class Renderer:
                     plt.close(fig)
 
             print(f"Saved PDF: {savepath_file}")
+            artefacts.append(savepath_file)
+
+        return artefacts
 
     # ------------------------------------------------------------------
     # 3. Plot sim only (helper for render_simobs_pdf)
@@ -387,7 +399,7 @@ class Renderer:
         crit_end: str = None,
         plotstartdate: str = None,
         plotenddate: str = None,
-    ):
+    ) -> List[str]:
         """
         Render sim/obs comparison to a multi-page PDF.
 
@@ -476,6 +488,8 @@ class Renderer:
             etime = time.time()
             print(f"WRITING PLOT PDF : {etime - stime} seconds")
 
+        return [pdf_file_path]
+
     # ------------------------------------------------------------------
     # 6. Render sim/obs interactive (Plotly, receives pre-read data)
     # ------------------------------------------------------------------
@@ -489,7 +503,7 @@ class Renderer:
         crit_start: str = None,
         crit_end: str = None,
         criteria_per_point: list = None,
-    ):
+    ) -> List[str]:
         """
         Render interactive sim/obs comparison using Plotly.
 
@@ -502,6 +516,11 @@ class Renderer:
         :param crit_start: Start date for criteria calculation
         :param crit_end: End date for criteria calculation
         """
+        if out_file_path is None:
+            raise ValueError(
+                "Interactive sim/obs rendering requires 'out_file_path' to produce a file."
+            )
+
         print("Plotting graph with plotly ...", flush=True)
 
         if df_other_variable is None:
@@ -640,9 +659,7 @@ class Renderer:
             ],
         )
 
-        fig.show()
-
-        if out_file_path is not None:
-            fig.write_html(out_file_path, include_plotlyjs='cdn', full_html=True)
+        fig.write_html(out_file_path, include_plotlyjs='cdn', full_html=True)
 
         print("Done", flush=True)
+        return [out_file_path]

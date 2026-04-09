@@ -60,7 +60,7 @@ The facade exposes only high-level macro-capabilities:
 | `describe`              | Inspect twin metadata and compartment info       |
 | `extract`               | Extract simulation or observation data           |
 | `transform`             | Apply temporal/spatial aggregation               |
-| `render`                | Produce visualizations (PDF, interactive plots)  |
+| `render`                | Produce visualization files (PDF, PNG, HTML)     |
 | `export`                | Export data to files (CSV, pickle, GeoDataFrame) |
 
 These methods **delegate** to `services/` and `domain/` — they contain no heavy logic.

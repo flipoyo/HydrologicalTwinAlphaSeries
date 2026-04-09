@@ -294,16 +294,16 @@ class HydrologicalTwin(HTPersistenceMixin):
         """
         self._require_state("render")
         if kind == "budget":
-            self.render_budget_barplot(**kwargs)
+            artefacts = self.render_budget_barplot(**kwargs)
         elif kind == "regime":
-            self.render_hydrological_regime(**kwargs)
+            artefacts = self.render_hydrological_regime(**kwargs)
         elif kind == "sim_obs_pdf":
-            self.render_sim_obs_pdf(**kwargs)
+            artefacts = self.render_sim_obs_pdf(**kwargs)
         elif kind == "sim_obs_interactive":
-            self.render_sim_obs_interactive(**kwargs)
+            artefacts = self.render_sim_obs_interactive(**kwargs)
         else:
             raise ValueError(f"Unknown render kind: {kind!r}")
-        return RenderResult(meta={"kind": kind})
+        return RenderResult(artefacts=artefacts, meta={"kind": kind})
 
     def export(
         self,
@@ -1120,7 +1120,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         yaxis_unit: str = 'mm',
     ):
         """Render budget bar plot. Delegates to Renderer."""
-        Renderer.plot_budget_barplot(
+        return Renderer.plot_budget_barplot(
             data_dict=data_dict,
             plot_title=plot_title,
             output_folder=output_folder,
@@ -1142,7 +1142,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         years: str = None,
     ):
         """Render hydrological regime plots. Delegates to Renderer."""
-        Renderer.plot_hydrological_regime(
+        return Renderer.plot_hydrological_regime(
             data=data,
             obs_point_names=obs_point_names,
             month_labels=month_labels,
@@ -1172,7 +1172,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         crit_start: str = None,
         crit_end: str = None,
         aggr: Union[None, float, str] = None,
-    ):
+    ) -> list[str]:
         """Read sim+obs data and render to PDF.
 
         Uses _prepare_sim_obs_data for NumPy I/O + per-point slicing,
@@ -1237,7 +1237,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             name_file + "_" + plotstartdate + "_" + plotenddate + ".pdf"
         )
 
-        Renderer.render_simobs_pdf(
+        return Renderer.render_simobs_pdf(
             simdf=simdf,
             obs_df=obs_df,
             obs_points=obs_points_info,
@@ -1267,7 +1267,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         critstart: str = None,
         critend: str = None,
         aggr: Union[None, float, str] = None,
-    ):
+    ) -> list[str]:
         """Read sim+obs data and render interactive Plotly figure.
 
         Uses _prepare_sim_obs_data for NumPy I/O + per-point slicing,
@@ -1309,7 +1309,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             sim_obs_data.append((df_sim_obs, pt['name']))
             criteria_per_point.append(pt.get('criteria'))
 
-        Renderer.render_simobs_interactive(
+        return Renderer.render_simobs_interactive(
             sim_obs_data=sim_obs_data,
             ylabel=ylabel,
             df_other_variable=df_other_variable,

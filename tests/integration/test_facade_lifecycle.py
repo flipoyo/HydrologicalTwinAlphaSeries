@@ -266,6 +266,17 @@ class TestMacroMethods:
         with pytest.raises(ValueError, match="Unknown export format"):
             twin.export(path=str(tmp_path / "x"), fmt="unknown")
 
+    def test_render_returns_file_artefacts(self, tmp_path, monkeypatch):
+        twin = self._make_loaded_twin(tmp_path)
+        expected = [str(tmp_path / "budget.png")]
+
+        monkeypatch.setattr(twin, "render_budget_barplot", lambda **kwargs: expected)
+
+        result = twin.render(kind="budget")
+
+        assert result.artefacts == expected
+        assert result.meta == {"kind": "budget"}
+
     def test_render_unknown_kind_raises(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
         with pytest.raises(ValueError, match="Unknown render kind"):
