@@ -22,6 +22,24 @@ jobs:
       - name: Install environment
         run: pixi install
 
+      - name: Check version consistency
+        run: |
+          pyproject_ver=$(python -c "
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+          print(data['project']['version'])
+          ")
+          pixi_ver=$(python -c "
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path('pixi.toml').read_text())
+          print(data['workspace']['version'])
+          ")
+          if [ "$pyproject_ver" != "$pixi_ver" ]; then
+            echo "::error::Version mismatch: pyproject.toml=$pyproject_ver vs pixi.toml=$pixi_ver"
+            exit 1
+          fi
+          echo "Versions are consistent: $pyproject_ver"
+
       - name: Enforce QGIS-free backend
         run: |
           if grep -R -nE '^\s*(from|import)\s+(qgis(\.PyQt)?|PyQt5?)\b' src; then

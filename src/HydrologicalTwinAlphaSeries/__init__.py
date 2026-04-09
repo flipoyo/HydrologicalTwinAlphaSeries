@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version
+
 from HydrologicalTwinAlphaSeries.Compartment import Compartment  # noqa: F401
 from HydrologicalTwinAlphaSeries.config import Config, ConfigGeometry, ConfigProject  # noqa: F401
 from HydrologicalTwinAlphaSeries.Extraction import Extraction, ExtractionPoint  # noqa: F401
@@ -10,4 +12,7 @@ from HydrologicalTwinAlphaSeries.Vec_Operator import Comparator, Extractor, Oper
 
 __all__ = ["HydrologicalTwin"]
 
-__version__ = "0.1.0-alpha"
+try:
+    __version__: str = version("HydrologicalTwinAlphaSeries")
+except PackageNotFoundError:  # pragma: no cover – only when running from source without install
+    __version__ = "0.0.0.dev0"
