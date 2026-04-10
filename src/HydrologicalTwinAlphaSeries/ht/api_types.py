@@ -173,7 +173,7 @@ class FacadeMethod:
     delegates_to: List[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class FacadeDescription:
     """Explicit description of the HydrologicalTwin facade for frontend consumers."""
 

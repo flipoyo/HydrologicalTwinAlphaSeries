@@ -64,8 +64,8 @@ In addition to the 8 canonical macro-methods above, the same facade exposes
 integrated high-level methods that aggregate lower-level generic helpers into
 frontend-ready artefacts:
 
-| Method                         | Frontend intent                          | Aggregates |
-|------------------------------- |------------------------------------------|------------|
+| Method | Frontend intent | Aggregates |
+|---|---|---|
 | `build_watbal_spatial_gdf`     | Water-balance map layer                  | `extract_watbal_for_map` + `aggregate_for_map` |
 | `build_effective_rainfall_gdf` | Effective-rainfall map layer             | `extract_watbal_for_map` + `aggregate_for_map` |
 | `build_aq_spatial_gdf`         | Aquifer map layer                        | `extract_values` + `aggregate_for_map` |
