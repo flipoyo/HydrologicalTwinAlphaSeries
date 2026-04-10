@@ -34,25 +34,29 @@ jobs:
           from pathlib import Path
 
           def bump(version: str) -> str:
-              """Increment the trailing integer counter of a version string.
+              """Increment version following the III.alpha.NN scheme.
+
+              Rules
+              -----
+              - If NN < 99: increment NN (zero-padded to 2 digits).
+              - If NN == 99: increment III and reset NN to 01.
 
               Examples
               --------
               "0.alpha.02" -> "0.alpha.03"
-              "0.alpha.09" -> "0.alpha.10"
-              "0.alpha.99" -> "0.alpha.100"
+              "0.alpha.98" -> "0.alpha.99"
+              "0.alpha.99" -> "1.alpha.01"
               """
-              m = re.fullmatch(r"(.*\.)(\d+)", version)
+              m = re.fullmatch(r"(\d+)\.alpha\.(\d+)", version)
               if not m:
-                  print(f"ERROR: cannot parse version {version!r}", file=sys.stderr)
+                  print(f"ERROR: cannot parse version {version!r} (expected III.alpha.NN)", file=sys.stderr)
                   sys.exit(1)
-              prefix = m.group(1)
-              old_digits = m.group(2)
-              new_num = int(old_digits) + 1
-              # Preserve zero-padding width unless the new number is longer.
-              width = max(len(old_digits), len(str(new_num)))
-              new_version = f"{prefix}{new_num:0{width}d}"
-              return new_version
+              iii = int(m.group(1))
+              nn = int(m.group(2))
+              if nn < 99:
+                  return f"{iii}.alpha.{nn + 1:02d}"
+              else:
+                  return f"{iii + 1}.alpha.01"
 
           root = Path(".")
 
