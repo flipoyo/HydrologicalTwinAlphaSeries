@@ -1334,7 +1334,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 },
             )
         ).payload
-    
+
     def read_observations(
         self,
         id_compartment: int,

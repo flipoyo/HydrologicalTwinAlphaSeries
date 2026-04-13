@@ -224,6 +224,7 @@ class CompartmentInfo:
     twin level to describe the global facade contract.
     """
     id_compartment: int
+    # Stable external identifier exposed to consumers; may differ from internal numbering.
     stable_id: str
     name: str
     layers_gis_names: List[str]
