@@ -221,7 +221,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             f"'{helper_name}' is deprecated and kept only for compatibility. "
             f"Use '{replacement}' with a typed request instead.",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     def _build_compartment_info(self, id_compartment: int) -> CompartmentInfo:
@@ -409,15 +409,15 @@ class HydrologicalTwin(HTPersistenceMixin):
         param: str,
         simsdate: int,
         simedate: int,
-        plotstart: str = None,
-        plotend: str = None,
+        plotstart: Optional[str] = None,
+        plotend: Optional[str] = None,
         id_layer: int = 0,
         aggr: Union[None, float, str] = None,
         compute_criteria: bool = False,
         criteria_metrics: List[str] = None,
-        crit_start: str = None,
-        crit_end: str = None,
-        obs_unit: str = None,
+        crit_start: Optional[str] = None,
+        crit_end: Optional[str] = None,
+        obs_unit: Optional[str] = None,
     ) -> dict:
         extract_result = self.extract(
             ExtractRequest(

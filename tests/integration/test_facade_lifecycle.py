@@ -319,12 +319,15 @@ class TestMacroMethods:
             twin.export(path=str(tmp_path / "x"), fmt="unknown")
 
     def test_render_returns_file_artefacts(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
         twin = self._make_loaded_twin(tmp_path)
         expected = [str(tmp_path / "budget.png")]
+        plot_budget_barplot = MagicMock(return_value=expected)
 
         monkeypatch.setattr(
             "HydrologicalTwinAlphaSeries.ht.hydrological_twin.Renderer.plot_budget_barplot",
-            lambda **kwargs: expected,
+            plot_budget_barplot,
         )
 
         result = twin.render(
@@ -336,6 +339,13 @@ class TestMacroMethods:
 
         assert result.artefacts == expected
         assert result.meta == {"kind": "budget"}
+        plot_budget_barplot.assert_called_once_with(
+            data_dict={},
+            plot_title="Budget",
+            output_folder=None,
+            output_name=None,
+            yaxis_unit="mm",
+        )
 
     def test_render_unknown_kind_raises(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
