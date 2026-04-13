@@ -23,6 +23,8 @@ from .api_types import (
     CompartmentInfo,
     ExportResult,
     ExtractValuesResponse,
+    FacadeDescription,
+    FacadeMethod,
     InvalidStateError,
     LayerInfo,
     ObservationInfo,
@@ -235,6 +237,112 @@ class HydrologicalTwin(HTPersistenceMixin):
             n_compartments=len(self.compartments),
             compartments=self.list_compartments(),
             metadata=self.metadata,
+        )
+
+    def describe_api_facade(self) -> FacadeDescription:
+        """Describe the explicit HydrologicalTwin facade for frontend consumers.
+
+        This method documents both the canonical macro-methods and the
+        integrated high-level methods already implemented in the facade for
+        `cawaqsviz`.
+        """
+        return FacadeDescription(
+            entrypoint="HydrologicalTwin",
+            primary_consumer="cawaqsviz",
+            lifecycle=[state.value for state in TwinState],
+            macro_methods=[
+                FacadeMethod(
+                    name="configure",
+                    level="macro",
+                    purpose="Attach project and geometry configuration.",
+                ),
+                FacadeMethod(
+                    name="load",
+                    level="macro",
+                    purpose="Register compartments and make the twin operational.",
+                ),
+                FacadeMethod(
+                    name="register_compartment",
+                    level="macro",
+                    purpose="Register one compartment after bulk loading.",
+                ),
+                FacadeMethod(
+                    name="describe",
+                    level="macro",
+                    purpose="Inspect twin metadata and registered compartments.",
+                    delegates_to=["list_compartments"],
+                ),
+                FacadeMethod(
+                    name="extract",
+                    level="macro",
+                    purpose="Extract simulation values through a stable entry point.",
+                    delegates_to=["extract_values"],
+                ),
+                FacadeMethod(
+                    name="transform",
+                    level="macro",
+                    purpose="Apply temporal aggregation through the facade.",
+                    delegates_to=["apply_temporal_operator"],
+                ),
+                FacadeMethod(
+                    name="render",
+                    level="macro",
+                    purpose="Dispatch rendering requests to the appropriate renderer helper.",
+                    delegates_to=[
+                        "render_budget_barplot",
+                        "render_hydrological_regime",
+                        "render_sim_obs_pdf",
+                        "render_sim_obs_interactive",
+                    ],
+                ),
+                FacadeMethod(
+                    name="export",
+                    level="macro",
+                    purpose="Export the current twin snapshot or derived data.",
+                    delegates_to=["to_pickle"],
+                ),
+            ],
+            frontend_methods=[
+                FacadeMethod(
+                    name="build_watbal_spatial_gdf",
+                    level="frontend",
+                    purpose="Build a frontend-ready water-balance map layer.",
+                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
+                ),
+                FacadeMethod(
+                    name="build_effective_rainfall_gdf",
+                    level="frontend",
+                    purpose="Build a frontend-ready effective-rainfall map layer.",
+                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
+                ),
+                FacadeMethod(
+                    name="build_aq_spatial_gdf",
+                    level="frontend",
+                    purpose="Build a frontend-ready aquifer map layer.",
+                    delegates_to=["extract_values", "aggregate_for_map"],
+                ),
+                FacadeMethod(
+                    name="build_aquifer_outcropping",
+                    level="frontend",
+                    purpose="Compute aquifer outcropping cells for frontend map filters.",
+                    delegates_to=["Manage.Spatial.buildAqOutcropping"],
+                ),
+                FacadeMethod(
+                    name="render_sim_obs_pdf",
+                    level="frontend",
+                    purpose="Generate a sim-vs-obs PDF report from backend data sources.",
+                    delegates_to=["_prepare_sim_obs_data", "Renderer.render_simobs_pdf"],
+                ),
+                FacadeMethod(
+                    name="render_sim_obs_interactive",
+                    level="frontend",
+                    purpose="Generate an interactive sim-vs-obs visualization payload.",
+                    delegates_to=[
+                        "_prepare_sim_obs_data",
+                        "Renderer.render_simobs_interactive",
+                    ],
+                ),
+            ],
         )
 
     def extract(
@@ -1334,10 +1442,10 @@ class HydrologicalTwin(HTPersistenceMixin):
     # IdCard, fingerprinting, and version tracking will be added here.
 
     # ╔════════════════════════════════════════════════════════════════╗
-    # ║  STAGING — implemented, not yet consumed by frontend         ║
-    # ║  These APIs are ready for integration but have no caller     ║
-    # ║  outside of tests.  Move them to the appropriate layer       ║
-    # ║  once wired into the frontend.                               ║
+    # ║  FRONTEND INTEGRATION FACADE                                ║
+    # ║  High-level integrated methods consumed by cawaqsviz.       ║
+    # ║  These orchestrate lower-level generic helpers into         ║
+    # ║  frontend-ready artefacts and datasets.                     ║
     # ╚════════════════════════════════════════════════════════════════╝
 
     def has_observations(self, id_compartment: int) -> bool:

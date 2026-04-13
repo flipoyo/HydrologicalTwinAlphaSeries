@@ -163,6 +163,27 @@ class TwinDescription:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class FacadeMethod:
+    """Description of a public HydrologicalTwin facade method."""
+
+    name: str
+    level: str
+    purpose: str
+    delegates_to: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FacadeDescription:
+    """Explicit description of the HydrologicalTwin facade for frontend consumers."""
+
+    entrypoint: str
+    primary_consumer: str
+    lifecycle: List[str]
+    macro_methods: List[FacadeMethod] = field(default_factory=list)
+    frontend_methods: List[FacadeMethod] = field(default_factory=list)
+
+
 @dataclass
 class RenderResult:
     """Result of :meth:`HydrologicalTwin.render`.

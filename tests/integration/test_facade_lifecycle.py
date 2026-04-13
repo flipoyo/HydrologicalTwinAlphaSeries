@@ -10,6 +10,7 @@ import pytest
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 from HydrologicalTwinAlphaSeries.ht import (
     ExportResult,
+    FacadeDescription,
     HydrologicalTwin,
     InvalidStateError,
     TwinDescription,
@@ -281,3 +282,41 @@ class TestMacroMethods:
         twin = self._make_loaded_twin(tmp_path)
         with pytest.raises(ValueError, match="Unknown render kind"):
             twin.render(kind="unknown_kind")
+
+
+class TestFacadeDescription:
+    """Verify the explicit facade description exposed to frontend consumers."""
+
+    def test_describe_api_facade_lists_macro_and_frontend_methods(self):
+        twin = HydrologicalTwin()
+
+        description = twin.describe_api_facade()
+
+        assert isinstance(description, FacadeDescription)
+        assert description.entrypoint == "HydrologicalTwin"
+        assert description.primary_consumer == "cawaqsviz"
+        assert description.lifecycle == ["EMPTY", "CONFIGURED", "LOADED", "READY"]
+
+        macro_names = {method.name for method in description.macro_methods}
+        assert macro_names == {
+            "configure",
+            "load",
+            "register_compartment",
+            "describe",
+            "extract",
+            "transform",
+            "render",
+            "export",
+        }
+
+        frontend_methods = {
+            method.name: method.delegates_to for method in description.frontend_methods
+        }
+        assert frontend_methods["build_watbal_spatial_gdf"] == [
+            "extract_watbal_for_map",
+            "aggregate_for_map",
+        ]
+        assert frontend_methods["render_sim_obs_pdf"] == [
+            "_prepare_sim_obs_data",
+            "Renderer.render_simobs_pdf",
+        ]

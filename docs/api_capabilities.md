@@ -55,6 +55,29 @@ Export data as CSV, pickle snapshots, or GeoDataFrames.
 
 ---
 
+## Explicit Frontend Integration Facade
+
+`HydrologicalTwin.describe_api_facade()` returns an explicit description of the
+public facade for `cawaqsviz`.
+
+In addition to the 8 canonical macro-methods above, the same facade exposes
+integrated high-level methods that aggregate lower-level generic helpers into
+frontend-ready artefacts:
+
+| Method | Frontend intent | Aggregates |
+|---|---|---|
+| `build_watbal_spatial_gdf`     | Water-balance map layer                  | `extract_watbal_for_map` + `aggregate_for_map` |
+| `build_effective_rainfall_gdf` | Effective-rainfall map layer             | `extract_watbal_for_map` + `aggregate_for_map` |
+| `build_aq_spatial_gdf`         | Aquifer map layer                        | `extract_values` + `aggregate_for_map` |
+| `build_aquifer_outcropping`    | Aquifer outcropping / map filtering      | `Manage.Spatial.buildAqOutcropping` |
+| `render_sim_obs_pdf`           | Static sim-vs-obs report                 | `_prepare_sim_obs_data` + `Renderer.render_simobs_pdf` |
+| `render_sim_obs_interactive`   | Interactive sim-vs-obs frontend payload  | `_prepare_sim_obs_data` + `Renderer.render_simobs_interactive` |
+
+These are the integrated backend methods intended to be leveraged directly by
+the frontend once the twin is in `LOADED` state.
+
+---
+
 ## Transport Layer
 
 No HTTP schema or web framework integration is defined at this stage.
