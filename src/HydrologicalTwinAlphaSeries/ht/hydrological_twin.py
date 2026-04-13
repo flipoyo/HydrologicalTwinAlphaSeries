@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -21,21 +22,84 @@ from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
     CompartmentInfo,
+    DescribeRequest,
+    ExportRequest,
     ExportResult,
+    ExtractRequest,
+    ExtractResult,
     ExtractValuesResponse,
     FacadeDescription,
     FacadeMethod,
     InvalidStateError,
     LayerInfo,
+    LoadCompartmentRequest,
+    LoadDirectories,
+    LoadGeometrySource,
+    LoadObservationSource,
+    LoadPeriod,
+    LoadRequest,
     ObservationInfo,
     ObservationsResponse,
+    RenderRequest,
     RenderResult,
     SpatialAverageResponse,
     TemporalOpResponse,
+    TransformRequest,
+    TransformResult,
     TwinDescription,
     TwinState,
 )
 from .persistence import HTPersistenceMixin
+
+SUPPORTED_EXTRACT_KINDS = [
+    "simulation_matrix",
+    "observations",
+    "sim_obs_bundle",
+    "spatial_map",
+    "catchment_cells",
+    "aquifer_outcropping",
+    "aq_balance_inputs",
+]
+SUPPORTED_TRANSFORM_KINDS = [
+    "temporal_aggregation",
+    "performance_criteria",
+    "aggregated_budget",
+    "hydrological_regime",
+    "runoff_ratio",
+    "interlayer_exchanges",
+]
+SUPPORTED_RENDER_KINDS = ["budget", "regime", "sim_obs_pdf", "sim_obs_interactive"]
+SUPPORTED_EXPORT_KINDS = ["pickle"]
+SUPPORTED_OUTPUTS = ["numpy", "plot", "pickle", "geodataframe"]
+TRANSITIONAL_METHODS = [
+    "register_compartment",
+    "get_compartment_info",
+    "get_layer_info",
+    "get_all_layers",
+    "get_observation_info",
+    "extract_values",
+    "read_observations",
+    "_prepare_sim_obs_data",
+    "build_watbal_spatial_gdf",
+    "build_effective_rainfall_gdf",
+    "build_aq_spatial_gdf",
+    "build_aquifer_outcropping",
+    "compute_performance_stats",
+    "compute_budget_variable",
+    "compute_hydrological_regime",
+    "render_budget_barplot",
+    "render_hydrological_regime",
+    "render_sim_obs_pdf",
+    "render_sim_obs_interactive",
+]
+
+
+class _StaticCompartmentProvider:
+    def __init__(self, compartment: Compartment) -> None:
+        self._compartment = compartment
+
+    def build_compartment(self, request: LoadCompartmentRequest, twin: Any) -> Compartment:
+        return self._compartment
 
 
 class HydrologicalTwin(HTPersistenceMixin):
@@ -61,8 +125,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     Macro-methods (public API, ≤ 8)::
 
-        configure, load, register_compartment, describe,
-        extract, transform, render, export
+        configure, load, describe, extract, transform, render, export
     """
 
     def __init__(
@@ -153,6 +216,337 @@ class HydrologicalTwin(HTPersistenceMixin):
                 f"but current state is {self._state.value}."
             )
 
+    def _warn_deprecated_helper(self, helper_name: str, replacement: str) -> None:
+        warnings.warn(
+            f"'{helper_name}' is deprecated and kept only for compatibility. "
+            f"Use '{replacement}' with a typed request instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    def _build_compartment_info(self, id_compartment: int) -> CompartmentInfo:
+        comp = self.get_compartment(id_compartment)
+        observation_layers: List[str] = []
+        observation_units: Dict[str, str] = {}
+        if comp.obs is not None:
+            observation_layers.append(comp.obs.layer_gis_name)
+            observation_units[comp.obs.obs_type] = "l/s" if comp.compartment == "HYD" else ""
+        return CompartmentInfo(
+            id_compartment=id_compartment,
+            stable_id=str(id_compartment),
+            name=comp.compartment,
+            layers_gis_names=list(comp.layers_gis_names),
+            resolutions=list(comp.layers_gis_names),
+            n_layers=len(comp.mesh.mesh),
+            n_cells=comp.mesh.ncells,
+            cell_ids=np.array(comp.mesh.getCellIdVector()),
+            out_caw_path=comp.out_caw_path,
+            regime=comp.regime,
+            observation_layers=observation_layers,
+            observation_units=observation_units,
+            supported_outputs=list(SUPPORTED_OUTPUTS),
+            extract_kinds=list(SUPPORTED_EXTRACT_KINDS),
+            transform_kinds=list(SUPPORTED_TRANSFORM_KINDS),
+            render_kinds=list(SUPPORTED_RENDER_KINDS),
+        )
+
+    def _get_layer_info_impl(self, id_compartment: int, id_layer: int) -> LayerInfo:
+        comp = self.get_compartment(id_compartment)
+        layer = comp.mesh.mesh[id_layer]
+        return LayerInfo(
+            id_layer=id_layer,
+            n_cells=layer.ncells,
+            cell_ids=np.array([cell.id for cell in layer.layer]),
+            cell_areas=np.array([cell.area for cell in layer.layer]),
+            cell_geometries=[cell.geometry for cell in layer.layer],
+            layer_gis_name=(
+                comp.layers_gis_names[id_layer]
+                if id_layer < len(comp.layers_gis_names)
+                else ""
+            ),
+            crs=layer.crs,
+        )
+
+    def _get_observation_info_impl(self, id_compartment: int) -> Optional[ObservationInfo]:
+        comp = self.get_compartment(id_compartment)
+        if comp.obs is None:
+            return None
+        obs = comp.obs
+        return ObservationInfo(
+            id_compartment=id_compartment,
+            obs_type=obs.obs_type,
+            n_points=obs.n_obs,
+            layer_gis_name=obs.layer_gis_name,
+            point_names=[p.name for p in obs.obs_points],
+            point_ids=[p.id_point for p in obs.obs_points],
+            cell_ids=[p.id_cell for p in obs.obs_points],
+            layer_ids=[p.id_layer for p in obs.obs_points],
+            geometries=[p.geometry for p in obs.obs_points],
+            mesh_ids=[p.id_mesh for p in obs.obs_points],
+        )
+
+    def _materialize_load_request(self, request: LoadRequest) -> Dict[int, Compartment]:
+        if request.kind != "compartments":
+            raise ValueError(f"Unknown load kind: {request.kind!r}")
+        built: Dict[int, Compartment] = {}
+        for compartment_request in request.compartments:
+            geometry_source = compartment_request.geometry_source
+            provider = geometry_source.provider
+            if geometry_source.kind != "provider" or provider is None:
+                raise ValueError(
+                    "load() currently supports geometry_source.kind='provider' "
+                    "with a public provider."
+                )
+            compartment = provider.build_compartment(compartment_request, self)
+            if not isinstance(compartment, Compartment):
+                raise TypeError(
+                    "Compartment providers must return Compartment instances, "
+                    f"got {type(compartment).__name__}"
+                )
+            built[compartment_request.id_compartment] = compartment
+        return built
+
+    def _extract_values_impl(
+        self,
+        id_compartment: int,
+        outtype: str,
+        param: str,
+        syear: int,
+        eyear: int,
+        id_layer: int = 0,
+        cutsdate: Optional[str] = None,
+        cutedate: Optional[str] = None,
+    ) -> ExtractValuesResponse:
+        comp = self.get_compartment(id_compartment)
+
+        sim_matrix = self.temporal.readSimData(
+            compartment=comp,
+            outtype=outtype,
+            param=param,
+            id_layer=id_layer,
+            syear=syear,
+            eyear=eyear,
+            tempDirectory=self.temp_directory,
+        )
+
+        start_date = datetime.strptime(f"{syear}-08-01", "%Y-%m-%d")
+        end_date = datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
+        dates = np.arange(np.datetime64(start_date), np.datetime64(end_date), dtype="datetime64[D]")
+        if sim_matrix.shape[1] != len(dates):
+            min_len = min(sim_matrix.shape[1], len(dates))
+            sim_matrix = sim_matrix[:, :min_len]
+            dates = dates[:min_len]
+
+        if cutsdate is not None or cutedate is not None:
+            d_start = np.datetime64(cutsdate) if cutsdate else dates[0]
+            d_end = np.datetime64(cutedate) if cutedate else dates[-1]
+            mask = (dates >= d_start) & (dates <= d_end)
+            sim_matrix = sim_matrix[:, mask]
+            dates = dates[mask]
+
+        return ExtractValuesResponse(
+            data=sim_matrix,
+            dates=dates,
+            meta={
+                "id_compartment": id_compartment,
+                "outtype": outtype,
+                "param": param,
+                "syear": syear,
+                "eyear": eyear,
+                "id_layer": id_layer,
+                "cutsdate": cutsdate,
+                "cutedate": cutedate,
+            },
+        )
+
+    def _read_observations_impl(
+        self,
+        id_compartment: int,
+        syear: int,
+        eyear: int,
+    ) -> ObservationsResponse:
+        comp = self.get_compartment(id_compartment)
+        cfg = obs_config[id_compartment]
+
+        result = self.temporal.readObsData(
+            compartment=comp,
+            id_col_data=cfg["id_col_data"],
+            id_col_time=cfg["id_col_time"],
+            sdate=syear,
+            edate=eyear,
+        )
+
+        if result is None:
+            return ObservationsResponse(
+                data=np.empty((0, 0)),
+                dates=np.array([], dtype="datetime64[D]"),
+                meta={
+                    "id_compartment": id_compartment,
+                    "syear": syear,
+                    "eyear": eyear,
+                    "obs_point_ids": [],
+                    "n_points": 0,
+                },
+            )
+
+        data, dates, point_ids = result
+        return ObservationsResponse(
+            data=data,
+            dates=dates,
+            meta={
+                "id_compartment": id_compartment,
+                "syear": syear,
+                "eyear": eyear,
+                "obs_point_ids": point_ids,
+                "n_points": len(point_ids),
+            },
+        )
+
+    def _prepare_sim_obs_data_impl(
+        self,
+        id_compartment: int,
+        outtype: str,
+        param: str,
+        simsdate: int,
+        simedate: int,
+        plotstart: str = None,
+        plotend: str = None,
+        id_layer: int = 0,
+        aggr: Union[None, float, str] = None,
+        compute_criteria: bool = False,
+        criteria_metrics: List[str] = None,
+        crit_start: str = None,
+        crit_end: str = None,
+        obs_unit: str = None,
+    ) -> dict:
+        extract_result = self.extract(
+            ExtractRequest(
+                kind="simulation_matrix",
+                id_compartment=id_compartment,
+                outtype=outtype,
+                param=param,
+                syear=simsdate,
+                eyear=simedate,
+                options={
+                    "id_layer": id_layer,
+                    "cutsdate": plotstart,
+                    "cutedate": plotend,
+                },
+            )
+        )
+        obs_result = self.extract(
+            ExtractRequest(
+                kind="observations",
+                id_compartment=id_compartment,
+                syear=simsdate,
+                eyear=simedate,
+            )
+        )
+        sim_response = extract_result.payload
+        obs_response = obs_result.payload
+        comp = self.get_compartment(id_compartment)
+
+        if comp.obs is not None:
+            for layer in comp.mesh.mesh.values():
+                verify_crs_match(
+                    comp.obs.crs,
+                    layer.crs,
+                    context="observations vs mesh spatial linkage",
+                )
+
+        sim_dates = sim_response.dates
+        obs_dates = obs_response.dates
+        obs_points_data = []
+        if comp.obs is not None:
+            for i, obs_point in enumerate(comp.obs.obs_points):
+                sim_vals = sim_response.data[obs_point.id_cell - 1, :]
+                obs_vals = (
+                    obs_response.data[i, :]
+                    if i < obs_response.data.shape[0]
+                    else np.full(len(obs_dates), np.nan)
+                )
+                obs_points_data.append(
+                    {
+                        "name": obs_point.name,
+                        "id_cell": obs_point.id_cell,
+                        "id_layer": obs_point.id_layer,
+                        "id_point": obs_point.id_point,
+                        "sim": sim_vals,
+                        "obs": obs_vals,
+                    }
+                )
+
+        if comp.compartment == "HYD" and obs_unit is not None:
+            for pt in obs_points_data:
+                if obs_unit == "m3/s":
+                    pt["obs"] = pt["obs"] * 1e-3
+                elif obs_unit == "l/s":
+                    pt["sim"] = pt["sim"] * 1e3
+
+        if len(obs_dates) > 0 and plotstart is not None and plotend is not None:
+            d_start = np.datetime64(plotstart)
+            d_end = np.datetime64(plotend)
+            obs_mask = (obs_dates >= d_start) & (obs_dates <= d_end)
+            obs_dates = obs_dates[obs_mask]
+            for pt in obs_points_data:
+                pt["obs"] = pt["obs"][obs_mask]
+
+        if aggr is not None:
+            for pt in obs_points_data:
+                obs = pt["obs"]
+                if aggr == "mean":
+                    pt["obs"] = np.full_like(obs, np.nanmean(obs))
+                elif aggr == "min":
+                    pt["obs"] = np.full_like(obs, np.nanmin(obs))
+                elif aggr == "max":
+                    pt["obs"] = np.full_like(obs, np.nanmax(obs))
+                elif isinstance(aggr, float):
+                    pt["obs"] = np.full_like(obs, np.nanquantile(obs, aggr))
+
+        if compute_criteria and obs_points_data:
+            for pt in obs_points_data:
+                sim_for_crit = pt["sim"]
+                obs_for_crit = pt["obs"]
+                if crit_start is not None and crit_end is not None:
+                    cs = np.datetime64(crit_start)
+                    ce = np.datetime64(crit_end)
+                    sim_mask = (sim_dates >= cs) & (sim_dates <= ce)
+                    obs_mask = (obs_dates >= cs) & (obs_dates <= ce)
+                    sim_for_crit = sim_for_crit[sim_mask]
+                    obs_for_crit = obs_for_crit[obs_mask]
+                    n = min(len(sim_for_crit), len(obs_for_crit))
+                    sim_for_crit = sim_for_crit[:n]
+                    obs_for_crit = obs_for_crit[:n]
+                criteria_result = self.transform(
+                    TransformRequest(
+                        kind="performance_criteria",
+                        payload={"sim": sim_for_crit, "obs": obs_for_crit},
+                        options={"metrics": criteria_metrics},
+                    )
+                )
+                pt["criteria"] = criteria_result.payload
+
+        ext_points_data = []
+        if comp.extraction is not None:
+            for ext_point in comp.extraction.ext_point:
+                sim_vals = sim_response.data[ext_point.id_cell - 1, :]
+                ext_points_data.append(
+                    {
+                        "name": ext_point.name,
+                        "id_cell": ext_point.id_cell,
+                        "id_layer": ext_point.id_layer,
+                        "sim": sim_vals,
+                    }
+                )
+
+        return {
+            "sim_dates": sim_dates,
+            "obs_dates": obs_dates,
+            "compartment_name": comp.compartment,
+            "obs_points": obs_points_data,
+            "ext_points": ext_points_data,
+        }
+
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  MACRO-METHODS — canonical public API                        ║
     # ╚════════════════════════════════════════════════════════════════╝
@@ -179,6 +573,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     def load(
         self,
+        request: Optional[LoadRequest] = None,
         compartments: Optional[Dict[int, Compartment]] = None,
         **kwargs: Any,
     ) -> None:
@@ -186,15 +581,53 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Transitions: CONFIGURED → LOADED.
 
-        Parameters
-        ----------
-        compartments : dict, optional
-            ``{id_compartment: Compartment}`` mapping.  When supplied the
-            compartments are stored directly.
         """
         self._require_state("load")
-        if compartments is not None:
-            self.compartments = compartments
+        if request is None:
+            if compartments is not None:
+                self._warn_deprecated_helper("load(compartments=...)", "load(LoadRequest(...))")
+                request = LoadRequest(
+                    compartments=[
+                        LoadCompartmentRequest(
+                            id_compartment=id_compartment,
+                            stable_id=str(id_compartment),
+                            geometry_source=LoadGeometrySource(
+                                kind="provider",
+                                provider=_StaticCompartmentProvider(compartment),
+                            ),
+                            observation_source=LoadObservationSource(kind="attached"),
+                        )
+                        for id_compartment, compartment in compartments.items()
+                    ],
+                    period=LoadPeriod(
+                        start_year=getattr(self.config_proj, "startSim", 0),
+                        end_year=getattr(self.config_proj, "endSim", 0),
+                    ),
+                    directories=LoadDirectories(
+                        out_caw_directory=self.out_caw_directory,
+                        obs_directory=self.obs_directory,
+                        temp_directory=self.temp_directory,
+                    ),
+                )
+            else:
+                request = LoadRequest()
+
+        if request.directories is not None:
+            if request.directories.out_caw_directory is not None:
+                self.out_caw_directory = request.directories.out_caw_directory
+            if request.directories.obs_directory is not None:
+                self.obs_directory = request.directories.obs_directory
+            if request.directories.temp_directory is not None:
+                self.temp_directory = request.directories.temp_directory
+        if request.period is not None:
+            self.metadata["period"] = {
+                "start_year": request.period.start_year,
+                "end_year": request.period.end_year,
+            }
+        if request.metadata:
+            self.metadata.update(request.metadata)
+
+        self.compartments = self._materialize_load_request(request)
         self._transition_to(TwinState.LOADED)
 
     def register_compartment(
@@ -219,6 +652,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         TypeError
             If *compartment* is not a :class:`Compartment` instance.
         """
+        self._warn_deprecated_helper("register_compartment", "load(LoadRequest(...))")
         self._require_state("register_compartment")
         if not isinstance(compartment, Compartment):
             raise TypeError(
@@ -226,25 +660,34 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
         self.compartments[id_compartment] = compartment
 
-    def describe(self, **kwargs: Any) -> TwinDescription:
+    def describe(self, request: Optional[DescribeRequest] = None, **kwargs: Any) -> TwinDescription:
         """Return a structured description of the twin.
 
         Requires state LOADED.
         """
         self._require_state("describe")
+        request = request or DescribeRequest()
+        if request.kind != "catalog":
+            raise ValueError(f"Unknown describe kind: {request.kind!r}")
         return TwinDescription(
+            kind=request.kind,
             state=self._state.value,
             n_compartments=len(self.compartments),
-            compartments=self.list_compartments(),
+            compartments=[self._build_compartment_info(cid) for cid in self.compartments],
+            supported_outputs=list(SUPPORTED_OUTPUTS),
+            extract_kinds=list(SUPPORTED_EXTRACT_KINDS),
+            transform_kinds=list(SUPPORTED_TRANSFORM_KINDS),
+            render_kinds=list(SUPPORTED_RENDER_KINDS),
+            export_kinds=list(SUPPORTED_EXPORT_KINDS),
+            transitional_methods=list(TRANSITIONAL_METHODS),
             metadata=self.metadata,
         )
 
     def describe_api_facade(self) -> FacadeDescription:
         """Describe the explicit HydrologicalTwin facade for frontend consumers.
 
-        This method documents both the canonical macro-methods and the
-        integrated high-level methods already implemented in the facade for
-        `cawaqsviz`.
+        This documents the stable consumer contract and the temporary
+        compatibility wrappers preserved for the CWV migration.
         """
         return FacadeDescription(
             entrypoint="HydrologicalTwin",
@@ -259,162 +702,440 @@ class HydrologicalTwin(HTPersistenceMixin):
                 FacadeMethod(
                     name="load",
                     level="macro",
-                    purpose="Register compartments and make the twin operational.",
-                ),
-                FacadeMethod(
-                    name="register_compartment",
-                    level="macro",
-                    purpose="Register one compartment after bulk loading.",
+                    purpose="Load typed compartment requests, period and directory inputs.",
                 ),
                 FacadeMethod(
                     name="describe",
                     level="macro",
-                    purpose="Inspect twin metadata and registered compartments.",
-                    delegates_to=["list_compartments"],
+                    purpose="Expose the frontend catalog of compartments and capabilities.",
                 ),
                 FacadeMethod(
                     name="extract",
                     level="macro",
-                    purpose="Extract simulation values through a stable entry point.",
-                    delegates_to=["extract_values"],
+                    purpose="Run public extraction workflows through typed requests.",
                 ),
                 FacadeMethod(
                     name="transform",
                     level="macro",
-                    purpose="Apply temporal aggregation through the facade.",
-                    delegates_to=["apply_temporal_operator"],
+                    purpose="Transform extracted public payloads into business calculations.",
                 ),
                 FacadeMethod(
                     name="render",
                     level="macro",
-                    purpose="Dispatch rendering requests to the appropriate renderer helper.",
-                    delegates_to=[
-                        "render_budget_barplot",
-                        "render_hydrological_regime",
-                        "render_sim_obs_pdf",
-                        "render_sim_obs_interactive",
-                    ],
+                    purpose="Produce final artefacts from typed rendering requests.",
                 ),
                 FacadeMethod(
                     name="export",
                     level="macro",
-                    purpose="Export the current twin snapshot or derived data.",
-                    delegates_to=["to_pickle"],
+                    purpose="Export persistent snapshots and artefacts through typed requests.",
                 ),
             ],
-            frontend_methods=[
+            transitional_methods=[
                 FacadeMethod(
-                    name="build_watbal_spatial_gdf",
-                    level="frontend",
-                    purpose="Build a frontend-ready water-balance map layer.",
-                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
+                    name="register_compartment",
+                    level="compatibility",
+                    purpose="Temporary CWV wrapper for incremental loading.",
                 ),
                 FacadeMethod(
-                    name="build_effective_rainfall_gdf",
-                    level="frontend",
-                    purpose="Build a frontend-ready effective-rainfall map layer.",
-                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
+                    name=(
+                        "get_compartment_info / get_layer_info / get_all_layers / "
+                        "get_observation_info"
+                    ),
+                    level="compatibility",
+                    purpose="Temporary metadata wrappers superseded by describe(kind='catalog').",
                 ),
                 FacadeMethod(
-                    name="build_aq_spatial_gdf",
-                    level="frontend",
-                    purpose="Build a frontend-ready aquifer map layer.",
-                    delegates_to=["extract_values", "aggregate_for_map"],
+                    name="extract_values / read_observations / _prepare_sim_obs_data",
+                    level="compatibility",
+                    purpose="Temporary data wrappers superseded by extract(kind=...).",
                 ),
                 FacadeMethod(
-                    name="build_aquifer_outcropping",
-                    level="frontend",
-                    purpose="Compute aquifer outcropping cells for frontend map filters.",
-                    delegates_to=["Manage.Spatial.buildAqOutcropping"],
-                ),
-                FacadeMethod(
-                    name="render_sim_obs_pdf",
-                    level="frontend",
-                    purpose="Generate a sim-vs-obs PDF report from backend data sources.",
-                    delegates_to=["_prepare_sim_obs_data", "Renderer.render_simobs_pdf"],
-                ),
-                FacadeMethod(
-                    name="render_sim_obs_interactive",
-                    level="frontend",
-                    purpose="Generate an interactive sim-vs-obs visualization payload.",
-                    delegates_to=[
-                        "_prepare_sim_obs_data",
-                        "Renderer.render_simobs_interactive",
-                    ],
+                    name="compute_* / build_* / render_* specifics",
+                    level="compatibility",
+                    purpose=(
+                        "Temporary wrappers superseded by transform(kind=...) "
+                        "and render(kind=...)."
+                    ),
                 ),
             ],
         )
 
     def extract(
         self,
-        id_compartment: int,
-        outtype: str,
-        param: str,
-        syear: int,
-        eyear: int,
+        request: Optional[ExtractRequest] = None,
+        id_compartment: Optional[int] = None,
+        outtype: Optional[str] = None,
+        param: Optional[str] = None,
+        syear: Optional[int] = None,
+        eyear: Optional[int] = None,
         **kwargs: Any,
-    ) -> ExtractValuesResponse:
+    ) -> Union[ExtractResult, ExtractValuesResponse]:
         """Extract simulation data (macro-method).
 
-        Delegates to :meth:`extract_values`.  Requires state LOADED.
+        Requires state LOADED.
         """
         self._require_state("extract")
-        return self.extract_values(
+        legacy_mode = request is None
+        request = request or ExtractRequest(
+            kind="simulation_matrix",
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
             syear=syear,
             eyear=eyear,
-            **kwargs,
+            options=kwargs,
         )
+        kind = request.kind
+        options = dict(request.options)
+        if kind == "simulation_matrix":
+            payload = self._extract_values_impl(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                id_layer=options.get("id_layer", 0),
+                cutsdate=options.get("cutsdate"),
+                cutedate=options.get("cutedate"),
+            )
+        elif kind == "observations":
+            payload = self._read_observations_impl(
+                id_compartment=request.id_compartment,
+                syear=request.syear,
+                eyear=request.eyear,
+            )
+        elif kind == "sim_obs_bundle":
+            payload = self._prepare_sim_obs_data_impl(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                simsdate=request.syear,
+                simedate=request.eyear,
+                plotstart=options.get("plotstart"),
+                plotend=options.get("plotend"),
+                id_layer=options.get("id_layer", 0),
+                aggr=options.get("aggr"),
+                compute_criteria=options.get("compute_criteria", False),
+                criteria_metrics=options.get("criteria_metrics"),
+                crit_start=options.get("crit_start"),
+                crit_end=options.get("crit_end"),
+                obs_unit=options.get("obs_unit"),
+            )
+        elif kind == "spatial_map":
+            payload = {
+                "compartment": self._build_compartment_info(request.id_compartment),
+                "layer": self._get_layer_info_impl(
+                    request.id_compartment,
+                    options.get("id_layer", 0),
+                ),
+                "values": self._extract_values_impl(
+                    id_compartment=request.id_compartment,
+                    outtype=request.outtype,
+                    param=request.param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    id_layer=options.get("id_layer", 0),
+                    cutsdate=options.get("cutsdate"),
+                    cutedate=options.get("cutedate"),
+                ),
+            }
+        elif kind == "catchment_cells":
+            payload = self.extract_area_values(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                spatial_operator="catchment_cells",
+                **options,
+            )
+        elif kind == "aquifer_outcropping":
+            payload = np.array(
+                [
+                    cell.id
+                    for cell in self.spatial.buildAqOutcropping(
+                        exd=type(
+                            "_ExdStub",
+                            (),
+                            {"post_process_directory": options.get("save_directory", "")},
+                        )(),
+                        aq_compartment=self.get_compartment(request.id_compartment),
+                        save=options.get("save_directory") is not None,
+                    )
+                ]
+            )
+        elif kind == "aq_balance_inputs":
+            payload = {
+                name: self._extract_values_impl(
+                    id_compartment=request.id_compartment,
+                    outtype=spec["outtype"],
+                    param=spec["param"],
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    id_layer=spec.get("id_layer", 0),
+                    cutsdate=spec.get("cutsdate"),
+                    cutedate=spec.get("cutedate"),
+                )
+                for name, spec in options.get("variables", {}).items()
+            }
+        else:
+            raise ValueError(f"Unknown extract kind: {kind!r}")
+        result = ExtractResult(kind=kind, payload=payload, meta={"kind": kind})
+        return payload if legacy_mode else result
 
     def transform(
         self,
-        arr: np.ndarray,
-        dates: np.ndarray,
-        frequency: str,
+        request: Optional[TransformRequest] = None,
+        arr: Optional[np.ndarray] = None,
+        dates: Optional[np.ndarray] = None,
+        frequency: Optional[str] = None,
         agg_dimension: Union[str, float] = "mean",
         **kwargs: Any,
-    ) -> TemporalOpResponse:
+    ) -> Union[TransformResult, TemporalOpResponse]:
         """Apply temporal aggregation (macro-method).
 
-        Delegates to :meth:`apply_temporal_operator`.  Requires state LOADED.
+        Requires state LOADED.
         """
         self._require_state("transform")
-        return self.apply_temporal_operator(
-            arr=arr,
-            dates=dates,
-            column_names=kwargs.pop("column_names", None),
-            agg_dimension=agg_dimension,
-            frequency=frequency,
-            **kwargs,
+        legacy_mode = request is None
+        request = request or TransformRequest(
+            kind="temporal_aggregation",
+            payload={"arr": arr, "dates": dates},
+            options={"frequency": frequency, "agg_dimension": agg_dimension, **kwargs},
         )
+        options = dict(request.options)
+        if request.kind == "temporal_aggregation":
+            payload = self.apply_temporal_operator(
+                arr=request.payload["arr"],
+                dates=request.payload["dates"],
+                column_names=options.get("column_names"),
+                agg_dimension=options.get("agg_dimension", "mean"),
+                frequency=options.get("frequency"),
+                pluriennial=options.get("pluriennial", False),
+                year_end_month=options.get("year_end_month", 12),
+            )
+        elif request.kind == "performance_criteria":
+            payload = Comparator().calc_performance_metrics(
+                sim=request.payload["sim"],
+                obs=request.payload["obs"],
+                metrics=options.get("metrics"),
+            )
+        elif request.kind == "aggregated_budget":
+            payload = self.budget.calcInteranualBVariableNumpy(
+                data=request.payload["data"],
+                param=options["param"],
+                out_folder="",
+                agg=options["agg"],
+                fz=options["fz"],
+                sdate=options["sdate"],
+                edate=options["edate"],
+                cutsdate=options.get("cutsdate"),
+                cutedate=options.get("cutedate"),
+                pluriannual=options.get("pluriannual", False),
+            )
+        elif request.kind == "hydrological_regime":
+            payload = self.budget.calcInteranualHVariableNumpy(
+                data=request.payload["data"],
+                dates=request.payload["dates"],
+                compartment=self.get_compartment(options["id_compartment"]),
+                output_folder=options["output_folder"],
+                output_name=options["output_name"],
+            )
+        elif request.kind == "runoff_ratio":
+            numerator = np.asarray(request.payload["runoff"], dtype=float)
+            denominator = np.asarray(request.payload["rainfall"], dtype=float)
+            payload = np.divide(
+                numerator,
+                denominator,
+                out=np.full_like(numerator, np.nan, dtype=float),
+                where=denominator != 0,
+            )
+        elif request.kind == "interlayer_exchanges":
+            upper = np.asarray(request.payload["upper"], dtype=float)
+            lower = np.asarray(request.payload["lower"], dtype=float)
+            payload = lower - upper
+        else:
+            raise ValueError(f"Unknown transform kind: {request.kind!r}")
+        result = TransformResult(kind=request.kind, payload=payload, meta={"kind": request.kind})
+        return payload if legacy_mode else result
 
-    def render(self, kind: str = "budget", **kwargs: Any) -> RenderResult:
+    def render(
+        self,
+        request: Optional[RenderRequest] = None,
+        kind: str = "budget",
+        **kwargs: Any,
+    ) -> RenderResult:
         """Produce visualizations (macro-method).
 
         Delegates to the appropriate render helper.  Requires state LOADED.
 
         Parameters
         ----------
-        kind : str
-            ``"budget"`` | ``"regime"`` | ``"sim_obs_pdf"`` | ``"sim_obs_interactive"``
         """
         self._require_state("render")
-        if kind == "budget":
-            artefacts = self.render_budget_barplot(**kwargs)
-        elif kind == "regime":
-            artefacts = self.render_hydrological_regime(**kwargs)
-        elif kind == "sim_obs_pdf":
-            artefacts = self.render_sim_obs_pdf(**kwargs)
-        elif kind == "sim_obs_interactive":
-            artefacts = self.render_sim_obs_interactive(**kwargs)
+        request = request or RenderRequest(kind=kind, options=kwargs)
+        options = dict(request.options)
+        if request.kind == "budget":
+            payload = request.payload or {}
+            artefacts = Renderer.plot_budget_barplot(
+                data_dict=payload["data_dict"],
+                plot_title=payload["plot_title"],
+                output_folder=options.get("output_folder"),
+                output_name=options.get("output_name"),
+                yaxis_unit=options.get("yaxis_unit", "mm"),
+            )
+        elif request.kind == "regime":
+            payload = request.payload or {}
+            artefacts = Renderer.plot_hydrological_regime(
+                data=payload["data"],
+                obs_point_names=payload["obs_point_names"],
+                month_labels=payload["month_labels"],
+                var=payload["var"],
+                units=payload["units"],
+                savepath=payload["savepath"],
+                interactive=options.get("interactive", False),
+                staticpng=options.get("staticpng", True),
+                staticpdf=options.get("staticpdf", True),
+                years=options.get("years"),
+            )
+        elif request.kind == "sim_obs_pdf":
+            payload = request.payload
+            if payload is None:
+                payload = self.extract(
+                    ExtractRequest(
+                        kind="sim_obs_bundle",
+                        id_compartment=options["id_compartment"],
+                        outtype=options["outtype"],
+                        param=options["param"],
+                        syear=options["simsdate"],
+                        eyear=options["simedate"],
+                        options={
+                            "plotstart": options["plotstartdate"],
+                            "plotend": options["plotenddate"],
+                            "id_layer": options["id_layer"],
+                            "aggr": options.get("aggr"),
+                            "compute_criteria": True,
+                            "criteria_metrics": [
+                                "n_obs",
+                                "pbias",
+                                "avg_ratio",
+                                "rmse",
+                                "nash",
+                                "kge",
+                            ],
+                            "crit_start": options.get("crit_start"),
+                            "crit_end": options.get("crit_end"),
+                            "obs_unit": options["obs_unit"],
+                        },
+                    )
+                ).payload
+            sim_dates_idx = pd.DatetimeIndex(payload["sim_dates"].astype("datetime64[D]"))
+            obs_dates_idx = pd.DatetimeIndex(payload["obs_dates"].astype("datetime64[D]"))
+            sim_columns = {}
+            for pt in payload["obs_points"]:
+                sim_columns.setdefault(pt["id_cell"], pt["sim"])
+            for pt in payload["ext_points"]:
+                sim_columns.setdefault(pt["id_cell"], pt["sim"])
+            simdf = pd.DataFrame(sim_columns, index=sim_dates_idx)
+            obs_df = None
+            if payload["obs_points"]:
+                obs_df = pd.DataFrame(
+                    {pt["id_point"]: pt["obs"] for pt in payload["obs_points"]},
+                    index=obs_dates_idx,
+                )
+            artefacts = Renderer.render_simobs_pdf(
+                simdf=simdf,
+                obs_df=obs_df,
+                obs_points=[
+                    {
+                        "name": pt["name"],
+                        "id_cell": pt["id_cell"],
+                        "id_layer": pt["id_layer"],
+                        "id_point": pt["id_point"],
+                        "criteria": pt.get("criteria"),
+                    }
+                    for pt in payload["obs_points"]
+                ],
+                ext_points=[
+                    {"name": pt["name"], "id_cell": pt["id_cell"], "id_layer": pt["id_layer"]}
+                    for pt in payload["ext_points"]
+                ],
+                pdf_file_path=os.path.join(
+                    options["directory"],
+                    (
+                        options["name_file"]
+                        + "_"
+                        + options["plotstartdate"]
+                        + "_"
+                        + options["plotenddate"]
+                        + ".pdf"
+                    ),
+                ),
+                ylabel=options["ylabel"],
+                crit_start=options.get("crit_start"),
+                crit_end=options.get("crit_end"),
+                plotstartdate=options["plotstartdate"],
+                plotenddate=options["plotenddate"],
+            )
+        elif request.kind == "sim_obs_interactive":
+            payload = request.payload
+            if payload is None:
+                payload = self.extract(
+                    ExtractRequest(
+                        kind="sim_obs_bundle",
+                        id_compartment=options["id_compartment"],
+                        outtype=options["outtype"],
+                        param=options["param"],
+                        syear=options["simsdate"],
+                        eyear=options["simedate"],
+                        options={
+                            "plotstart": options["plotstart"],
+                            "plotend": options["plotend"],
+                            "aggr": options.get("aggr"),
+                            "compute_criteria": True,
+                            "criteria_metrics": [
+                                "n_obs",
+                                "avg_ratio",
+                                "pbias",
+                                "std_ratio",
+                                "rmse",
+                                "nash",
+                                "kge",
+                            ],
+                            "crit_start": options.get("critstart"),
+                            "crit_end": options.get("critend"),
+                            "obs_unit": options["obs_unit"],
+                        },
+                    )
+                ).payload
+            sim_dates_idx = pd.DatetimeIndex(payload["sim_dates"].astype("datetime64[D]"))
+            obs_dates_idx = pd.DatetimeIndex(payload["obs_dates"].astype("datetime64[D]"))
+            sim_obs_data = []
+            criteria_per_point = []
+            for pt in payload["obs_points"]:
+                sim_series = pd.Series(pt["sim"], index=sim_dates_idx, name="sim")
+                obs_series = pd.Series(pt["obs"], index=obs_dates_idx, name="obs")
+                df_sim_obs = pd.concat([sim_series, obs_series], axis=1)
+                df_sim_obs = df_sim_obs.loc[options["plotstart"]: options["plotend"]]
+                sim_obs_data.append((df_sim_obs, pt["name"]))
+                criteria_per_point.append(pt.get("criteria"))
+            artefacts = Renderer.render_simobs_interactive(
+                sim_obs_data=sim_obs_data,
+                ylabel=options["ylabel"],
+                df_other_variable=options.get("df_other_variable"),
+                other_variable_config=options.get("other_variable_config"),
+                out_file_path=options.get("outFilePath"),
+                crit_start=options.get("critstart"),
+                crit_end=options.get("critend"),
+                criteria_per_point=criteria_per_point,
+            )
         else:
-            raise ValueError(f"Unknown render kind: {kind!r}")
-        return RenderResult(artefacts=artefacts, meta={"kind": kind})
+            raise ValueError(f"Unknown render kind: {request.kind!r}")
+        return RenderResult(artefacts=artefacts, meta={"kind": request.kind})
 
     def export(
         self,
+        request: Optional[ExportRequest] = None,
         path: Optional[str] = None,
         fmt: str = "pickle",
         **kwargs: Any,
@@ -425,19 +1146,16 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Parameters
         ----------
-        path : str, optional
-            Destination file/directory path.
-        fmt : str
-            ``"pickle"`` (default) — full twin snapshot via ``to_pickle``.
         """
         self._require_state("export")
-        if fmt == "pickle":
-            if path is None:
+        request = request or ExportRequest(kind=fmt, path=path, options=kwargs)
+        if request.kind == "pickle":
+            if request.path is None:
                 raise ValueError("'path' is required for pickle export.")
-            self.to_pickle(path)
+            self.to_pickle(request.path)
         else:
-            raise ValueError(f"Unknown export format: {fmt!r}")
-        return ExportResult(path=path, meta={"fmt": fmt})
+            raise ValueError(f"Unknown export format: {request.kind!r}")
+        return ExportResult(path=request.path, meta={"fmt": request.kind})
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L1 — MODEL LAYER  (Compartment & Mesh metadata)             ║
@@ -457,47 +1175,26 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
-        comp = self.get_compartment(id_compartment)
-        return CompartmentInfo(
-            id_compartment=id_compartment,
-            name=comp.compartment,
-            layers_gis_names=list(comp.layers_gis_names),
-            n_layers=len(comp.mesh.mesh),
-            n_cells=comp.mesh.ncells,
-            cell_ids=np.array(comp.mesh.getCellIdVector()),
-            out_caw_path=comp.out_caw_path,
-            regime=comp.regime,
+        self._warn_deprecated_helper(
+            "get_compartment_info",
+            "describe(DescribeRequest(kind='catalog'))",
         )
+        return self._build_compartment_info(id_compartment)
 
     def list_compartments(self) -> List[CompartmentInfo]:
         """Return info for all registered compartments."""
-        return [
-            self.get_compartment_info(cid)
-            for cid in self.compartments
-        ]
+        return [self._build_compartment_info(cid) for cid in self.compartments]
 
     def get_layer_info(self, id_compartment: int, id_layer: int) -> LayerInfo:
         """Return cell data for a specific mesh layer."""
-        comp = self.get_compartment(id_compartment)
-        layer = comp.mesh.mesh[id_layer]
-        return LayerInfo(
-            id_layer=id_layer,
-            n_cells=layer.ncells,
-            cell_ids=np.array([cell.id for cell in layer.layer]),
-            cell_areas=np.array([cell.area for cell in layer.layer]),
-            cell_geometries=[cell.geometry for cell in layer.layer],
-            layer_gis_name=comp.layers_gis_names[id_layer]
-                           if id_layer < len(comp.layers_gis_names) else "",
-            crs=layer.crs,
-        )
+        self._warn_deprecated_helper("get_layer_info", "describe(DescribeRequest(kind='catalog'))")
+        return self._get_layer_info_impl(id_compartment, id_layer)
 
     def get_all_layers(self, id_compartment: int) -> List[LayerInfo]:
         """Return LayerInfo for every layer in a compartment's mesh."""
+        self._warn_deprecated_helper("get_all_layers", "describe(DescribeRequest(kind='catalog'))")
         comp = self.get_compartment(id_compartment)
-        return [
-            self.get_layer_info(id_compartment, lid)
-            for lid in comp.mesh.mesh
-        ]
+        return [self._get_layer_info_impl(id_compartment, lid) for lid in comp.mesh.mesh]
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L2 — DATA LAYER  (Observations & Simulations I/O)           ║
@@ -508,22 +1205,11 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Returns None if the compartment has no observations.
         """
-        comp = self.get_compartment(id_compartment)
-        if comp.obs is None:
-            return None
-        obs = comp.obs
-        return ObservationInfo(
-            id_compartment=id_compartment,
-            obs_type=obs.obs_type,
-            n_points=obs.n_obs,
-            layer_gis_name=obs.layer_gis_name,
-            point_names=[p.name for p in obs.obs_points],
-            point_ids=[p.id_point for p in obs.obs_points],
-            cell_ids=[p.id_cell for p in obs.obs_points],
-            layer_ids=[p.id_layer for p in obs.obs_points],
-            geometries=[p.geometry for p in obs.obs_points],
-            mesh_ids=[p.id_mesh for p in obs.obs_points],
+        self._warn_deprecated_helper(
+            "get_observation_info",
+            "describe(DescribeRequest(kind='catalog'))",
         )
+        return self._get_observation_info_impl(id_compartment)
 
     def extract_values(
         self,
@@ -537,58 +1223,22 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: Optional[str] = None,
     ) -> ExtractValuesResponse:
         """Extract simulated values for a given variable and period (NumPy version)."""
-
-        comp = self.get_compartment(id_compartment)
-
-        # Read simulation data (returns NumPy array)
-        sim_matrix = self.temporal.readSimData(
-            compartment=comp,
-            outtype=outtype,
-            param=param,
-            id_layer=id_layer,
-            syear=syear,
-            eyear=eyear,
-            tempDirectory=self.temp_directory,
-        )
-
-
-        # Generate date array as datetime64 
-        #The np.arange trim with an open intervall [start date, end date)
-        start_date = datetime.strptime(f"{syear}-08-01", "%Y-%m-%d")
-        end_date = datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
-        dates = np.arange(
-            np.datetime64(start_date),
-            np.datetime64(end_date),
-            dtype='datetime64[D]'
-        )
-        # Ensure data length matches dates (time axis = columns)
-        if sim_matrix.shape[1] != len(dates):
-            min_len = min(sim_matrix.shape[1], len(dates))
-            sim_matrix = sim_matrix[:, :min_len]   # keep all cells, trim time columns
-            dates = dates[:min_len]
-
-        # Apply date slicing if requested
-        if cutsdate is not None or cutedate is not None:
-            d_start = np.datetime64(cutsdate) if cutsdate else dates[0]
-            d_end = np.datetime64(cutedate) if cutedate else dates[-1]
-            mask = (dates >= d_start) & (dates <= d_end)
-            sim_matrix = sim_matrix[:, mask]
-            dates = dates[mask]
-
-        return ExtractValuesResponse(
-            data=sim_matrix,
-            dates=dates,
-            meta={
-                "id_compartment": id_compartment,
-                "outtype": outtype,
-                "param": param,
-                "syear": syear,
-                "eyear": eyear,
-                "id_layer": id_layer,
-                "cutsdate": cutsdate,
-                "cutedate": cutedate,
-            },
-        )
+        self._warn_deprecated_helper("extract_values", "extract(ExtractRequest(...))")
+        return self.extract(
+            ExtractRequest(
+                kind="simulation_matrix",
+                id_compartment=id_compartment,
+                outtype=outtype,
+                param=param,
+                syear=syear,
+                eyear=eyear,
+                options={
+                    "id_layer": id_layer,
+                    "cutsdate": cutsdate,
+                    "cutedate": cutedate,
+                },
+            )
+        ).payload
     
     def read_observations(
         self,
@@ -620,44 +1270,18 @@ class HydrologicalTwin(HTPersistenceMixin):
             ``dates`` datetime64 array (n_timesteps,).
             ``meta`` carries obs_point_ids and period info.
         """
-        comp = self.get_compartment(id_compartment)
-
-        cfg = obs_config[id_compartment]
-
-        result = self.temporal.readObsData(
-            compartment=comp,
-            id_col_data=cfg["id_col_data"],
-            id_col_time=cfg["id_col_time"],
-            sdate=syear,
-            edate=eyear,
+        self._warn_deprecated_helper(
+            "read_observations",
+            "extract(ExtractRequest(kind='observations', ...))",
         )
-
-        if result is None:
-            return ObservationsResponse(
-                data=np.empty((0, 0)),
-                dates=np.array([], dtype="datetime64[D]"),
-                meta={
-                    "id_compartment": id_compartment,
-                    "syear": syear,
-                    "eyear": eyear,
-                    "obs_point_ids": [],
-                    "n_points": 0,
-                },
+        return self.extract(
+            ExtractRequest(
+                kind="observations",
+                id_compartment=id_compartment,
+                syear=syear,
+                eyear=eyear,
             )
-
-        data, dates, point_ids = result
-
-        return ObservationsResponse(
-            data=data,
-            dates=dates,
-            meta={
-                "id_compartment": id_compartment,
-                "syear": syear,
-                "eyear": eyear,
-                "obs_point_ids": point_ids,
-                "n_points": len(point_ids),
-            },
-        )
+        ).payload
 
     def read_sim_steady(self, id_compartment: int) -> pd.DataFrame:
         """Read steady-state simulation data. Wraps Manage.Temporal.readSimSteady."""
@@ -713,7 +1337,17 @@ class HydrologicalTwin(HTPersistenceMixin):
         dict
             {metric_name: value} for each requested metric.
         """
-        return Comparator().calc_performance_metrics(sim=sim, obs=obs, metrics=metrics)
+        self._warn_deprecated_helper(
+            "compute_performance_stats",
+            "transform(TransformRequest(kind='performance_criteria', ...))",
+        )
+        return self.transform(
+            TransformRequest(
+                kind="performance_criteria",
+                payload={"sim": sim, "obs": obs},
+                options={"metrics": metrics},
+            )
+        ).payload
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L4 — ANALYSIS LAYER  (temporal & spatial transformations)   ║
@@ -778,132 +1412,31 @@ class HydrologicalTwin(HTPersistenceMixin):
             ext_points : list[dict]
                 Each: name, id_cell, id_layer, sim (1D)
         """
-        comp = self.get_compartment(id_compartment)
-
-        if comp.obs is not None:
-            for layer in comp.mesh.mesh.values():
-                verify_crs_match(
-                    comp.obs.crs,
-                    layer.crs,
-                    context="observations vs mesh spatial linkage",
-                )
-
-        sim_response = self.extract_values(
-            id_compartment=id_compartment,
-            outtype=outtype,
-            param=param,
-            syear=simsdate,
-            eyear=simedate,
-            id_layer=id_layer,
-            cutsdate=plotstart,
-            cutedate=plotend,
+        self._warn_deprecated_helper(
+            "_prepare_sim_obs_data",
+            "extract(ExtractRequest(kind='sim_obs_bundle', ...))",
         )
-
-        obs_response = self.read_observations(
-            id_compartment=id_compartment,
-            syear=simsdate,
-            eyear=simedate,
-        )
-
-        sim_dates = sim_response.dates
-        obs_dates = obs_response.dates
-
-        # Per-obs-point sim+obs arrays
-        obs_points_data = []
-        if comp.obs is not None:
-            for i, obs_point in enumerate(comp.obs.obs_points):
-                sim_vals = sim_response.data[obs_point.id_cell - 1, :]
-                if i < obs_response.data.shape[0]:
-                    obs_vals = obs_response.data[i, :]
-                else:
-                    obs_vals = np.full(len(obs_dates), np.nan)
-
-                obs_points_data.append({
-                    'name': obs_point.name,
-                    'id_cell': obs_point.id_cell,
-                    'id_layer': obs_point.id_layer,
-                    'id_point': obs_point.id_point,
-                    'sim': sim_vals,
-                    'obs': obs_vals,
-                })
-
-        # Unit conversion for HYD: obs_unit is the TARGET display unit.
-        # CaWaQS sim is in m3/s; obs are natively in l/s.
-        if comp.compartment == 'HYD' and obs_unit is not None:
-            for pt in obs_points_data:
-                if obs_unit == 'm3/s':
-                    pt['obs'] = pt['obs'] * 1e-3
-                elif obs_unit == 'l/s':
-                    pt['sim'] = pt['sim'] * 1e3
-
-        # Slice obs to plot range
-        if len(obs_dates) > 0 and plotstart is not None and plotend is not None:
-            d_start = np.datetime64(plotstart)
-            d_end = np.datetime64(plotend)
-            obs_mask = (obs_dates >= d_start) & (obs_dates <= d_end)
-            obs_dates = obs_dates[obs_mask]
-            for pt in obs_points_data:
-                pt['obs'] = pt['obs'][obs_mask]
-
-        # Apply steady-state obs aggregation
-        if aggr is not None:
-            for pt in obs_points_data:
-                obs = pt['obs']
-                if aggr == 'mean':
-                    pt['obs'] = np.full_like(obs, np.nanmean(obs))
-                elif aggr == 'min':
-                    pt['obs'] = np.full_like(obs, np.nanmin(obs))
-                elif aggr == 'max':
-                    pt['obs'] = np.full_like(obs, np.nanmax(obs))
-                elif isinstance(aggr, float):
-                    pt['obs'] = np.full_like(obs, np.nanquantile(obs, aggr))
-
-        # Compute performance criteria per obs point
-        if compute_criteria and obs_points_data:
-            for pt in obs_points_data:
-                sim_for_crit = pt['sim']
-                obs_for_crit = pt['obs']
-
-                # Slice to criteria period if specified
-                if crit_start is not None and crit_end is not None:
-                    cs = np.datetime64(crit_start)
-                    ce = np.datetime64(crit_end)
-                    # sim aligned with sim_dates, obs aligned with obs_dates
-                    sim_mask = (sim_dates >= cs) & (sim_dates <= ce)
-                    obs_mask = (obs_dates >= cs) & (obs_dates <= ce)
-                    sim_for_crit = sim_for_crit[sim_mask]
-                    obs_for_crit = obs_for_crit[obs_mask]
-
-                    # Align lengths (take the shorter)
-                    n = min(len(sim_for_crit), len(obs_for_crit))
-                    sim_for_crit = sim_for_crit[:n]
-                    obs_for_crit = obs_for_crit[:n]
-
-                pt['criteria'] = self.compute_performance_stats(
-                    sim=sim_for_crit,
-                    obs=obs_for_crit,
-                    metrics=criteria_metrics,
-                )
-
-        # Per-extraction-point sim arrays
-        ext_points_data = []
-        if comp.extraction is not None:
-            for ext_point in comp.extraction.ext_point:
-                sim_vals = sim_response.data[ext_point.id_cell - 1, :]
-                ext_points_data.append({
-                    'name': ext_point.name,
-                    'id_cell': ext_point.id_cell,
-                    'id_layer': ext_point.id_layer,
-                    'sim': sim_vals,
-                })
-
-        return {
-            'sim_dates': sim_dates,
-            'obs_dates': obs_dates,
-            'compartment_name': comp.compartment,
-            'obs_points': obs_points_data,
-            'ext_points': ext_points_data,
-        }
+        return self.extract(
+            ExtractRequest(
+                kind="sim_obs_bundle",
+                id_compartment=id_compartment,
+                outtype=outtype,
+                param=param,
+                syear=simsdate,
+                eyear=simedate,
+                options={
+                    "plotstart": plotstart,
+                    "plotend": plotend,
+                    "id_layer": id_layer,
+                    "aggr": aggr,
+                    "compute_criteria": compute_criteria,
+                    "criteria_metrics": criteria_metrics,
+                    "crit_start": crit_start,
+                    "crit_end": crit_end,
+                    "obs_unit": obs_unit,
+                },
+            )
+        ).payload
 
     def extract_watbal_for_map(
         self,
@@ -1006,6 +1539,10 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Composes: extract_watbal_for_map → aggregate_for_map → assemble_single_layer_geodataframe.
         """
+        self._warn_deprecated_helper(
+            "build_watbal_spatial_gdf",
+            "extract(ExtractRequest(kind='spatial_map', ...))",
+        )
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
@@ -1047,6 +1584,10 @@ class HydrologicalTwin(HTPersistenceMixin):
         Composes: extract_watbal_for_map (×2) → compute_effective_rainfall
                   → aggregate_for_map → assemble_single_layer_geodataframe.
         """
+        self._warn_deprecated_helper(
+            "build_effective_rainfall_gdf",
+            "transform(TransformRequest(kind='runoff_ratio', ...))",
+        )
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
@@ -1103,6 +1644,10 @@ class HydrologicalTwin(HTPersistenceMixin):
         :param layer_id_offset: starting layer ID (0 for MB, 1 for H)
         :param outcropping_cell_ids: if provided, filter to these cell IDs
         """
+        self._warn_deprecated_helper(
+            "build_aq_spatial_gdf",
+            "extract(ExtractRequest(kind='spatial_map', ...))",
+        )
         comp_info = self.get_compartment_info(id_compartment)
 
         response = self.extract_values(
@@ -1146,22 +1691,17 @@ class HydrologicalTwin(HTPersistenceMixin):
             If None, no file is saved.
         :return: 1D array of cell IDs
         """
-        comp = self.get_compartment(id_compartment)
-
-        class _ExdStub:
-            """Minimal stub providing the post_process_directory attribute."""
-            def __init__(self, directory):
-                self.post_process_directory = directory
-
-        save = save_directory is not None
-        exd_stub = _ExdStub(save_directory) if save else _ExdStub("")
-
-        cells = self.spatial.buildAqOutcropping(
-            exd=exd_stub,
-            aq_compartment=comp,
-            save=save,
+        self._warn_deprecated_helper(
+            "build_aquifer_outcropping",
+            "extract(ExtractRequest(kind='aquifer_outcropping', ...))",
         )
-        return np.array([cell.id for cell in cells])
+        return self.extract(
+            ExtractRequest(
+                kind="aquifer_outcropping",
+                id_compartment=id_compartment,
+                options={"save_directory": save_directory},
+            )
+        ).payload
 
     def compute_budget_variable(
         self,
@@ -1180,18 +1720,26 @@ class HydrologicalTwin(HTPersistenceMixin):
         Delegates to Manage.Budget.calcInteranualBVariableNumpy.
         Returns (aggregated_data, date_labels, param).
         """
-        return self.budget.calcInteranualBVariableNumpy(
-            data=data,
-            param=param,
-            out_folder="",  # not used for computation, only for CSV in original
-            agg=agg,
-            fz=fz,
-            sdate=sdate,
-            edate=edate,
-            cutsdate=cutsdate,
-            cutedate=cutedate,
-            pluriannual=pluriannual,
+        self._warn_deprecated_helper(
+            "compute_budget_variable",
+            "transform(TransformRequest(kind='aggregated_budget', ...))",
         )
+        return self.transform(
+            TransformRequest(
+                kind="aggregated_budget",
+                payload={"data": data},
+                options={
+                    "param": param,
+                    "agg": agg,
+                    "fz": fz,
+                    "sdate": sdate,
+                    "edate": edate,
+                    "cutsdate": cutsdate,
+                    "cutedate": cutedate,
+                    "pluriannual": pluriannual,
+                },
+            )
+        ).payload
 
     def compute_hydrological_regime(
         self,
@@ -1206,14 +1754,21 @@ class HydrologicalTwin(HTPersistenceMixin):
         Delegates to Manage.Budget.calcInteranualHVariableNumpy.
         Returns (interannual_data, obs_point_names, month_labels).
         """
-        comp = self.get_compartment(id_compartment)
-        return self.budget.calcInteranualHVariableNumpy(
-            data=data,
-            dates=dates,
-            compartment=comp,
-            output_folder=output_folder,
-            output_name=output_name,
+        self._warn_deprecated_helper(
+            "compute_hydrological_regime",
+            "transform(TransformRequest(kind='hydrological_regime', ...))",
         )
+        return self.transform(
+            TransformRequest(
+                kind="hydrological_regime",
+                payload={"data": data, "dates": dates},
+                options={
+                    "id_compartment": id_compartment,
+                    "output_folder": output_folder,
+                    "output_name": output_name,
+                },
+            )
+        ).payload
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L5 — CARTOGRAPHIC LAYER  (visualization & rendering)       ║
@@ -1228,13 +1783,21 @@ class HydrologicalTwin(HTPersistenceMixin):
         yaxis_unit: str = 'mm',
     ):
         """Render budget bar plot. Delegates to Renderer."""
-        return Renderer.plot_budget_barplot(
-            data_dict=data_dict,
-            plot_title=plot_title,
-            output_folder=output_folder,
-            output_name=output_name,
-            yaxis_unit=yaxis_unit,
+        self._warn_deprecated_helper(
+            "render_budget_barplot",
+            "render(RenderRequest(kind='budget', ...))",
         )
+        return self.render(
+            RenderRequest(
+                kind="budget",
+                payload={"data_dict": data_dict, "plot_title": plot_title},
+                options={
+                    "output_folder": output_folder,
+                    "output_name": output_name,
+                    "yaxis_unit": yaxis_unit,
+                },
+            )
+        ).artefacts
 
     def render_hydrological_regime(
         self,
@@ -1257,19 +1820,29 @@ class HydrologicalTwin(HTPersistenceMixin):
         if kwargs:
             unexpected = ", ".join(sorted(kwargs))
             raise TypeError(f"Unexpected keyword arguments: {unexpected}")
-
-        return Renderer.plot_hydrological_regime(
-            data=data,
-            obs_point_names=obs_point_names,
-            month_labels=month_labels,
-            var=var,
-            units=units,
-            savepath=savepath,
-            interactive=interactive,
-            staticpng=staticpng,
-            staticpdf=staticpdf,
-            years=years,
+        self._warn_deprecated_helper(
+            "render_hydrological_regime",
+            "render(RenderRequest(kind='regime', ...))",
         )
+        return self.render(
+            RenderRequest(
+                kind="regime",
+                payload={
+                    "data": data,
+                    "obs_point_names": obs_point_names,
+                    "month_labels": month_labels,
+                    "var": var,
+                    "units": units,
+                    "savepath": savepath,
+                },
+                options={
+                    "interactive": interactive,
+                    "staticpng": staticpng,
+                    "staticpdf": staticpdf,
+                    "years": years,
+                },
+            )
+        ).artefacts
 
     def render_sim_obs_pdf(
         self,
@@ -1294,77 +1867,32 @@ class HydrologicalTwin(HTPersistenceMixin):
         Uses _prepare_sim_obs_data for NumPy I/O + per-point slicing,
         then converts to DataFrames for Renderer.render_simobs_pdf.
         """
-        # Default criteria metrics for PDF rendering
-        pdf_criteria_metrics = ["n_obs", "pbias", "avg_ratio", "rmse", "nash", "kge"]
-
-        data = self._prepare_sim_obs_data(
-            id_compartment=id_compartment,
-            outtype=outtype,
-            param=param,
-            simsdate=simsdate,
-            simedate=simedate,
-            plotstart=plotstartdate,
-            plotend=plotenddate,
-            id_layer=id_layer,
-            aggr=aggr,
-            compute_criteria=True,
-            criteria_metrics=pdf_criteria_metrics,
-            crit_start=crit_start,
-            crit_end=crit_end,
-            obs_unit=obs_unit,
+        self._warn_deprecated_helper(
+            "render_sim_obs_pdf",
+            "render(RenderRequest(kind='sim_obs_pdf', ...))",
         )
-
-        # --- Convert NumPy → DataFrames for Renderer ---
-        sim_dates_idx = pd.DatetimeIndex(data['sim_dates'].astype('datetime64[D]'))
-        obs_dates_idx = pd.DatetimeIndex(data['obs_dates'].astype('datetime64[D]'))
-
-        # Build simdf: one column per unique cell id (keyed by id_cell)
-        sim_columns = {}
-        for pt in data['obs_points']:
-            if pt['id_cell'] not in sim_columns:
-                sim_columns[pt['id_cell']] = pt['sim']
-        for pt in data['ext_points']:
-            if pt['id_cell'] not in sim_columns:
-                sim_columns[pt['id_cell']] = pt['sim']
-        simdf = pd.DataFrame(sim_columns, index=sim_dates_idx)
-
-        # Build obs_df: one column per obs point id_point
-        obs_df = None
-        if data['obs_points']:
-            obs_df = pd.DataFrame(
-                {pt['id_point']: pt['obs'] for pt in data['obs_points']},
-                index=obs_dates_idx,
+        return self.render(
+            RenderRequest(
+                kind="sim_obs_pdf",
+                options={
+                    "id_compartment": id_compartment,
+                    "outtype": outtype,
+                    "param": param,
+                    "simsdate": simsdate,
+                    "simedate": simedate,
+                    "plotstartdate": plotstartdate,
+                    "plotenddate": plotenddate,
+                    "id_layer": id_layer,
+                    "directory": directory,
+                    "name_file": name_file,
+                    "ylabel": ylabel,
+                    "obs_unit": obs_unit,
+                    "crit_start": crit_start,
+                    "crit_end": crit_end,
+                    "aggr": aggr,
+                },
             )
-
-        # Build obs/ext point info dicts (include pre-computed criteria)
-        obs_points_info = [
-            {'name': pt['name'], 'id_cell': pt['id_cell'],
-             'id_layer': pt['id_layer'], 'id_point': pt['id_point'],
-             'criteria': pt.get('criteria')}
-            for pt in data['obs_points']
-        ]
-        ext_points_info = [
-            {'name': pt['name'], 'id_cell': pt['id_cell'], 'id_layer': pt['id_layer']}
-            for pt in data['ext_points']
-        ]
-
-        pdf_file_path = os.path.join(
-            directory,
-            name_file + "_" + plotstartdate + "_" + plotenddate + ".pdf"
-        )
-
-        return Renderer.render_simobs_pdf(
-            simdf=simdf,
-            obs_df=obs_df,
-            obs_points=obs_points_info,
-            ext_points=ext_points_info,
-            pdf_file_path=pdf_file_path,
-            ylabel=ylabel,
-            crit_start=crit_start,
-            crit_end=crit_end,
-            plotstartdate=plotstartdate,
-            plotenddate=plotenddate,
-        )
+        ).artefacts
 
     def render_sim_obs_interactive(
         self,
@@ -1389,52 +1917,32 @@ class HydrologicalTwin(HTPersistenceMixin):
         Uses _prepare_sim_obs_data for NumPy I/O + per-point slicing,
         then converts to per-point DataFrames for Renderer.render_simobs_interactive.
         """
-        # Default criteria metrics for interactive rendering
-        interactive_criteria_metrics = [
-            "n_obs", "avg_ratio", "pbias", "std_ratio", "rmse", "nash", "kge",
-        ]
-
-        data = self._prepare_sim_obs_data(
-            id_compartment=id_compartment,
-            outtype=outtype,
-            param=param,
-            simsdate=simsdate,
-            simedate=simedate,
-            plotstart=plotstart,
-            plotend=plotend,
-            aggr=aggr,
-            compute_criteria=True,
-            criteria_metrics=interactive_criteria_metrics,
-            crit_start=critstart,
-            crit_end=critend,
-            obs_unit=obs_unit,
+        self._warn_deprecated_helper(
+            "render_sim_obs_interactive",
+            "render(RenderRequest(kind='sim_obs_interactive', ...))",
         )
-
-        # --- Convert NumPy → per-point DataFrames for Renderer ---
-        # Unit conversion already applied upstream in _prepare_sim_obs_data
-        sim_dates_idx = pd.DatetimeIndex(data['sim_dates'].astype('datetime64[D]'))
-        obs_dates_idx = pd.DatetimeIndex(data['obs_dates'].astype('datetime64[D]'))
-
-        sim_obs_data = []
-        criteria_per_point = []
-        for pt in data['obs_points']:
-            sim_series = pd.Series(pt['sim'], index=sim_dates_idx, name='sim')
-            obs_series = pd.Series(pt['obs'], index=obs_dates_idx, name='obs')
-            df_sim_obs = pd.concat([sim_series, obs_series], axis=1)
-            df_sim_obs = df_sim_obs.loc[plotstart:plotend]
-            sim_obs_data.append((df_sim_obs, pt['name']))
-            criteria_per_point.append(pt.get('criteria'))
-
-        return Renderer.render_simobs_interactive(
-            sim_obs_data=sim_obs_data,
-            ylabel=ylabel,
-            df_other_variable=df_other_variable,
-            other_variable_config=other_variable_config,
-            out_file_path=outFilePath,
-            crit_start=critstart,
-            crit_end=critend,
-            criteria_per_point=criteria_per_point,
-        )
+        return self.render(
+            RenderRequest(
+                kind="sim_obs_interactive",
+                options={
+                    "id_compartment": id_compartment,
+                    "outtype": outtype,
+                    "param": param,
+                    "simsdate": simsdate,
+                    "simedate": simedate,
+                    "plotstart": plotstart,
+                    "plotend": plotend,
+                    "obs_unit": obs_unit,
+                    "ylabel": ylabel,
+                    "df_other_variable": df_other_variable,
+                    "other_variable_config": other_variable_config,
+                    "outFilePath": outFilePath,
+                    "critstart": critstart,
+                    "critend": critend,
+                    "aggr": aggr,
+                },
+            )
+        ).artefacts
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L6 — GIT-SYNCHRONIZED REGISTRY  (identity & provenance)    ║
@@ -1625,8 +2133,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         return ExtractValuesResponse(
             data=subset_data,
             dates=full_response.dates,
-            csv_path=csv_path,
-            meta=meta,
+            meta={**meta, "csv_path": str(csv_path) if csv_path is not None else None},
         )
 
     def apply_temporal_operator(

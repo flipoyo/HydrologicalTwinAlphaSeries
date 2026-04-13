@@ -88,13 +88,17 @@ HydrologicalTwin
 Compartments are registered into the twin via:
 
 ```python
-twin.load(compartments={1: comp_aq, 2: comp_hyd})
-```
-
-Or individually:
-
-```python
-twin.register_compartment(id_compartment=1, compartment=comp_aq)
+twin.load(
+    LoadRequest(
+        compartments=[
+            LoadCompartmentRequest(
+                id_compartment=1,
+                stable_id="AQ-1",
+                geometry_source=LoadGeometrySource(kind="provider", provider=provider),
+            )
+        ]
+    )
+)
 ```
 
 Once loaded, all macro-methods (`describe`, `extract`, `transform`, `render`,

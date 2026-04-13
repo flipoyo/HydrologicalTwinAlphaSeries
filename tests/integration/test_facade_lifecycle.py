@@ -9,10 +9,16 @@ import pytest
 
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 from HydrologicalTwinAlphaSeries.ht import (
+    DescribeRequest,
+    ExportRequest,
     ExportResult,
     FacadeDescription,
     HydrologicalTwin,
     InvalidStateError,
+    LoadCompartmentRequest,
+    LoadGeometrySource,
+    LoadRequest,
+    RenderRequest,
     TwinDescription,
     TwinState,
 )
@@ -54,6 +60,14 @@ def _make_config_proj(tmp_path):
     )
 
 
+class _Provider:
+    def __init__(self, compartment):
+        self.compartment = compartment
+
+    def build_compartment(self, request, twin):
+        return self.compartment
+
+
 # ---------------------------------------------------------------------------
 # State lifecycle tests
 # ---------------------------------------------------------------------------
@@ -83,7 +97,7 @@ class TestStateLifecycle:
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        twin.load(compartments={})
+        twin.load(LoadRequest())
         assert twin.state == TwinState.LOADED
 
     def test_auto_configure_at_construction(self, tmp_path):
@@ -107,8 +121,39 @@ class TestStateLifecycle:
         )
         assert twin.state == TwinState.CONFIGURED
 
-        twin.load(compartments={})
+        twin.load(LoadRequest())
         assert twin.state == TwinState.LOADED
+
+    def test_load_accepts_typed_compartment_requests(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
+
+        twin = HydrologicalTwin()
+        twin.configure(
+            config_geom=_make_config_geom(),
+            config_proj=_make_config_proj(tmp_path),
+            out_caw_directory=str(tmp_path / "out"),
+            obs_directory=str(tmp_path / "obs"),
+        )
+        compartment = MagicMock(spec=Compartment)
+        twin.load(
+            LoadRequest(
+                compartments=[
+                    LoadCompartmentRequest(
+                        id_compartment=7,
+                        stable_id="AQ-7",
+                        geometry_source=LoadGeometrySource(
+                            kind="provider",
+                            provider=_Provider(compartment),
+                        ),
+                    )
+                ]
+            )
+        )
+
+        assert twin.state == TwinState.LOADED
+        assert twin.compartments[7] is compartment
 
     def test_register_compartment_after_load(self, tmp_path):
         twin = HydrologicalTwin()
@@ -118,14 +163,15 @@ class TestStateLifecycle:
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        twin.load(compartments={})
+        twin.load(LoadRequest())
 
         # register_compartment requires LOADED state and a Compartment instance
         from unittest.mock import MagicMock
 
         from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
         mock_comp = MagicMock(spec=Compartment)
-        twin.register_compartment(id_compartment=99, compartment=mock_comp)
+        with pytest.deprecated_call(match="register_compartment"):
+            twin.register_compartment(id_compartment=99, compartment=mock_comp)
         assert 99 in twin.compartments
         assert twin.compartments[99] is mock_comp
 
@@ -137,9 +183,10 @@ class TestStateLifecycle:
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        twin.load(compartments={})
-        with pytest.raises(TypeError, match="Expected a Compartment"):
-            twin.register_compartment(id_compartment=1, compartment=object())
+        twin.load(LoadRequest())
+        with pytest.deprecated_call(match="register_compartment"):
+            with pytest.raises(TypeError, match="Expected a Compartment"):
+                twin.register_compartment(id_compartment=1, compartment=object())
 
     def test_register_compartment_before_load_raises(self, tmp_path):
         twin = HydrologicalTwin(
@@ -152,10 +199,11 @@ class TestStateLifecycle:
             from unittest.mock import MagicMock
 
             from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-            twin.register_compartment(
-                id_compartment=1,
-                compartment=MagicMock(spec=Compartment),
-            )
+            with pytest.deprecated_call(match="register_compartment"):
+                twin.register_compartment(
+                    id_compartment=1,
+                    compartment=MagicMock(spec=Compartment),
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +216,7 @@ class TestInvalidStateTransitions:
     def test_load_before_configure_raises(self):
         twin = HydrologicalTwin()
         with pytest.raises(InvalidStateError, match="CONFIGURED"):
-            twin.load(compartments={})
+            twin.load(LoadRequest())
 
     def test_describe_before_load_raises(self, tmp_path):
         twin = HydrologicalTwin(
@@ -218,7 +266,7 @@ class TestInvalidStateTransitions:
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        twin.load(compartments={})
+        twin.load(LoadRequest())
         with pytest.raises(InvalidStateError):
             twin.configure(
                 config_geom=_make_config_geom(),
@@ -243,21 +291,24 @@ class TestMacroMethods:
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        twin.load(compartments={})
+        twin.load(LoadRequest())
         return twin
 
     def test_describe_returns_twin_description(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
-        desc = twin.describe()
+        desc = twin.describe(DescribeRequest(kind="catalog"))
         assert isinstance(desc, TwinDescription)
+        assert desc.kind == "catalog"
         assert desc.state == "LOADED"
         assert desc.n_compartments == 0
         assert desc.compartments == []
+        assert "simulation_matrix" in desc.extract_kinds
+        assert "register_compartment" in desc.transitional_methods
 
     def test_export_pickle_returns_export_result(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
         pkl_path = str(tmp_path / "twin.pkl")
-        result = twin.export(path=pkl_path, fmt="pickle")
+        result = twin.export(ExportRequest(kind="pickle", path=pkl_path))
         assert isinstance(result, ExportResult)
         assert result.path == pkl_path
         assert result.meta["fmt"] == "pickle"
@@ -271,9 +322,17 @@ class TestMacroMethods:
         twin = self._make_loaded_twin(tmp_path)
         expected = [str(tmp_path / "budget.png")]
 
-        monkeypatch.setattr(twin, "render_budget_barplot", lambda **kwargs: expected)
+        monkeypatch.setattr(
+            "HydrologicalTwinAlphaSeries.ht.hydrological_twin.Renderer.plot_budget_barplot",
+            lambda **kwargs: expected,
+        )
 
-        result = twin.render(kind="budget")
+        result = twin.render(
+            RenderRequest(
+                kind="budget",
+                payload={"data_dict": {}, "plot_title": "Budget"},
+            )
+        )
 
         assert result.artefacts == expected
         assert result.meta == {"kind": "budget"}
@@ -301,7 +360,6 @@ class TestFacadeDescription:
         assert macro_names == {
             "configure",
             "load",
-            "register_compartment",
             "describe",
             "extract",
             "transform",
@@ -309,14 +367,6 @@ class TestFacadeDescription:
             "export",
         }
 
-        frontend_methods = {
-            method.name: method.delegates_to for method in description.frontend_methods
-        }
-        assert frontend_methods["build_watbal_spatial_gdf"] == [
-            "extract_watbal_for_map",
-            "aggregate_for_map",
-        ]
-        assert frontend_methods["render_sim_obs_pdf"] == [
-            "_prepare_sim_obs_data",
-            "Renderer.render_simobs_pdf",
-        ]
+        transitional_names = {method.name for method in description.transitional_methods}
+        assert "register_compartment" in transitional_names
+        assert "compute_* / build_* / render_* specifics" in transitional_names

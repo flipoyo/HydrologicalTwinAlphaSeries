@@ -13,16 +13,15 @@ Observation, or Extraction objects directly.
 
 ## Lifecycle
 
-| Method                 | Required State | Next State  | Description                              |
-|----------------------- |--------------- |------------ |------------------------------------------|
-| `configure`            | EMPTY          | CONFIGURED  | Attach project and geometry config       |
-| `load`                 | CONFIGURED     | LOADED      | Register compartments in bulk            |
-| `register_compartment` | LOADED         | (unchanged) | Register a single compartment            |
-| `describe`             | LOADED         | (unchanged) | Return twin metadata and compartment info|
-| `extract`              | LOADED         | (unchanged) | Extract simulation or observation data   |
-| `transform`            | LOADED         | (unchanged) | Temporal/spatial aggregation             |
-| `render`               | LOADED         | (unchanged) | Produce visualizations                   |
-| `export`               | LOADED         | (unchanged) | Export data to disk                      |
+| Method      | Required State | Next State  | Description                                      |
+|------------ |--------------- |------------ |--------------------------------------------------|
+| `configure` | EMPTY          | CONFIGURED  | Attach project and geometry config               |
+| `load`      | CONFIGURED     | LOADED      | Consume a typed load request for compartments    |
+| `describe`  | LOADED         | (unchanged) | Return the frontend catalog and API capabilities |
+| `extract`   | LOADED         | (unchanged) | Run typed extraction workflows                   |
+| `transform` | LOADED         | (unchanged) | Run typed business calculations                  |
+| `render`    | LOADED         | (unchanged) | Produce final artefacts                          |
+| `export`    | LOADED         | (unchanged) | Export data to disk                              |
 
 ---
 
@@ -31,50 +30,49 @@ Observation, or Extraction objects directly.
 ### `configure(**kwargs)`
 Set project-level and geometry configuration. Replaces constructor-time config.
 
-### `load(**kwargs)`
-Register compartments, build meshes, and attach observations.
+### `load(LoadRequest)`
+Load typed compartment requests describing geometry sources, observation sources,
+period, and directories. The stable public geometry contract is a provider-based
+source (`geometry_source.kind == "provider"`).
 
-### `register_compartment(id_compartment, compartment)`
-Register a single compartment after initial `load()`.
+### `describe(DescribeRequest(kind="catalog"))`
+Return the unique frontend catalog: available compartments, stable identifiers,
+resolutions, observation layers, units, supported outputs, and available
+`extract` / `transform` / `render` kinds.
 
-### `describe(**kwargs)`
-Inspect twin metadata, list compartments, layer info, and observation info.
+### `extract(ExtractRequest)`
+Supported public kinds are:
+`simulation_matrix`, `observations`, `sim_obs_bundle`, `spatial_map`,
+`catchment_cells`, `aquifer_outcropping`, and `aq_balance_inputs`.
 
-### `extract(**kwargs)`
-Extract simulation matrices, observation data, or area subsets.
+### `transform(TransformRequest)`
+Supported public kinds are:
+`temporal_aggregation`, `performance_criteria`, `aggregated_budget`,
+`hydrological_regime`, `runoff_ratio`, and `interlayer_exchanges`.
 
-### `transform(**kwargs)`
-Apply temporal aggregation (annual, monthly) or spatial averaging.
+### `render(RenderRequest)`
+Produce final artefacts such as budget bar plots, sim-vs-obs charts, and
+hydrological regime plots. Rendering is the only contractual production point
+for final artefacts.
 
-### `render(**kwargs)`
-Produce file artefacts such as budget bar plots, sim-vs-obs charts, and hydrological
-regime plots without launching interactive screen views.
-
-### `export(**kwargs)`
+### `export(ExportRequest)`
 Export data as CSV, pickle snapshots, or GeoDataFrames.
 
 ---
 
 ## Explicit Frontend Integration Facade
 
-`HydrologicalTwin.describe_api_facade()` returns an explicit description of the
-public facade for `cawaqsviz`.
+`HydrologicalTwin.describe_api_facade()` returns the stable macro-contract plus
+the temporary compatibility wrappers kept during the CWV migration.
 
-In addition to the 8 canonical macro-methods above, the same facade exposes
-integrated high-level methods that aggregate lower-level generic helpers into
-frontend-ready artefacts:
+Compatibility wrappers are transitional only and emit deprecation warnings:
 
-| Method | Frontend intent | Aggregates |
-|---|---|---|
-| `build_watbal_spatial_gdf`     | Water-balance map layer                  | `extract_watbal_for_map` + `aggregate_for_map` |
-| `build_effective_rainfall_gdf` | Effective-rainfall map layer             | `extract_watbal_for_map` + `aggregate_for_map` |
-| `build_aq_spatial_gdf`         | Aquifer map layer                        | `extract_values` + `aggregate_for_map` |
-| `build_aquifer_outcropping`    | Aquifer outcropping / map filtering      | `Manage.Spatial.buildAqOutcropping` |
-| `render_sim_obs_pdf`           | Static sim-vs-obs report                 | `_prepare_sim_obs_data` + `Renderer.render_simobs_pdf` |
-| `render_sim_obs_interactive`   | Interactive sim-vs-obs frontend payload  | `_prepare_sim_obs_data` + `Renderer.render_simobs_interactive` |
-
-These are the integrated backend methods intended to be leveraged directly by
-the frontend once the twin is in `LOADED` state.
+| Transitional helper family | Replacement |
+|---|---|
+| `register_compartment` | `load(LoadRequest(...))` |
+| `get_compartment_info`, `get_layer_info`, `get_all_layers`, `get_observation_info` | `describe(DescribeRequest(kind="catalog"))` |
+| `extract_values`, `read_observations`, `_prepare_sim_obs_data` | `extract(ExtractRequest(...))` |
+| `compute_*`, `build_*`, `render_*` specifics | `transform(TransformRequest(...))` and `render(RenderRequest(...))` |
 
 ---
 

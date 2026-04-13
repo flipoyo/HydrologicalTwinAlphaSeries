@@ -51,8 +51,9 @@ print(obs.data.head())
 ## Inspecting metadata
 
 ```python
-print(ht.list_compartments())
-print(ht.get_observation_info(1))
+catalog = ht.describe()
+print(catalog.compartments)
+print(catalog.extract_kinds)
 ```
 
 ## Inspecting the explicit frontend facade
@@ -62,5 +63,6 @@ facade = ht.describe_api_facade()
 
 print(facade.entrypoint)         # HydrologicalTwin
 print(facade.primary_consumer)   # cawaqsviz
-print([method.name for method in facade.frontend_methods])
+print([method.name for method in facade.macro_methods])
+print([method.name for method in facade.transitional_methods])
 ```

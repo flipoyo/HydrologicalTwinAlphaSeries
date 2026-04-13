@@ -48,22 +48,26 @@ HydrologicalTwin
 
 ---
 
-## Public API — Macro-Methods (≤ 8)
+## Public API — Macro-Methods
 
 The facade exposes only high-level macro-capabilities:
 
-| Method                  | Purpose                                          |
-|------------------------ |--------------------------------------------------|
-| `configure`             | Set project and geometry configuration           |
-| `load`                  | Register compartments in bulk                    |
-| `register_compartment`  | Register a single compartment                    |
-| `describe`              | Inspect twin metadata and compartment info       |
-| `extract`               | Extract simulation or observation data           |
-| `transform`             | Apply temporal/spatial aggregation               |
-| `render`                | Produce visualization file artefacts              |
-| `export`                | Export data to files (CSV, pickle, GeoDataFrame) |
+| Method      | Purpose |
+|------------ |---------|
+| `configure` | Set project and geometry configuration |
+| `load`      | Load typed compartment requests, period, and directories |
+| `describe`  | Return the frontend catalog of compartments and capabilities |
+| `extract`   | Execute typed extraction workflows |
+| `transform` | Compute typed business transformations from extracted payloads |
+| `render`    | Produce final artefacts |
+| `export`    | Export data to files (CSV, pickle, GeoDataFrame) |
 
 These methods **delegate** to `services/` and `domain/` — they contain no heavy logic.
+
+Compatibility helpers such as `register_compartment`, `get_*_info`,
+`extract_values`, `compute_*`, `build_*`, and `render_*` remain only as
+deprecated wrappers during the CWV migration. They are not part of the
+contractual API.
 
 ---
 

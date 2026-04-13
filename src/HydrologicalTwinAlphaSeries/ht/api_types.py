@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -47,6 +47,118 @@ MINIMUM_STATE: Dict[str, TwinState] = {
 
 class InvalidStateError(Exception):
     """Raised when a macro-method is called in an invalid lifecycle state."""
+
+
+@runtime_checkable
+class CompartmentProvider(Protocol):
+    """Public protocol used by ``load`` to build a compartment lazily."""
+
+    def build_compartment(self, request: "LoadCompartmentRequest", twin: Any) -> Any:
+        """Return a fully constructed compartment aggregate."""
+
+
+@dataclass(frozen=True)
+class LoadGeometrySource:
+    """Public geometry source descriptor consumed by :meth:`HydrologicalTwin.load`."""
+
+    kind: str
+    provider: Optional[CompartmentProvider] = None
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LoadObservationSource:
+    """Serializable observation source descriptor for a compartment load request."""
+
+    kind: str
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LoadPeriod:
+    """Simulation period attached to a load request."""
+
+    start_year: int
+    end_year: int
+
+
+@dataclass(frozen=True)
+class LoadDirectories:
+    """Filesystem directories attached to a load request."""
+
+    out_caw_directory: Optional[str] = None
+    obs_directory: Optional[str] = None
+    temp_directory: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LoadCompartmentRequest:
+    """Public description of a compartment to load."""
+
+    id_compartment: int
+    stable_id: str
+    geometry_source: LoadGeometrySource
+    observation_source: Optional[LoadObservationSource] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LoadRequest:
+    """Typed query for ``HydrologicalTwin.load``."""
+
+    kind: str = "compartments"
+    compartments: List[LoadCompartmentRequest] = field(default_factory=list)
+    period: Optional[LoadPeriod] = None
+    directories: Optional[LoadDirectories] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DescribeRequest:
+    """Typed query for ``HydrologicalTwin.describe``."""
+
+    kind: str = "catalog"
+
+
+@dataclass(frozen=True)
+class ExtractRequest:
+    """Typed query for ``HydrologicalTwin.extract``."""
+
+    kind: str
+    id_compartment: Optional[int] = None
+    outtype: Optional[str] = None
+    param: Optional[str] = None
+    syear: Optional[int] = None
+    eyear: Optional[int] = None
+    options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TransformRequest:
+    """Typed query for ``HydrologicalTwin.transform``."""
+
+    kind: str
+    payload: Any = None
+    options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RenderRequest:
+    """Typed query for ``HydrologicalTwin.render``."""
+
+    kind: str
+    payload: Any = None
+    options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ExportRequest:
+    """Typed query for ``HydrologicalTwin.export``."""
+
+    kind: str = "pickle"
+    path: Optional[str] = None
+    payload: Any = None
+    options: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -106,13 +218,21 @@ class ObservationsResponse:
 class CompartmentInfo:
     """Serializable snapshot of compartment metadata."""
     id_compartment: int
+    stable_id: str
     name: str
     layers_gis_names: List[str]
+    resolutions: List[str]
     n_layers: int
     n_cells: int
     cell_ids: np.ndarray
     out_caw_path: str
     regime: str
+    observation_layers: List[str] = field(default_factory=list)
+    observation_units: Dict[str, str] = field(default_factory=dict)
+    supported_outputs: List[str] = field(default_factory=list)
+    extract_kinds: List[str] = field(default_factory=list)
+    transform_kinds: List[str] = field(default_factory=list)
+    render_kinds: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,10 +277,17 @@ class TwinDescription:
     Aggregates all metadata about the twin's current state.
     """
 
+    kind: str
     state: str
     n_compartments: int
     compartments: List[CompartmentInfo]
     metadata: Dict[str, Any] = field(default_factory=dict)
+    supported_outputs: List[str] = field(default_factory=list)
+    extract_kinds: List[str] = field(default_factory=list)
+    transform_kinds: List[str] = field(default_factory=list)
+    render_kinds: List[str] = field(default_factory=list)
+    export_kinds: List[str] = field(default_factory=list)
+    transitional_methods: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -181,7 +308,25 @@ class FacadeDescription:
     primary_consumer: str
     lifecycle: List[str]
     macro_methods: List[FacadeMethod] = field(default_factory=list)
-    frontend_methods: List[FacadeMethod] = field(default_factory=list)
+    transitional_methods: List[FacadeMethod] = field(default_factory=list)
+
+
+@dataclass
+class ExtractResult:
+    """Result of :meth:`HydrologicalTwin.extract` when using typed requests."""
+
+    kind: str
+    payload: Any
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TransformResult:
+    """Result of :meth:`HydrologicalTwin.transform` when using typed requests."""
+
+    kind: str
+    payload: Any
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
