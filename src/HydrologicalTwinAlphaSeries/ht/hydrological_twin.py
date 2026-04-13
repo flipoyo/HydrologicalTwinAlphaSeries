@@ -102,6 +102,11 @@ class _StaticCompartmentProvider:
         return self._compartment
 
 
+class _PostProcessDirectoryStub:
+    def __init__(self, directory: str) -> None:
+        self.post_process_directory = directory
+
+
 class HydrologicalTwin(HTPersistenceMixin):
     """Monolithic backend facade for CaWaQS-ViZ.
 
@@ -227,16 +232,27 @@ class HydrologicalTwin(HTPersistenceMixin):
     def _build_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         comp = self.get_compartment(id_compartment)
         observation_layers: List[str] = []
-        observation_units: Dict[str, str] = {}
+        observation_units: Dict[str, str] = dict(getattr(comp, "observation_units", {}))
+        resolutions = []
+        if self.config_geom is not None:
+            raw_resolutions = self.config_geom.resolutionNames.get(id_compartment, [])
+            for resolution in raw_resolutions:
+                if isinstance(resolution, list):
+                    resolutions.extend(str(item) for item in resolution)
+                else:
+                    resolutions.append(str(resolution))
         if comp.obs is not None:
             observation_layers.append(comp.obs.layer_gis_name)
-            observation_units[comp.obs.obs_type] = "l/s" if comp.compartment == "HYD" else ""
+            observation_units.setdefault(
+                comp.obs.obs_type,
+                getattr(comp.obs, "unit", ""),
+            )
         return CompartmentInfo(
             id_compartment=id_compartment,
             stable_id=str(id_compartment),
             name=comp.compartment,
             layers_gis_names=list(comp.layers_gis_names),
-            resolutions=list(comp.layers_gis_names),
+            resolutions=resolutions,
             n_layers=len(comp.mesh.mesh),
             n_cells=comp.mesh.ncells,
             cell_ids=np.array(comp.mesh.getCellIdVector()),
@@ -737,24 +753,103 @@ class HydrologicalTwin(HTPersistenceMixin):
                     purpose="Temporary CWV wrapper for incremental loading.",
                 ),
                 FacadeMethod(
-                    name=(
-                        "get_compartment_info / get_layer_info / get_all_layers / "
-                        "get_observation_info"
-                    ),
+                    name="get_compartment_info",
                     level="compatibility",
                     purpose="Temporary metadata wrappers superseded by describe(kind='catalog').",
                 ),
                 FacadeMethod(
-                    name="extract_values / read_observations / _prepare_sim_obs_data",
+                    name="get_layer_info",
                     level="compatibility",
-                    purpose="Temporary data wrappers superseded by extract(kind=...).",
+                    purpose="Temporary metadata wrappers superseded by describe(kind='catalog').",
                 ),
                 FacadeMethod(
-                    name="compute_* / build_* / render_* specifics",
+                    name="get_all_layers",
+                    level="compatibility",
+                    purpose="Temporary metadata wrappers superseded by describe(kind='catalog').",
+                ),
+                FacadeMethod(
+                    name="get_observation_info",
+                    level="compatibility",
+                    purpose="Temporary metadata wrappers superseded by describe(kind='catalog').",
+                ),
+                FacadeMethod(
+                    name="extract_values",
                     level="compatibility",
                     purpose=(
-                        "Temporary wrappers superseded by transform(kind=...) "
-                        "and render(kind=...)."
+                        "Temporary data wrapper superseded by "
+                        "extract(kind='simulation_matrix')."
+                    ),
+                ),
+                FacadeMethod(
+                    name="read_observations",
+                    level="compatibility",
+                    purpose="Temporary data wrapper superseded by extract(kind='observations').",
+                ),
+                FacadeMethod(
+                    name="_prepare_sim_obs_data",
+                    level="compatibility",
+                    purpose="Temporary data wrapper superseded by extract(kind='sim_obs_bundle').",
+                ),
+                FacadeMethod(
+                    name="compute_budget_variable",
+                    level="compatibility",
+                    purpose=(
+                        "Temporary transform wrapper superseded by "
+                        "transform(kind='aggregated_budget')."
+                    ),
+                ),
+                FacadeMethod(
+                    name="compute_hydrological_regime",
+                    level="compatibility",
+                    purpose=(
+                        "Temporary transform wrapper superseded by "
+                        "transform(kind='hydrological_regime')."
+                    ),
+                ),
+                FacadeMethod(
+                    name="build_watbal_spatial_gdf",
+                    level="compatibility",
+                    purpose="Temporary build wrapper superseded by extract(kind='spatial_map').",
+                ),
+                FacadeMethod(
+                    name="build_effective_rainfall_gdf",
+                    level="compatibility",
+                    purpose="Temporary build wrapper superseded by transform(kind='runoff_ratio').",
+                ),
+                FacadeMethod(
+                    name="build_aq_spatial_gdf",
+                    level="compatibility",
+                    purpose="Temporary build wrapper superseded by extract(kind='spatial_map').",
+                ),
+                FacadeMethod(
+                    name="build_aquifer_outcropping",
+                    level="compatibility",
+                    purpose=(
+                        "Temporary build wrapper superseded by "
+                        "extract(kind='aquifer_outcropping')."
+                    ),
+                ),
+                FacadeMethod(
+                    name="render_budget_barplot",
+                    level="compatibility",
+                    purpose="Temporary render wrapper superseded by render(kind='budget').",
+                ),
+                FacadeMethod(
+                    name="render_hydrological_regime",
+                    level="compatibility",
+                    purpose="Temporary render wrapper superseded by render(kind='regime').",
+                ),
+                FacadeMethod(
+                    name="render_sim_obs_pdf",
+                    level="compatibility",
+                    purpose="Temporary render wrapper superseded by render(kind='sim_obs_pdf').",
+                ),
+                FacadeMethod(
+                    name="render_sim_obs_interactive",
+                    level="compatibility",
+                    purpose=(
+                        "Temporary render wrapper superseded by "
+                        "render(kind='sim_obs_interactive')."
                     ),
                 ),
             ],
@@ -854,11 +949,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 [
                     cell.id
                     for cell in self.spatial.buildAqOutcropping(
-                        exd=type(
-                            "_ExdStub",
-                            (),
-                            {"post_process_directory": options.get("save_directory", "")},
-                        )(),
+                        exd=_PostProcessDirectoryStub(options.get("save_directory", "")),
                         aq_compartment=self.get_compartment(request.id_compartment),
                         save=options.get("save_directory") is not None,
                     )

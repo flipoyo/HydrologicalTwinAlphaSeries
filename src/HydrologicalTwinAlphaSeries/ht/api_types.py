@@ -216,7 +216,13 @@ class ObservationsResponse:
 
 @dataclass
 class CompartmentInfo:
-    """Serializable snapshot of compartment metadata."""
+    """Serializable snapshot of compartment metadata.
+
+    ``extract_kinds`` / ``transform_kinds`` / ``render_kinds`` describe the
+    compartment-level workflows that can be applied once the compartment is
+    loaded. The same categories also appear on :class:`TwinDescription` at the
+    twin level to describe the global facade contract.
+    """
     id_compartment: int
     stable_id: str
     name: str

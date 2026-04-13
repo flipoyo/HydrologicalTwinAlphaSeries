@@ -379,4 +379,6 @@ class TestFacadeDescription:
 
         transitional_names = {method.name for method in description.transitional_methods}
         assert "register_compartment" in transitional_names
-        assert "compute_* / build_* / render_* specifics" in transitional_names
+        assert "compute_budget_variable" in transitional_names
+        assert "build_watbal_spatial_gdf" in transitional_names
+        assert "render_budget_barplot" in transitional_names
