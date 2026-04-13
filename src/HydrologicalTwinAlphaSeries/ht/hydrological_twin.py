@@ -229,7 +229,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             stacklevel=3,
         )
 
-    def _build_compartment_info(self, id_compartment: int) -> CompartmentInfo:
+    def _get_compartment_info_impl(self, id_compartment: int) -> CompartmentInfo:
         comp = self.get_compartment(id_compartment)
         observation_layers: List[str] = []
         observation_units: Dict[str, str] = dict(getattr(comp, "observation_units", {}))
@@ -303,7 +303,9 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     def _materialize_load_request(self, request: LoadRequest) -> Dict[int, Compartment]:
         if request.kind != "compartments":
-            raise ValueError(f"Unknown load kind: {request.kind!r}")
+            raise ValueError(
+                f"Unsupported load kind: {request.kind!r}. Expected 'compartments'."
+            )
         built: Dict[int, Compartment] = {}
         for compartment_request in request.compartments:
             geometry_source = compartment_request.geometry_source
@@ -684,12 +686,14 @@ class HydrologicalTwin(HTPersistenceMixin):
         self._require_state("describe")
         request = request or DescribeRequest()
         if request.kind != "catalog":
-            raise ValueError(f"Unknown describe kind: {request.kind!r}")
+            raise ValueError(
+                f"Unsupported describe kind: {request.kind!r}. Expected 'catalog'."
+            )
         return TwinDescription(
             kind=request.kind,
             state=self._state.value,
             n_compartments=len(self.compartments),
-            compartments=[self._build_compartment_info(cid) for cid in self.compartments],
+            compartments=[self._get_compartment_info_impl(cid) for cid in self.compartments],
             supported_outputs=list(SUPPORTED_OUTPUTS),
             extract_kinds=list(SUPPORTED_EXTRACT_KINDS),
             transform_kinds=list(SUPPORTED_TRANSFORM_KINDS),
@@ -918,7 +922,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
         elif kind == "spatial_map":
             payload = {
-                "compartment": self._build_compartment_info(request.id_compartment),
+                "compartment": self._get_compartment_info_impl(request.id_compartment),
                 "layer": self._get_layer_info_impl(
                     request.id_compartment,
                     options.get("id_layer", 0),
@@ -1270,11 +1274,11 @@ class HydrologicalTwin(HTPersistenceMixin):
             "get_compartment_info",
             "describe(DescribeRequest(kind='catalog'))",
         )
-        return self._build_compartment_info(id_compartment)
+        return self._get_compartment_info_impl(id_compartment)
 
     def list_compartments(self) -> List[CompartmentInfo]:
         """Return info for all registered compartments."""
-        return [self._build_compartment_info(cid) for cid in self.compartments]
+        return [self._get_compartment_info_impl(cid) for cid in self.compartments]
 
     def get_layer_info(self, id_compartment: int, id_layer: int) -> LayerInfo:
         """Return cell data for a specific mesh layer."""
