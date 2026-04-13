@@ -241,7 +241,7 @@ class Manage:
             
             for obs_point in obs_points:
                 # Extract column for this observation point
-                cell_data = data[obs_point.id_cell,:]
+                cell_data = data[obs_point.id_cell-1,:]
                 obs_point_data.append(cell_data)
                 obs_point_names.append(f"{obs_point.name} - {obs_point.id_cell}")
             
@@ -288,20 +288,24 @@ class Manage:
             interannual_data = np.array(interannual_data)  # shape: (12, n_obs_points)
             month_labels = np.array(month_labels)
             
-            # Save to CSV
-            csv_path = output_folder + sep + compartment.compartment + "_" + output_name + ".csv"
-            
-            # Combine month labels with data
-            header = '\t'.join(obs_point_names)
-            
-            # Save with month labels as first column (for reference)
-            with open(csv_path, 'w') as f:
-                f.write('Month\t' + header + '\n')
+            # Save to fixed-width text table (human-readable without any software)
+            txt_path = output_folder + sep + compartment.compartment + "_" + output_name + ".txt"
+
+            # Compute column widths: max of header name vs formatted value width
+            val_width = 10  # width for "XXXXXXXXX" style floats (e.g. "  1234.56")
+            col_widths = [max(len(name), val_width) for name in obs_point_names]
+            month_col_width = max(len("Month"), max(len(m) for m in month_labels))
+
+            with open(txt_path, 'w') as f:
+                # Header row
+                header_cells = [name.center(w) for name, w in zip(obs_point_names, col_widths)]
+                f.write("Month".ljust(month_col_width) + "  " + "  ".join(header_cells) + "\n")
+                # Data rows
                 for i, month_label in enumerate(month_labels):
-                    row_data = '\t'.join([f'{val:.6f}' for val in interannual_data[i, :]])
-                    f.write(f'{month_label}\t{row_data}\n')
-            
-            print(f"Saved to: {csv_path}")
+                    val_cells = [f'{val:>{w}.3f}' for val, w in zip(interannual_data[i, :], col_widths)]
+                    f.write(month_label.ljust(month_col_width) + "  " + "  ".join(val_cells) + "\n")
+
+            print(f"Saved to: {txt_path}")
             print("Done", flush=True)
             
             return interannual_data, obs_point_names, month_labels
