@@ -15,12 +15,13 @@ jobs:
 
       - name: Install Pixi
         run: |
+          max_attempts=3
           retry_delay_seconds=10
-          for attempt in 1 2 3; do
+          for attempt in $(seq 1 "${max_attempts}"); do
             if curl -fsSL https://pixi.sh/install.sh | bash; then
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${max_attempts}" ]; then
               echo "::error::Failed to install Pixi after ${attempt} attempts"
               exit 1
             fi
