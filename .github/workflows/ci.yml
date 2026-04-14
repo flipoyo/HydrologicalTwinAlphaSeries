@@ -25,7 +25,6 @@ jobs:
           esac
           pixi_url="https://github.com/prefix-dev/pixi/releases/latest/download/pixi-${pixi_target}.tar.gz"
           pixi_archive="$(mktemp --suffix=.tar.gz)"
-          trap 'rm -f "$pixi_archive"' EXIT
           download_with_wget() {
             if ! wget -O "$pixi_archive" "$pixi_url"; then
               echo "::error::Failed to download Pixi with wget from $pixi_url"
@@ -33,7 +32,7 @@ jobs:
             fi
           }
           download_pixi() {
-            if command -v curl >/dev/null 2>&1 && curl -fsSL "$pixi_url" -o "$pixi_archive"; then
+            if command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 15 --max-time 120 "$pixi_url" -o "$pixi_archive"; then
               return
             fi
             if command -v wget >/dev/null 2>&1; then
@@ -47,6 +46,7 @@ jobs:
           download_pixi
           mkdir -p "$HOME/.pixi/bin"
           tar -xzf "$pixi_archive" -C "$HOME/.pixi/bin"
+          rm -f "$pixi_archive"
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
           "$HOME/.pixi/bin/pixi" --version
 
