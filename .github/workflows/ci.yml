@@ -25,6 +25,7 @@ jobs:
           esac
           pixi_url="https://github.com/prefix-dev/pixi/releases/latest/download/pixi-${pixi_target}.tar.gz"
           pixi_archive="$(mktemp --suffix=.tar.gz)"
+          trap 'rm -f "$pixi_archive"' EXIT
           download_with_wget() {
             if ! wget --timeout=120 --tries=1 -O "$pixi_archive" "$pixi_url"; then
               echo "::error::Failed to download Pixi with wget from $pixi_url"
@@ -36,7 +37,7 @@ jobs:
               return
             fi
             if command -v wget >/dev/null 2>&1; then
-              echo "curl unavailable or download failed, falling back to wget..."
+              echo "curl unavailable or download failed for $pixi_url, falling back to wget..."
               download_with_wget
               return
             fi
