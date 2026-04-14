@@ -25,7 +25,7 @@ jobs:
               echo "::error::Failed to install Pixi after ${attempt} attempts"
               exit 1
             fi
-            rm -rf "$HOME/.pixi"
+            rm -rf "$HOME/.pixi/bin"
             echo "Pixi install attempt ${attempt} failed, retrying in ${retry_delay_seconds} seconds..."
             sleep "${retry_delay_seconds}"
           done
