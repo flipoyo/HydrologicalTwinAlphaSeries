@@ -22,7 +22,7 @@ jobs:
               break
             fi
             if [ "$attempt" -eq "${max_attempts}" ]; then
-              echo "::error::Failed to install Pixi after ${attempt} attempts"
+              echo "::error::Failed to install Pixi after ${max_attempts} attempts"
               exit 1
             fi
             rm -rf "$HOME/.pixi/bin"
