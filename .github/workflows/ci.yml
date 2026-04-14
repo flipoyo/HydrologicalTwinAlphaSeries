@@ -15,7 +15,41 @@ jobs:
 
       - name: Install Pixi
         run: |
-          curl -fsSL https://pixi.sh/install.sh | bash
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) pixi_target="x86_64-unknown-linux-musl" ;;
+            Linux-aarch64|Linux-arm64) pixi_target="aarch64-unknown-linux-musl" ;;
+            *)
+              echo "::error::Unsupported runner platform for Pixi: $(uname -s) $(uname -m)"
+              exit 1
+              ;;
+          esac
+          pixi_url="https://github.com/prefix-dev/pixi/releases/latest/download/pixi-${pixi_target}.tar.gz"
+          pixi_archive="$(mktemp)"
+          trap 'test -n "${pixi_archive:-}" && rm -f "$pixi_archive"' EXIT INT TERM
+          download_with_wget() {
+            if ! wget --timeout=120 --tries=1 -O "$pixi_archive" "$pixi_url"; then
+              echo "::error::Failed to download Pixi with wget from $pixi_url"
+              exit 1
+            fi
+          }
+          download_pixi() {
+            if command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 15 --max-time 120 "$pixi_url" -o "$pixi_archive"; then
+              return
+            fi
+            if command -v wget >/dev/null 2>&1; then
+              echo "curl unavailable or download failed for $pixi_url, falling back to wget..."
+              download_with_wget
+              return
+            fi
+            echo "::error::Neither curl nor wget could download Pixi from $pixi_url"
+            exit 1
+          }
+          download_pixi
+          mkdir -p "$HOME/.pixi/bin"
+          if ! tar -xzf "$pixi_archive" -C "$HOME/.pixi/bin"; then
+            echo "::error::Failed to extract Pixi archive from $pixi_url"
+            exit 1
+          fi
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
           "$HOME/.pixi/bin/pixi" --version
 
