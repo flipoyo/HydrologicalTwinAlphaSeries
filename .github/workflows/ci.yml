@@ -15,7 +15,18 @@ jobs:
 
       - name: Install Pixi
         run: |
-          curl -fsSL https://pixi.sh/install.sh | bash
+          for attempt in 1 2 3; do
+            if curl -fsSL https://pixi.sh/install.sh | bash; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Failed to install Pixi after ${attempt} attempts"
+              exit 1
+            fi
+            rm -rf "$HOME/.pixi"
+            echo "Pixi install attempt ${attempt} failed, retrying in 10 seconds..."
+            sleep 10
+          done
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
           "$HOME/.pixi/bin/pixi" --version
 
