@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -25,32 +24,32 @@ from .api_types import (
     AquiferBalanceResponse,
     BudgetComputationResponse,
     CellSelectionResponse,
-    CompartmentInfo,
     CompartmentCatalog,
+    CompartmentInfo,
     ConfigureRequest,
     CriteriaResponse,
     DescribeRequest,
-    ExportResult,
     ExportRequest,
+    ExportResult,
     ExtractRequest,
     ExtractValuesResponse,
     FacadeDescription,
     FacadeMethod,
     HydrologicalRegimeResponse,
     InvalidStateError,
-    LayerInfo,
     LayerCatalog,
+    LayerInfo,
     LoadRequest,
-    ObservationInfo,
     ObservationCatalog,
+    ObservationInfo,
     ObservationsResponse,
     RenderRequest,
     RenderResult,
     RunoffRatioResponse,
     SimObsBundleResponse,
     SimObsPointData,
-    SpatialMapResponse,
     SpatialAverageResponse,
+    SpatialMapResponse,
     TemporalOpResponse,
     TransformRequest,
     TwinCatalog,
@@ -278,7 +277,11 @@ class HydrologicalTwin(HTPersistenceMixin):
                     name=comp_info.name,
                     out_caw_path=comp_info.out_caw_path,
                     regime=comp_info.regime,
-                    primary_layer_name=comp_info.layers_gis_names[0] if comp_info.layers_gis_names else None,
+                    primary_layer_name=(
+                        comp_info.layers_gis_names[0]
+                        if comp_info.layers_gis_names
+                        else None
+                    ),
                     layer_cell_id_column=(
                         self.config_geom.idColCells.get(comp_info.id_compartment)
                         if self.config_geom is not None
@@ -355,7 +358,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         )
 
     @staticmethod
-    def _bundle_response_to_dict(bundle: Union[SimObsBundleResponse, Dict[str, Any]]) -> Dict[str, Any]:
+    def _bundle_response_to_dict(
+        bundle: Union[SimObsBundleResponse, Dict[str, Any]],
+    ) -> Dict[str, Any]:
         if isinstance(bundle, dict):
             return bundle
         return {
@@ -542,18 +547,27 @@ class HydrologicalTwin(HTPersistenceMixin):
                 FacadeMethod(
                     name="describe",
                     level="macro",
-                    purpose="Return the frontend catalog: compartments, layers, observations, outputs, and capabilities.",
+                    purpose=(
+                        "Return the frontend catalog: compartments, layers, observations, "
+                        "outputs, and capabilities."
+                    ),
                 ),
                 FacadeMethod(
                     name="extract",
                     level="macro",
-                    purpose="Extract frontend-ready workflow payloads through a stable entry point.",
+                    purpose=(
+                        "Extract frontend-ready workflow payloads through a stable "
+                        "entry point."
+                    ),
                     delegates_to=["extract_values", "read_observations", "_prepare_sim_obs_data"],
                 ),
                 FacadeMethod(
                     name="transform",
                     level="macro",
-                    purpose="Apply workflow computations such as aggregations, criteria, budgets, runoff ratio, and aquifer balances.",
+                    purpose=(
+                        "Apply workflow computations such as aggregations, criteria, "
+                        "budgets, runoff ratio, and aquifer balances."
+                    ),
                     delegates_to=["apply_temporal_operator", "compute_performance_stats"],
                 ),
                 FacadeMethod(
@@ -584,37 +598,55 @@ class HydrologicalTwin(HTPersistenceMixin):
                 FacadeMethod(
                     name="build_watbal_spatial_gdf",
                     level="transition",
-                    purpose="Legacy spatial workflow wrapper to be replaced by extract(kind='spatial_map').",
+                    purpose=(
+                        "Legacy spatial workflow wrapper to be replaced by "
+                        "extract(kind='spatial_map')."
+                    ),
                     delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
                 ),
                 FacadeMethod(
                     name="build_effective_rainfall_gdf",
                     level="transition",
-                    purpose="Legacy effective-rainfall wrapper to be replaced by extract(kind='spatial_map').",
+                    purpose=(
+                        "Legacy effective-rainfall wrapper to be replaced by "
+                        "extract(kind='spatial_map')."
+                    ),
                     delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
                 ),
                 FacadeMethod(
                     name="build_aq_spatial_gdf",
                     level="transition",
-                    purpose="Legacy aquifer map wrapper to be replaced by extract(kind='spatial_map').",
+                    purpose=(
+                        "Legacy aquifer map wrapper to be replaced by "
+                        "extract(kind='spatial_map')."
+                    ),
                     delegates_to=["extract_values", "aggregate_for_map"],
                 ),
                 FacadeMethod(
                     name="build_aquifer_outcropping",
                     level="transition",
-                    purpose="Legacy outcropping helper to be replaced by extract(kind='aquifer_outcropping').",
+                    purpose=(
+                        "Legacy outcropping helper to be replaced by "
+                        "extract(kind='aquifer_outcropping')."
+                    ),
                     delegates_to=["Manage.Spatial.buildAqOutcropping"],
                 ),
                 FacadeMethod(
                     name="render_sim_obs_pdf",
                     level="transition",
-                    purpose="Legacy sim-vs-obs PDF helper to be replaced by render(kind='sim_obs_pdf').",
+                    purpose=(
+                        "Legacy sim-vs-obs PDF helper to be replaced by "
+                        "render(kind='sim_obs_pdf')."
+                    ),
                     delegates_to=["_prepare_sim_obs_data", "Renderer.render_simobs_pdf"],
                 ),
                 FacadeMethod(
                     name="render_sim_obs_interactive",
                     level="transition",
-                    purpose="Legacy sim-vs-obs interactive helper to be replaced by render(kind='sim_obs_interactive').",
+                    purpose=(
+                        "Legacy sim-vs-obs interactive helper to be replaced by "
+                        "render(kind='sim_obs_interactive')."
+                    ),
                     delegates_to=[
                         "_prepare_sim_obs_data",
                         "Renderer.render_simobs_interactive",
@@ -996,7 +1028,9 @@ class HydrologicalTwin(HTPersistenceMixin):
                 data=data,
                 dates=dates,
                 output_folder=self.temp_directory or self.out_caw_directory or "",
-                output_name=f"{module_caw.get(request.id_compartment, request.id_compartment)}_regime",
+                output_name=(
+                    f"{module_caw.get(request.id_compartment, request.id_compartment)}_regime"
+                ),
             )
             return HydrologicalRegimeResponse(
                 data=regime_data,
@@ -1173,7 +1207,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
         else:
             raise ValueError(f"Unknown render kind: {request.kind!r}")
-        return RenderResult(artefacts=artefacts, meta={"kind": resolved_kind})
+        return RenderResult(artefacts=artefacts, meta={"kind": request.kind})
 
     def export(
         self,
@@ -2209,7 +2243,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         if tables is None:
             raise ValueError("render_aq_flux_diagram() requires transformed aquifer tables.")
 
-        output_directory = Path(output_folder or self.temp_directory or self.out_caw_directory or ".")
+        output_directory = Path(
+            output_folder or self.temp_directory or self.out_caw_directory or "."
+        )
         output_directory.mkdir(parents=True, exist_ok=True)
         base_name = output_name or "aq_flux"
 
@@ -2257,7 +2293,10 @@ class HydrologicalTwin(HTPersistenceMixin):
             sankey.write_html(html_path)
         except Exception:
             html_path.write_text(
-                "<html><body><h1>Aquifer Flux Diagram</h1><p>Plotly rendering failed.</p></body></html>",
+                (
+                    "<html><body><h1>Aquifer Flux Diagram</h1>"
+                    "<p>Plotly rendering failed.</p></body></html>"
+                ),
                 encoding="utf-8",
             )
 
