@@ -15,6 +15,7 @@ jobs:
 
       - name: Install Pixi
         run: |
+          retry_delay_seconds=10
           for attempt in 1 2 3; do
             if curl -fsSL https://pixi.sh/install.sh | bash; then
               break
@@ -24,8 +25,8 @@ jobs:
               exit 1
             fi
             rm -rf "$HOME/.pixi"
-            echo "Pixi install attempt ${attempt} failed, retrying in 10 seconds..."
-            sleep 10
+            echo "Pixi install attempt ${attempt} failed, retrying in ${retry_delay_seconds} seconds..."
+            sleep "${retry_delay_seconds}"
           done
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
           "$HOME/.pixi/bin/pixi" --version
