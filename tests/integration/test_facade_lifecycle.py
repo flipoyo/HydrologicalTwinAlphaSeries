@@ -12,7 +12,6 @@ from HydrologicalTwinAlphaSeries.ht import (
     ConfigureRequest,
     DescribeRequest,
     ExportResult,
-    FacadeDescription,
     HydrologicalTwin,
     InvalidStateError,
     LoadRequest,
@@ -115,52 +114,25 @@ class TestStateLifecycle:
         twin.load(compartments={})
         assert twin.state == TwinState.LOADED
 
-    def test_register_compartment_after_load(self, tmp_path):
-        twin = HydrologicalTwin()
-        twin.configure(
-            config_geom=_make_config_geom(),
-            config_proj=_make_config_proj(tmp_path),
-            out_caw_directory=str(tmp_path / "out"),
-            obs_directory=str(tmp_path / "obs"),
-        )
-        twin.load(compartments={})
-
-        # register_compartment requires LOADED state and a Compartment instance
-        from unittest.mock import MagicMock
-
-        from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-        mock_comp = MagicMock(spec=Compartment)
-        twin.register_compartment(id_compartment=99, compartment=mock_comp)
-        assert 99 in twin.compartments
-        assert twin.compartments[99] is mock_comp
-
-    def test_register_compartment_rejects_non_compartment(self, tmp_path):
-        twin = HydrologicalTwin()
-        twin.configure(
-            config_geom=_make_config_geom(),
-            config_proj=_make_config_proj(tmp_path),
-            out_caw_directory=str(tmp_path / "out"),
-            obs_directory=str(tmp_path / "obs"),
-        )
-        twin.load(compartments={})
-        with pytest.raises(TypeError, match="Expected a Compartment"):
-            twin.register_compartment(id_compartment=1, compartment=object())
-
-    def test_register_compartment_before_load_raises(self, tmp_path):
+    def test_legacy_transition_helpers_are_not_public(self, tmp_path):
         twin = HydrologicalTwin(
             config_geom=_make_config_geom(),
             config_proj=_make_config_proj(tmp_path),
             out_caw_directory=str(tmp_path / "out"),
             obs_directory=str(tmp_path / "obs"),
         )
-        with pytest.raises(InvalidStateError, match="LOADED"):
-            from unittest.mock import MagicMock
 
-            from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-            twin.register_compartment(
-                id_compartment=1,
-                compartment=MagicMock(spec=Compartment),
-            )
+        for method_name in {
+            "register_compartment",
+            "describe_api_facade",
+            "build_watbal_spatial_gdf",
+            "build_effective_rainfall_gdf",
+            "build_aq_spatial_gdf",
+            "build_aquifer_outcropping",
+            "render_sim_obs_pdf",
+            "render_sim_obs_interactive",
+        }:
+            assert not hasattr(twin, method_name)
 
 
 # ---------------------------------------------------------------------------
@@ -291,40 +263,3 @@ class TestMacroMethods:
         with pytest.raises(ValueError, match="Unknown render kind"):
             twin.render(kind="unknown_kind")
 
-
-class TestFacadeDescription:
-    """Verify the explicit facade description exposed to frontend consumers."""
-
-    def test_describe_api_facade_lists_macro_and_transition_methods(self):
-        twin = HydrologicalTwin()
-
-        description = twin.describe_api_facade()
-
-        assert isinstance(description, FacadeDescription)
-        assert description.entrypoint == "HydrologicalTwin"
-        assert description.primary_consumer == "cawaqsviz"
-        assert description.lifecycle == ["EMPTY", "CONFIGURED", "LOADED", "READY"]
-
-        macro_names = {method.name for method in description.macro_methods}
-        assert macro_names == {
-            "configure",
-            "load",
-            "describe",
-            "extract",
-            "transform",
-            "render",
-            "export",
-        }
-
-        transition_methods = {
-            method.name: method.delegates_to for method in description.transition_methods
-        }
-        assert "register_compartment" in transition_methods
-        assert transition_methods["build_watbal_spatial_gdf"] == [
-            "extract_watbal_for_map",
-            "aggregate_for_map",
-        ]
-        assert transition_methods["render_sim_obs_pdf"] == [
-            "_prepare_sim_obs_data",
-            "Renderer.render_simobs_pdf",
-        ]

@@ -33,8 +33,6 @@ from .api_types import (
     ExportResult,
     ExtractRequest,
     ExtractValuesResponse,
-    FacadeDescription,
-    FacadeMethod,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
@@ -82,8 +80,8 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     Macro-methods (public API, ≤ 8)::
 
-        configure, load, register_compartment, describe,
-        extract, transform, render, export
+        configure, load, describe, extract,
+        transform, render, export
     """
 
     def __init__(
@@ -477,35 +475,6 @@ class HydrologicalTwin(HTPersistenceMixin):
         self.compartments = self._build_compartments(request)
         self._transition_to(TwinState.LOADED)
 
-    def register_compartment(
-        self,
-        id_compartment: int,
-        compartment: Compartment,
-    ) -> None:
-        """Register a single compartment into the twin.
-
-        Can be called repeatedly to add compartments one at a time after
-        ``load()`` has been called.  Requires state LOADED or later.
-
-        Parameters
-        ----------
-        id_compartment : int
-            CaWaQS compartment identifier.
-        compartment : Compartment
-            Fully constructed Compartment aggregate.
-
-        Raises
-        ------
-        TypeError
-            If *compartment* is not a :class:`Compartment` instance.
-        """
-        self._require_state("register_compartment")
-        if not isinstance(compartment, Compartment):
-            raise TypeError(
-                f"Expected a Compartment instance, got {type(compartment).__name__}"
-            )
-        self.compartments[id_compartment] = compartment
-
     def describe(
         self,
         request: Optional[DescribeRequest] = None,
@@ -527,133 +496,6 @@ class HydrologicalTwin(HTPersistenceMixin):
             catalog=self._build_catalog(request),
         )
 
-    def describe_api_facade(self) -> FacadeDescription:
-        """Describe the canonical macro facade and transitional compatibility layer."""
-        return FacadeDescription(
-            entrypoint="HydrologicalTwin",
-            primary_consumer="cawaqsviz",
-            lifecycle=[state.value for state in TwinState],
-            macro_methods=[
-                FacadeMethod(
-                    name="configure",
-                    level="macro",
-                    purpose="Attach project and geometry configuration.",
-                ),
-                FacadeMethod(
-                    name="load",
-                    level="macro",
-                    purpose="Register a project load request and build compartments internally.",
-                ),
-                FacadeMethod(
-                    name="describe",
-                    level="macro",
-                    purpose=(
-                        "Return the frontend catalog: compartments, layers, observations, "
-                        "outputs, and capabilities."
-                    ),
-                ),
-                FacadeMethod(
-                    name="extract",
-                    level="macro",
-                    purpose=(
-                        "Extract frontend-ready workflow payloads through a stable "
-                        "entry point."
-                    ),
-                    delegates_to=["extract_values", "read_observations", "_prepare_sim_obs_data"],
-                ),
-                FacadeMethod(
-                    name="transform",
-                    level="macro",
-                    purpose=(
-                        "Apply workflow computations such as aggregations, criteria, "
-                        "budgets, runoff ratio, and aquifer balances."
-                    ),
-                    delegates_to=["apply_temporal_operator", "compute_performance_stats"],
-                ),
-                FacadeMethod(
-                    name="render",
-                    level="macro",
-                    purpose="Produce final artefacts through a single rendering entry point.",
-                    delegates_to=[
-                        "render_budget_barplot",
-                        "render_hydrological_regime",
-                        "render_sim_obs_pdf",
-                        "render_sim_obs_interactive",
-                        "render_aq_flux_diagram",
-                    ],
-                ),
-                FacadeMethod(
-                    name="export",
-                    level="macro",
-                    purpose="Export the current twin snapshot or derived data.",
-                    delegates_to=["to_pickle"],
-                ),
-            ],
-            transition_methods=[
-                FacadeMethod(
-                    name="register_compartment",
-                    level="transition",
-                    purpose="Legacy incremental loading helper kept for compatibility.",
-                ),
-                FacadeMethod(
-                    name="build_watbal_spatial_gdf",
-                    level="transition",
-                    purpose=(
-                        "Legacy spatial workflow wrapper to be replaced by "
-                        "extract(kind='spatial_map')."
-                    ),
-                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
-                ),
-                FacadeMethod(
-                    name="build_effective_rainfall_gdf",
-                    level="transition",
-                    purpose=(
-                        "Legacy effective-rainfall wrapper to be replaced by "
-                        "extract(kind='spatial_map')."
-                    ),
-                    delegates_to=["extract_watbal_for_map", "aggregate_for_map"],
-                ),
-                FacadeMethod(
-                    name="build_aq_spatial_gdf",
-                    level="transition",
-                    purpose=(
-                        "Legacy aquifer map wrapper to be replaced by "
-                        "extract(kind='spatial_map')."
-                    ),
-                    delegates_to=["extract_values", "aggregate_for_map"],
-                ),
-                FacadeMethod(
-                    name="build_aquifer_outcropping",
-                    level="transition",
-                    purpose=(
-                        "Legacy outcropping helper to be replaced by "
-                        "extract(kind='aquifer_outcropping')."
-                    ),
-                    delegates_to=["Manage.Spatial.buildAqOutcropping"],
-                ),
-                FacadeMethod(
-                    name="render_sim_obs_pdf",
-                    level="transition",
-                    purpose=(
-                        "Legacy sim-vs-obs PDF helper to be replaced by "
-                        "render(kind='sim_obs_pdf')."
-                    ),
-                    delegates_to=["_prepare_sim_obs_data", "Renderer.render_simobs_pdf"],
-                ),
-                FacadeMethod(
-                    name="render_sim_obs_interactive",
-                    level="transition",
-                    purpose=(
-                        "Legacy sim-vs-obs interactive helper to be replaced by "
-                        "render(kind='sim_obs_interactive')."
-                    ),
-                    delegates_to=[
-                        "_prepare_sim_obs_data",
-                        "Renderer.render_simobs_interactive",
-                    ],
-                ),
-            ],
-        )
 
     def extract(
         self,
@@ -746,7 +588,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
             if comp_info.name == "WATBAL":
                 if request.param in {"eff_rain", "effective_rainfall"}:
-                    gdf = self.build_effective_rainfall_gdf(
+                    gdf = self._build_effective_rainfall_gdf(
                         id_compartment=request.id_compartment,
                         syear=request.syear,
                         eyear=request.eyear,
@@ -758,7 +600,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                         pluriannual=request.pluriannual,
                     )
                 else:
-                    gdf = self.build_watbal_spatial_gdf(
+                    gdf = self._build_watbal_spatial_gdf(
                         id_compartment=request.id_compartment,
                         outtype=request.outtype or "MB",
                         param=request.param,
@@ -773,7 +615,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                         pluriannual=request.pluriannual,
                     )
             else:
-                gdf = self.build_aq_spatial_gdf(
+                gdf = self._build_aq_spatial_gdf(
                     id_compartment=request.id_compartment,
                     outtype=request.outtype,
                     param=request.param,
@@ -813,7 +655,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
 
         if request.kind == "aquifer_outcropping":
-            cell_ids = self.build_aquifer_outcropping(
+            cell_ids = self._build_aquifer_outcropping(
                 id_compartment=request.id_compartment,
                 save_directory=request.save_directory,
             )
@@ -1163,7 +1005,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 years=request.years,
             )
         elif resolved_kind == "sim_obs_pdf":
-            artefacts = self.render_sim_obs_pdf(
+            artefacts = self._render_sim_obs_pdf(
                 id_compartment=request.id_compartment,
                 outtype=request.outtype,
                 param=request.param,
@@ -1181,7 +1023,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 aggr=request.aggr,
             )
         elif resolved_kind == "sim_obs_interactive":
-            artefacts = self.render_sim_obs_interactive(
+            artefacts = self._render_sim_obs_interactive(
                 id_compartment=request.id_compartment,
                 outtype=request.outtype,
                 param=request.param,
@@ -1783,7 +1625,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         df = pd.DataFrame(arr_agg, index=date_labels, columns=cell_ids)
         return df
 
-    def build_watbal_spatial_gdf(
+    def _build_watbal_spatial_gdf(
         self,
         id_compartment: int,
         outtype: str,
@@ -1826,7 +1668,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             crs=layer_info.crs,
         )
 
-    def build_effective_rainfall_gdf(
+    def _build_effective_rainfall_gdf(
         self,
         id_compartment: int,
         syear: int,
@@ -1875,7 +1717,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             crs=layer_info.crs,
         )
 
-    def build_aq_spatial_gdf(
+    def _build_aq_spatial_gdf(
         self,
         id_compartment: int,
         outtype: str,
@@ -1927,7 +1769,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         return gdf
 
-    def build_aquifer_outcropping(
+    def _build_aquifer_outcropping(
         self,
         id_compartment: int,
         save_directory: str = None,
@@ -2067,7 +1909,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             years=years,
         )
 
-    def render_sim_obs_pdf(
+    def _render_sim_obs_pdf(
         self,
         id_compartment: int,
         outtype: str,
@@ -2162,7 +2004,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             plotenddate=plotenddate,
         )
 
-    def render_sim_obs_interactive(
+    def _render_sim_obs_interactive(
         self,
         id_compartment: int,
         outtype: str,

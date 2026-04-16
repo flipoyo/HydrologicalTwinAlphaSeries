@@ -46,11 +46,3 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/HydrologicalTwinAlphaSeries/services/Manage.py" = ["E501"]
-# Deprecation shim files: warnings.warn() must precede the actual import
-"src/HydrologicalTwinAlphaSeries/Compartment.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Extraction.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Manage.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Mesh.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Observations.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Renderer.py" = ["E402"]
-"src/HydrologicalTwinAlphaSeries/Vec_Operator.py" = ["E402"]

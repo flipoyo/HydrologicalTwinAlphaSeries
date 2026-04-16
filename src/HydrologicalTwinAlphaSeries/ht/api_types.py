@@ -35,7 +35,6 @@ ALLOWED_TRANSITIONS: Dict[TwinState, frozenset] = {
 MINIMUM_STATE: Dict[str, TwinState] = {
     "configure": TwinState.EMPTY,
     "load": TwinState.CONFIGURED,
-    "register_compartment": TwinState.LOADED,
     "describe": TwinState.LOADED,
     "extract": TwinState.LOADED,
     "transform": TwinState.LOADED,

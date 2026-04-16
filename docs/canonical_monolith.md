@@ -64,10 +64,6 @@ The facade exposes only high-level macro-capabilities:
 
 These methods **delegate** to `services/` and `domain/` — they contain no heavy logic.
 
-`register_compartment` and the detailed helper methods (`build_*`, `compute_*`,
-specialized `render_*`) may still exist as transitional wrappers, but they are not
-part of the canonical consumer contract.
-
 ---
 
 ## Internal State Model
