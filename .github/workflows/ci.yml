@@ -27,7 +27,15 @@ jobs:
           fi
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check
+
+      - name: Format
+        continue-on-error: true
+        run: uv format --check
+
+      - name: Type-check
+        continue-on-error: true
+        run: uvx ty check
 
       - name: Run tests
         run: uv run pytest
