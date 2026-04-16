@@ -85,16 +85,10 @@ HydrologicalTwin
 
 ## Lifecycle
 
-Compartments are registered into the twin via:
+Compartments are registered into the twin in bulk via:
 
 ```python
 twin.load(compartments={1: comp_aq, 2: comp_hyd})
-```
-
-Or individually:
-
-```python
-twin.register_compartment(id_compartment=1, compartment=comp_aq)
 ```
 
 Once loaded, all macro-methods (`describe`, `extract`, `transform`, `render`,

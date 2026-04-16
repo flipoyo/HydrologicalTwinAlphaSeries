@@ -12,9 +12,8 @@ For `cawaqsviz`, the target surface is limited to:
 - `render`
 - `export`
 
-Everything else is either an internal implementation detail or a transitional
-compatibility wrapper. External code must not orchestrate `domain/`, `services/`,
-`config/`, `tools/`, nor call detailed facade helpers as its primary integration path.
+Everything else is an internal implementation detail. External code must not
+orchestrate `domain/`, `services/`, `config/`, or `tools/` directly.
 
 All operations act on compartment aggregates and structured public request or response
 types. External consumers must not construct or manipulate low-level backend objects
@@ -81,20 +80,6 @@ Produce final artefacts. Current kinds include:
 
 ### `export(request)`
 Export data or snapshots. `pickle` remains the canonical persisted export format.
-
----
-
-## Transitional Compatibility Layer
-
-Some detailed methods still exist on the facade for migration compatibility.
-Examples include `register_compartment`, `build_watbal_spatial_gdf`,
-`build_effective_rainfall_gdf`, `build_aq_spatial_gdf`,
-`build_aquifer_outcropping`, `render_sim_obs_pdf`, and
-`render_sim_obs_interactive`.
-
-These methods are not the architectural target. They are wrappers retained to
-bridge legacy callers until all frontend workflows consume only the macro methods
-listed above.
 
 ---
 

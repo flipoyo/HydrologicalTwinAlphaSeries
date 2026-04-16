@@ -1,4 +1,4 @@
-from HydrologicalTwinAlphaSeries import ConfigGeometry, ConfigProject, HydrologicalTwin, Manage
+from HydrologicalTwinAlphaSeries import ConfigGeometry, ConfigProject, HydrologicalTwin
 
 
 def test_hydrological_twin_can_be_constructed(tmp_path):
@@ -40,5 +40,5 @@ def test_hydrological_twin_can_be_constructed(tmp_path):
     )
 
     assert twin.out_caw_directory == config_project.cawOutDirectory
-    assert isinstance(twin.temporal, Manage.Temporal)
+    assert twin.temporal.__class__.__name__ == "Temporal"
     assert twin.list_compartments() == []
