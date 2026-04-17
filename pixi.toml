@@ -2,7 +2,7 @@
 authors = [
     "Nicolas Flipo",
     "Simone Mazzarelli",
-    "Lise-Marie Girod",
+    "HydrologicalTwinAlphaSeries contributors",
 ]
 channels = ["conda-forge"]
 name = "HydrologicalTwinAlphaSeries"

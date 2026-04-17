@@ -1,28 +1,3 @@
-# /***************************************************************************
-# CaWaQSViz
-#
-# Description
-# -------------------
-# begin				: 2023
-# git sha				: $Format:%H$
-# copyright			: (C) 2023 by Lise-Marie GIROD
-# email				: lise-marie.girod@minesparis.psl.eu
-# ***************************************************************************/
-#
-# /***************************************************************************
-# *																		    *
-# *   This program is free software; you can redistribute it and/or modify  *
-# *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software Foundation; either version 2 of the License, or	    *
-# *   any later version.								    				*
-# *																		    *
-# ***************************************************************************/
-#   BREF
-#
-#   CaWaQS mesh class (QGIS-independent, uses GeoDataFrames)
-#
-# ***************************************************************************/
-
 import os
 from typing import Dict, List
 
