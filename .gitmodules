@@ -1,3 +1,4 @@
 [submodule "docs/hydrological_twin"]
 	path = docs/hydrological_twin
-	url = https://github.com/flipoyo/hydrological_twin
+	url = git@github.com:flipoyo/hydrological_twin
+	branch = main
