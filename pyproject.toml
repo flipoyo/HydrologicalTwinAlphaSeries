@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "HydrologicalTwinAlphaSeries"
-version = "000.alpha.13"
+version = "000.alpha.14"
 description = "Standalone backend package for the CaWaQS alpha-series hydrological twin workflows."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "EPL-2.0"
 authors = [
     { name = "Nicolas Flipo" },
@@ -39,7 +39,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
