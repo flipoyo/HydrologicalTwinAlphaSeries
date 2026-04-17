@@ -7,7 +7,7 @@ authors = [
 channels = ["conda-forge"]
 name = "HydrologicalTwinAlphaSeries"
 platforms = ["linux-64"]
-version = "000.alpha.13"
+version = "000.alpha.14"
 
 [tasks]
 run = "python -m HydrologicalTwinAlphaSeries"
