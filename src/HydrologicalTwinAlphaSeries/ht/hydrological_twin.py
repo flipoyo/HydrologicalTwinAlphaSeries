@@ -5,7 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+import pandas as pd
 import numpy as np
+import geopandas as gpd
 
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 from HydrologicalTwinAlphaSeries.config.constants import module_caw, obs_config, paramRecs
