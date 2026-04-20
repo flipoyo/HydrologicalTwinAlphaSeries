@@ -729,6 +729,11 @@ class HydrologicalTwin(HTPersistenceMixin):
             request = arr
             arr = None
         if request is None:
+            # Allow 'data' to be passed via kwargs (e.g. from frontend callers)
+            if arr is None and "data" in kwargs:
+                arr = kwargs.pop("data")
+            if dates is None and "dates" in kwargs:
+                dates = kwargs.pop("dates")
             request = TransformRequest(
                 kind=kind,
                 data=arr,
