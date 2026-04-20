@@ -1045,9 +1045,9 @@ class HydrologicalTwin(HTPersistenceMixin):
                 ylabel=request.ylabel,
                 df_other_variable=request.df_other_variable,
                 other_variable_config=request.other_variable_config,
-                outFilePath=request.out_file_path,
-                critstart=request.crit_start,
-                critend=request.crit_end,
+                out_file_path=request.out_file_path,
+                crit_start=request.crit_start,
+                crit_end=request.crit_end,
                 aggr=request.aggr,
             )
         elif resolved_kind == "aq_flux_diagram":
@@ -2027,9 +2027,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         ylabel: str,
         df_other_variable: pd.DataFrame = None,
         other_variable_config: dict = None,
-        outFilePath: str = None,
-        critstart: str = None,
-        critend: str = None,
+        out_file_path: str = None,
+        crit_start: str = None,
+        crit_end: str = None,
         aggr: Union[None, float, str] = None,
     ) -> List[str]:
         """Read sim+obs data and render interactive Plotly figure.
@@ -2053,8 +2053,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             aggr=aggr,
             compute_criteria=True,
             criteria_metrics=interactive_criteria_metrics,
-            crit_start=critstart,
-            crit_end=critend,
+            crit_start=crit_start,
+            crit_end=crit_end,
             obs_unit=obs_unit,
         )
 
@@ -2078,9 +2078,9 @@ class HydrologicalTwin(HTPersistenceMixin):
             ylabel=ylabel,
             df_other_variable=df_other_variable,
             other_variable_config=other_variable_config,
-            out_file_path=outFilePath,
-            crit_start=critstart,
-            crit_end=critend,
+            out_file_path=out_file_path,
+            crit_start=crit_start,
+            crit_end=crit_end,
             criteria_per_point=criteria_per_point,
         )
 
