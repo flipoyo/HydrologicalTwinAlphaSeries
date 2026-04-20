@@ -9,10 +9,9 @@ from HydrologicalTwinAlphaSeries.ht.api_types import (
     DescribeRequest,
     ExportRequest,
     ExportResult,
-    ExtractRequest,
-    ExtractValuesResponse,
     FacadeDescription,
     FacadeMethod,
+    FetchRequest,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
@@ -29,6 +28,7 @@ from HydrologicalTwinAlphaSeries.ht.api_types import (
     TwinCatalog,
     TwinDescription,
     TwinState,
+    ValuesResponse,
 )
 from HydrologicalTwinAlphaSeries.ht.hydrological_twin import HydrologicalTwin
 
@@ -43,10 +43,9 @@ __all__ = [
     "DescribeRequest",
     "ExportRequest",
     "ExportResult",
-    "ExtractRequest",
-    "ExtractValuesResponse",
     "FacadeDescription",
     "FacadeMethod",
+    "FetchRequest",
     "HydrologicalTwin",
     "HydrologicalRegimeResponse",
     "InvalidStateError",
@@ -64,4 +63,5 @@ __all__ = [
     "TwinCatalog",
     "TwinDescription",
     "TwinState",
+    "ValuesResponse",
 ]

@@ -157,7 +157,7 @@ class TestInvalidStateTransitions:
         with pytest.raises(InvalidStateError, match="LOADED"):
             twin.describe()
 
-    def test_extract_before_load_raises(self, tmp_path):
+    def test_fetch_before_load_raises(self, tmp_path):
         twin = HydrologicalTwin(
             config_geom=_make_config_geom(),
             config_proj=_make_config_proj(tmp_path),
@@ -165,7 +165,7 @@ class TestInvalidStateTransitions:
             obs_directory=str(tmp_path / "obs"),
         )
         with pytest.raises(InvalidStateError):
-            twin.extract(id_compartment=1, outtype="MB", param="rain", syear=2000, eyear=2001)
+            twin.fetch(id_compartment=1, outtype="MB", param="rain", syear=2000, eyear=2001)
 
     def test_render_before_load_raises(self, tmp_path):
         twin = HydrologicalTwin(

@@ -7,7 +7,7 @@ For `cawaqsviz`, the target surface is limited to:
 - `configure`
 - `load`
 - `describe`
-- `extract`
+- `fetch`
 - `transform`
 - `render`
 - `export`
@@ -28,7 +28,7 @@ such as `Compartment`, `Mesh`, `Observation`, or `Extraction` directly.
 | `configure` | EMPTY | CONFIGURED | Attach project and geometry configuration |
 | `load` | CONFIGURED | LOADED | Build and register project compartments |
 | `describe` | LOADED | (unchanged) | Return the frontend catalog and twin metadata |
-| `extract` | LOADED | (unchanged) | Extract workflow payloads through typed requests |
+| `fetch` | LOADED | (unchanged) | Fetch workflow payloads through typed requests |
 | `transform` | LOADED | (unchanged) | Compute aggregations, criteria, budgets, regimes, runoff ratio, and AQ balances |
 | `render` | LOADED | (unchanged) | Produce final artefacts such as reports, plots, and AQ balance diagrams |
 | `export` | LOADED | (unchanged) | Export twin snapshots or derived outputs |
@@ -47,7 +47,7 @@ Accept a public project-load request and build compartments internally.
 Return the frontend catalog: compartments, layers, observations, units, supported
 workflow kinds, and available outputs.
 
-### `extract(request)`
+### `fetch(request)`
 Return workflow payloads through stable kinds. Current kinds include:
 
 - `simulation_matrix`

@@ -57,7 +57,7 @@ The facade exposes only high-level macro-capabilities:
 | `configure`             | Set project and geometry configuration           |
 | `load`                  | Register compartments in bulk                    |
 | `describe`              | Return twin metadata and the frontend catalog    |
-| `extract`               | Extract workflow payloads through typed requests |
+| `fetch`                 | Fetch workflow payloads through typed requests  |
 | `transform`             | Compute workflow transformations                 |
 | `render`                | Produce final visualization/report artefacts     |
 | `export`                | Export data to files (CSV, pickle, GeoDataFrame) |
@@ -96,7 +96,7 @@ Invalid call sequences raise `InvalidStateError`.
 - No direct numerical logic inside the façade.
 - No direct file I/O inside the façade (delegated to services).
 - External consumers must not build `Compartment` aggregates or call `services/` directly.
-- Frontend integration must target only `configure`, `load`, `describe`, `extract`, `transform`, `render`, and `export`.
+- Frontend integration must target only `configure`, `load`, `describe`, `fetch`, `transform`, `render`, and `export`.
 
 ---
 

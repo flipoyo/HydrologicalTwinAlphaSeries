@@ -36,7 +36,7 @@ MINIMUM_STATE: Dict[str, TwinState] = {
     "configure": TwinState.EMPTY,
     "load": TwinState.CONFIGURED,
     "describe": TwinState.LOADED,
-    "extract": TwinState.LOADED,
+    "fetch": TwinState.LOADED,
     "transform": TwinState.LOADED,
     "render": TwinState.LOADED,
     "export": TwinState.LOADED,
@@ -77,7 +77,7 @@ class DescribeRequest:
 
 
 @dataclass
-class ExtractRequest:
+class FetchRequest:
     kind: str = "simulation_matrix"
     id_compartment: Optional[int] = None
     outtype: Optional[str] = None
@@ -199,7 +199,7 @@ class ExportRequest:
 
 
 @dataclass
-class ExtractValuesResponse:
+class ValuesResponse:
     data: np.ndarray
     dates: np.ndarray
     meta: Optional[Dict[str, Any]] = None
