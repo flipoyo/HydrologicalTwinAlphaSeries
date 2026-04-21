@@ -101,7 +101,6 @@ class FetchRequest:
     layers: Optional[List[Any]] = None
     layer_names: Optional[List[str]] = None
     layer_id_offset: int = 0
-    outcropping_cell_ids: Optional[np.ndarray] = None
     save_directory: Optional[str] = None
     obs_geometry: Any = None
     network_gdf: Any = None

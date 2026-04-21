@@ -55,7 +55,7 @@ Return workflow payloads through stable kinds. Current kinds include:
 - `sim_obs_bundle`
 - `spatial_map`
 - `catchment_cells`
-- `aquifer_outcropping`
+- `aquifer_outcropping_map`
 - `aq_balance_inputs`
 
 ### `transform(request)`
