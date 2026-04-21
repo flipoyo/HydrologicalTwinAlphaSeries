@@ -107,6 +107,24 @@ It is the computational foundation of a hydrological twin system, currently unde
 
 ---
 
+## Getting Started
+
+After cloning the repository, run:
+
+```bash
+pixi install
+pixi run dev-setup
+```
+
+`pixi install` resolves the environment. `pixi run dev-setup` activates the
+pre-commit git hook, which runs [ruff](https://docs.astral.sh/ruff/) on staged
+files before each commit, auto-fixing what it can. This catches the same
+linting issues enforced by CI, one step earlier.
+
+The `dev-setup` step is required only once per clone.
+
+---
+
 ## Developer Workflow
 
 CaWaQS-ViZ (frontend, GitLab) consumes HydrologicalTwinAlphaSeries (backend, GitHub)
