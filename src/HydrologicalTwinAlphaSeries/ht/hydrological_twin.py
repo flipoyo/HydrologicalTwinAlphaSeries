@@ -306,7 +306,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 "sim_obs_bundle",
                 "spatial_map",
                 "catchment_cells",
-                "aquifer_outcropping",
+                "aquifer_outcropping_map",
                 "aq_balance_inputs",
             ],
             transform_kinds=[
@@ -633,7 +633,6 @@ class HydrologicalTwin(HTPersistenceMixin):
                     frequency=frequency_label,
                     pluriannual=request.pluriannual,
                     layer_id_offset=request.layer_id_offset,
-                    outcropping_cell_ids=request.outcropping_cell_ids,
                 )
 
             return SpatialMapResponse(
@@ -659,14 +658,36 @@ class HydrologicalTwin(HTPersistenceMixin):
                 meta={"id_compartment": request.id_compartment, "kind": request.kind},
             )
 
-        if request.kind == "aquifer_outcropping":
+        if request.kind == "aquifer_outcropping_map":
+            frequency_label = self._normalize_frequency(request.frequency, target="long")
             cell_ids = self._build_aquifer_outcropping(
                 id_compartment=request.id_compartment,
                 save_directory=request.save_directory,
             )
-            return CellSelectionResponse(
-                cell_ids=list(cell_ids),
-                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            gdf = self._build_aq_spatial_gdf(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+                layers=self.get_all_layers(request.id_compartment),
+                agg=request.agg or "mean",
+                frequency=frequency_label,
+                pluriannual=request.pluriannual,
+                layer_id_offset=request.layer_id_offset,
+                outcropping_cell_ids=cell_ids,
+            )
+            return SpatialMapResponse(
+                gdf=gdf,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "param": request.param,
+                    "frequency": frequency_label,
+                    "agg": request.agg,
+                    "resolution": "outcropping",
+                },
             )
 
         if request.kind == "aq_balance_inputs":
@@ -729,6 +750,11 @@ class HydrologicalTwin(HTPersistenceMixin):
             request = arr
             arr = None
         if request is None:
+            # Allow 'data' to be passed via kwargs (e.g. from frontend callers)
+            if arr is None and "data" in kwargs:
+                arr = kwargs.pop("data")
+            if dates is None and "dates" in kwargs:
+                dates = kwargs.pop("dates")
             request = TransformRequest(
                 kind=kind,
                 data=arr,
@@ -1040,9 +1066,9 @@ class HydrologicalTwin(HTPersistenceMixin):
                 ylabel=request.ylabel,
                 df_other_variable=request.df_other_variable,
                 other_variable_config=request.other_variable_config,
-                outFilePath=request.out_file_path,
-                critstart=request.crit_start,
-                critend=request.crit_end,
+                out_file_path=request.out_file_path,
+                crit_start=request.crit_start,
+                crit_end=request.crit_end,
                 aggr=request.aggr,
             )
         elif resolved_kind == "aq_flux_diagram":
@@ -2022,9 +2048,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         ylabel: str,
         df_other_variable: pd.DataFrame = None,
         other_variable_config: dict = None,
-        outFilePath: str = None,
-        critstart: str = None,
-        critend: str = None,
+        out_file_path: str = None,
+        crit_start: str = None,
+        crit_end: str = None,
         aggr: Union[None, float, str] = None,
     ) -> List[str]:
         """Read sim+obs data and render interactive Plotly figure.
@@ -2048,8 +2074,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             aggr=aggr,
             compute_criteria=True,
             criteria_metrics=interactive_criteria_metrics,
-            crit_start=critstart,
-            crit_end=critend,
+            crit_start=crit_start,
+            crit_end=crit_end,
             obs_unit=obs_unit,
         )
 
@@ -2073,9 +2099,9 @@ class HydrologicalTwin(HTPersistenceMixin):
             ylabel=ylabel,
             df_other_variable=df_other_variable,
             other_variable_config=other_variable_config,
-            out_file_path=outFilePath,
-            crit_start=critstart,
-            crit_end=critend,
+            out_file_path=out_file_path,
+            crit_start=crit_start,
+            crit_end=crit_end,
             criteria_per_point=criteria_per_point,
         )
 
