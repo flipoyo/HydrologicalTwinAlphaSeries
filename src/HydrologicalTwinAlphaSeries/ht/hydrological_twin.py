@@ -31,8 +31,7 @@ from .api_types import (
     DescribeRequest,
     ExportRequest,
     ExportResult,
-    ExtractRequest,
-    ExtractValuesResponse,
+    FetchRequest,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
@@ -53,6 +52,7 @@ from .api_types import (
     TwinCatalog,
     TwinDescription,
     TwinState,
+    ValuesResponse,
 )
 from .persistence import HTPersistenceMixin
 
@@ -397,7 +397,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     def _resolve_layer_infos(
         self,
         id_compartment: int,
-        request: ExtractRequest,
+        request: FetchRequest,
     ) -> List[LayerInfo]:
         if request.layers is not None:
             return request.layers
@@ -502,24 +502,24 @@ class HydrologicalTwin(HTPersistenceMixin):
         )
 
 
-    def extract(
+    def fetch(
         self,
         id_compartment: Optional[int] = None,
         outtype: Optional[str] = None,
         param: Optional[str] = None,
         syear: Optional[int] = None,
         eyear: Optional[int] = None,
-        request: Optional[ExtractRequest] = None,
+        request: Optional[FetchRequest] = None,
         kind: str = "simulation_matrix",
         **kwargs: Any,
     ) -> Any:
-        """Extract frontend-ready workflow payloads via the canonical macro API."""
-        self._require_state("extract")
-        if isinstance(id_compartment, ExtractRequest) and request is None:
+        """Fetch frontend-ready workflow payloads via the canonical macro API."""
+        self._require_state("fetch")
+        if isinstance(id_compartment, FetchRequest) and request is None:
             request = id_compartment
             id_compartment = None
         if request is None:
-            request = ExtractRequest(
+            request = FetchRequest(
                 kind=kind,
                 id_compartment=id_compartment,
                 outtype=outtype,
@@ -534,7 +534,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         if request.kind == "simulation_matrix":
             if request.target_unit and request.outtype == "MB":
-                return self.extract_watbal_for_map(
+                return self.read_watbal_converted(
                     id_compartment=request.id_compartment,
                     outtype=request.outtype,
                     param=request.param,
@@ -545,7 +545,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                     id_layer=request.id_layer,
                     target_unit=request.target_unit,
                 )
-            return self.extract_values(
+            return self.read_values(
                 id_compartment=request.id_compartment,
                 outtype=request.outtype,
                 param=request.param,
@@ -708,7 +708,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             dates = None
             for label in selected:
                 backend_param = alias_to_param.get(label, label)
-                response = self.extract_values(
+                response = self.read_values(
                     id_compartment=request.id_compartment,
                     outtype=request.outtype or "MB",
                     param=backend_param,
@@ -844,8 +844,8 @@ class HydrologicalTwin(HTPersistenceMixin):
         if request.kind == "budget":
             data = request.data
             if data is None:
-                extracted = self.extract(
-                    request=ExtractRequest(
+                extracted = self.fetch(
+                    request=FetchRequest(
                         kind="simulation_matrix",
                         id_compartment=request.id_compartment,
                         outtype="MB",
@@ -882,8 +882,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             data = request.data
             dates = request.dates
             if data is None or dates is None:
-                extracted = self.extract(
-                    request=ExtractRequest(
+                extracted = self.fetch(
+                    request=FetchRequest(
                         kind="simulation_matrix",
                         id_compartment=request.id_compartment,
                         outtype=request.outtype or "Q",
@@ -1194,7 +1194,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             mesh_ids=[p.id_mesh for p in obs.obs_points],
         )
 
-    def extract_values(
+    def read_values(
         self,
         id_compartment: int,
         outtype: str,
@@ -1204,7 +1204,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         id_layer: int = 0,
         cutsdate: Optional[str] = None,
         cutedate: Optional[str] = None,
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract simulated values for a given variable and period (NumPy version)."""
 
         comp = self.get_compartment(id_compartment)
@@ -1244,7 +1244,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             sim_matrix = sim_matrix[:, mask]
             dates = dates[mask]
 
-        return ExtractValuesResponse(
+        return ValuesResponse(
             data=sim_matrix,
             dates=dates,
             meta={
@@ -1407,7 +1407,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> dict:
         """Load sim+obs and build per-point NumPy arrays for rendering.
 
-        Combines extract_values + read_observations with per-point slicing.
+        Combines read_values + read_observations with per-point slicing.
         Both render_sim_obs_pdf and render_sim_obs_interactive use this method.
 
         Parameters
@@ -1418,7 +1418,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         simsdate, simedate : int
             Start/end years of simulation.
         plotstart, plotend : str, optional
-            Date strings for sim temporal slicing via extract_values.
+            Date strings for sim temporal slicing via read_values.
         id_layer : int
             Layer ID (default 0).
         aggr : None, float, or str, optional
@@ -1457,7 +1457,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                     context="observations vs mesh spatial linkage",
                 )
 
-        sim_response = self.extract_values(
+        sim_response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -1574,7 +1574,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             'ext_points': ext_points_data,
         }
 
-    def extract_watbal_for_map(
+    def read_watbal_converted(
         self,
         id_compartment: int,
         outtype: str,
@@ -1585,13 +1585,13 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: str = None,
         id_layer: int = 0,
         target_unit: str = 'mm/j',
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract watbal values with vectorized unit conversion.
 
-        Combines extract_values + Operator.convert_watbal_units.
-        Returns ExtractValuesResponse with converted data.
+        Combines read_values + Operator.convert_watbal_units.
+        Returns ValuesResponse with converted data.
         """
-        response = self.extract_values(
+        response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -1673,12 +1673,12 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract, aggregate, and assemble a WATBAL spatial map GeoDataFrame.
 
-        Composes: extract_watbal_for_map → aggregate_for_map → assemble_single_layer_geodataframe.
+        Composes: read_watbal_converted → aggregate_for_map → assemble_single_layer_geodataframe.
         """
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
-        response = self.extract_watbal_for_map(
+        response = self.read_watbal_converted(
             id_compartment=id_compartment, outtype=outtype, param=param,
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
@@ -1713,19 +1713,19 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract rain & ETR, compute effective rainfall, aggregate, assemble GeoDataFrame.
 
-        Composes: extract_watbal_for_map (×2) → compute_effective_rainfall
+        Composes: read_watbal_converted (×2) → compute_effective_rainfall
                   → aggregate_for_map → assemble_single_layer_geodataframe.
         """
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
-        rain = self.extract_watbal_for_map(
+        rain = self.read_watbal_converted(
             id_compartment=id_compartment, outtype="MB", param="rain",
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
             id_layer=id_layer, target_unit="mm/j",
         )
-        etr = self.extract_watbal_for_map(
+        etr = self.read_watbal_converted(
             id_compartment=id_compartment, outtype="MB", param="etr",
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
@@ -1766,7 +1766,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract, aggregate, and assemble an AQ spatial map GeoDataFrame.
 
-        Composes: extract_values → aggregate_for_map → assemble_multi_layer_geodataframe.
+        Composes: read_values → aggregate_for_map → assemble_multi_layer_geodataframe.
 
         :param layers: list of LayerInfo objects (single layer or all layers)
         :param layer_id_offset: starting layer ID (0 for MB, 1 for H)
@@ -1774,7 +1774,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         """
         comp_info = self.get_compartment_info(id_compartment)
 
-        response = self.extract_values(
+        response = self.read_values(
             id_compartment=id_compartment, outtype=outtype, param=param,
             syear=syear, eyear=eyear,
             id_layer=-9999,
@@ -2191,7 +2191,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp = self.get_compartment(id_compartment)
         return comp.obs is not None
 
-    def extract_area_values(
+    def extract_area(
         self,
         id_compartment: int,
         outtype: str,
@@ -2205,7 +2205,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: Optional[str] = None,
         output_csv_path: Optional[Union[str, Path]] = None,
         **operator_kwargs: Any,
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract simulated values for specific cells (area subset).
 
         Target layer: L2 — Data Layer
@@ -2215,8 +2215,8 @@ class HydrologicalTwin(HTPersistenceMixin):
         2. **Spatial operator**: Provide spatial_operator name to auto-identify cells
 
         Typical workflows:
-        - Manual: data = twin.extract_area_values(cell_ids=[1,2,3], ...)
-        - Catchment: data = twin.extract_area_values(
+        - Manual: data = twin.extract_area(cell_ids=[1,2,3], ...)
+        - Catchment: data = twin.extract_area(
                          spatial_operator='catchment_cells',
                          obs_point=pt, network_gis_layer=layer, ...)
         - Then analyze: agg = twin.apply_temporal_operator(data.data, ...)
@@ -2259,13 +2259,13 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Returns
         -------
-        ExtractValuesResponse
+        ValuesResponse
             Contains data for only the specified/identified cells
 
         Examples
         --------
         Manual cell selection:
-            >>> data = twin.extract_area_values(
+            >>> data = twin.extract_area(
             ...     id_compartment=0,
             ...     cell_ids=np.array([103, 245, 567]),
             ...     outtype='MB',
@@ -2275,7 +2275,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             ... )
 
         Catchment-based extraction:
-            >>> data = twin.extract_area_values(
+            >>> data = twin.extract_area(
             ...     id_compartment=0,
             ...     spatial_operator='catchment_cells',
             ...     obs_point=observation_point,
@@ -2292,7 +2292,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp = self.get_compartment(id_compartment)
 
         # First, extract all cells
-        full_response = self.extract_values(
+        full_response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -2305,7 +2305,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         # Subset to requested cells using Extractor
         # Support both manual cell_ids and spatial_operator modes
-        subset_data = Extractor().extract_spatial(
+        subset_data = Extractor().apply_spatial_mask(
             data=full_response.data,
             cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
             compartment=comp,
@@ -2357,7 +2357,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         elif cell_ids is not None:
             meta["cell_ids"] = cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids
 
-        return ExtractValuesResponse(
+        return ValuesResponse(
             data=subset_data,
             dates=full_response.dates,
             csv_path=csv_path,
