@@ -306,7 +306,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 "sim_obs_bundle",
                 "spatial_map",
                 "catchment_cells",
-                "aquifer_outcropping",
+                "aquifer_outcropping_map",
                 "aq_balance_inputs",
             ],
             transform_kinds=[
@@ -633,7 +633,6 @@ class HydrologicalTwin(HTPersistenceMixin):
                     frequency=frequency_label,
                     pluriannual=request.pluriannual,
                     layer_id_offset=request.layer_id_offset,
-                    outcropping_cell_ids=request.outcropping_cell_ids,
                 )
 
             return SpatialMapResponse(
@@ -659,14 +658,36 @@ class HydrologicalTwin(HTPersistenceMixin):
                 meta={"id_compartment": request.id_compartment, "kind": request.kind},
             )
 
-        if request.kind == "aquifer_outcropping":
+        if request.kind == "aquifer_outcropping_map":
+            frequency_label = self._normalize_frequency(request.frequency, target="long")
             cell_ids = self._build_aquifer_outcropping(
                 id_compartment=request.id_compartment,
                 save_directory=request.save_directory,
             )
-            return CellSelectionResponse(
-                cell_ids=list(cell_ids),
-                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            gdf = self._build_aq_spatial_gdf(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+                layers=self.get_all_layers(request.id_compartment),
+                agg=request.agg or "mean",
+                frequency=frequency_label,
+                pluriannual=request.pluriannual,
+                layer_id_offset=request.layer_id_offset,
+                outcropping_cell_ids=cell_ids,
+            )
+            return SpatialMapResponse(
+                gdf=gdf,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "param": request.param,
+                    "frequency": frequency_label,
+                    "agg": request.agg,
+                    "resolution": "outcropping",
+                },
             )
 
         if request.kind == "aq_balance_inputs":
