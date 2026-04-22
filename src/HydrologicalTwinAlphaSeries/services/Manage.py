@@ -3,7 +3,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from os import sep
-from typing import Union
+from typing import List, Union
 
 import geopandas as gpd
 import numpy as np
@@ -20,18 +20,13 @@ from HydrologicalTwinAlphaSeries.config.constants import (
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import combine_geometries, get_nearest_row
 
-# Import simobs
-"""
-simsobs_path = os.environ.get("simobs")
-if simsobs_path :
-    try :
-        sys.path.append(simsobs_path)
-        from simobs import Mod_Station, Mod_Piezo
 
-    except ImportError as e :
-        print(f"Importation erreur : verifie environnement path of simobs")
-"""
+class CacheMissError(FileNotFoundError):
+    """Raised when ``load_from_cache`` cannot find the expected ``.npy`` file.
 
+    Indicates a programmer error: ``fetch`` was called without a prior
+    ``HydrologicalTwin.load()`` that materialised the on-disk cache.
+    """
 
 class Manage:
     class Budget:
@@ -451,234 +446,206 @@ class Manage:
 
             return simMatrix
 
-        def checkTempFile(self, temp_dir, compartment, outtype, param) -> Union[tuple[int, int, str], None]:
-                # list all numpy file in temp directory
-                pattern = re.compile(rf"{compartment.compartment}_{outtype}_(\d{{8}})_{param}.npy")
-                
-
-                for filename in os.listdir(temp_dir):
-                    if filename.endswith(".npy"):
-                        match = pattern.search(filename)
-                        if match:
-                            dates = match.group(1) 
-
-                            return int(dates[:4]), int(dates[4:]), filename
-                
-                else : 
-                    print("No temporary file found")
-                    return None
-
-        def readSimData(
+        def readSimDataFromBinSteady(
             self,
-            compartment:Compartment,
-            outtype:str,
-            param:str,
-            id_layer,
-            syear:int,
-            eyear:int,
-            list_surf=[],
-            list_point=None,
-            tempDirectory=None,
-        )->np.array:
+            compartment: Compartment,
+            outtype: str,
+            syear: int,
+            eyear: int,
+        ) -> np.ndarray:
+            """Read a steady-state CaWaQS ``.00.bin`` file into shape
+            ``(nparams, ncells, total_ndays)``. The daily axis broadcasts the
+            single steady snapshot across every simulated day.
+            """
+            outfolder_path = compartment.out_caw_path
+            outFileName = (
+                outfolder_path
+                + sep
+                + compartment.compartment
+                + "_"
+                + outtype
+                + ".00"
+                + ".bin"
+            )
+            ncells = compartment.mesh.ncells
+            nparams = nbRecs[compartment.compartment + "_" + outtype]
+            total_ndays = (
+                datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
+                - datetime.strptime(f"{syear}-07-31", "%Y-%m-%d")
+            ).days - 1
 
+            dtype = np.dtype(
+                [
+                    ("begin", np.int32),
+                    ("values", np.float64, (ncells,)),
+                    ("end", np.int32),
+                ]
+            )
+            data = np.fromfile(outFileName, dtype=dtype)
 
-            if compartment.regime == 'Transient':
-                stime = time.time()
-                
-                end = datetime(eyear, 7, 31)
-                start = datetime(syear, 8, 1)
-                total_ndays = (end - start).days - 1
+            # Steady outputs hold a single daily snapshot that is broadcast
+            # across the whole simulation period.
+            daily_values = data["values"][:nparams]  # (nparams, ncells)
+            simMatrix = np.broadcast_to(
+                daily_values[:, :, np.newaxis],
+                (nparams, ncells, total_ndays),
+            ).copy()
+            return simMatrix
 
-                print(f"Simulated period count {total_ndays} days")
-                
-                check_temp_file = self.checkTempFile(
-                    tempDirectory,
-                    compartment, 
-                    outtype, 
-                    param
-                    )
+        @staticmethod
+        def _cache_filename(
+            compartment: Compartment,
+            outtype: str,
+            param: str,
+            syear: int,
+            eyear: int,
+        ) -> str:
+            """Canonical cache filename for a single-parameter ``.npy``."""
+            if compartment.regime == "Steady":
+                return (
+                    f"{compartment.compartment}_{outtype}_STEADY_{param}.npy"
+                )
+            return (
+                f"{compartment.compartment}_{outtype}_{syear}{eyear}_{param}.npy"
+            )
 
-                if check_temp_file is not None :
-                    start_temp_year , end_temp_year, temp_file_name = check_temp_file
-                    temp_file_path = os.path.join(tempDirectory, temp_file_name)
+        @staticmethod
+        def _stale_cache_files(
+            temp_directory: str,
+            compartment: Compartment,
+            outtype: str,
+            params: List[str],
+            syear: int,
+            eyear: int,
+        ) -> List[str]:
+            """Return cache files for this (compartment, outtype) whose encoded
+            period does not match (syear, eyear). Only relevant for transient
+            projects — steady filenames carry no period.
+            """
+            if compartment.regime == "Steady":
+                return []
+            if not os.path.isdir(temp_directory):
+                return []
+            expected = {
+                Manage.Temporal._cache_filename(
+                    compartment, outtype, param, syear, eyear
+                )
+                for param in params
+            }
+            prefix = f"{compartment.compartment}_{outtype}_"
+            stale: List[str] = []
+            for filename in os.listdir(temp_directory):
+                if not filename.endswith(".npy"):
+                    continue
+                if not filename.startswith(prefix):
+                    continue
+                if filename in expected:
+                    continue
+                # filenames shaped "{comp}_{outtype}_{syear}{eyear}_{param}.npy"
+                # for some other period belong to the same (compartment, outtype)
+                # and must be evicted.
+                if re.fullmatch(
+                    rf"{re.escape(prefix)}\d{{8}}_.+\.npy", filename
+                ):
+                    stale.append(filename)
+            return stale
 
-                    print(
-                        f"Sim Matrix has already been read. Get it form .npy file : {temp_file_path}"
-                    )
-                    try :
-                        simMatrix = np.load(temp_file_path)
-                        etime = time.time()
-                        print(f"READING SIM DATA : {etime - stime} seconds")
+        def decode_and_cache(
+            self,
+            compartment: Compartment,
+            outtype: str,
+            syear: int,
+            eyear: int,
+            temp_directory: str,
+        ) -> None:
+            """Ensure an on-disk ``.npy`` cache exists for every parameter of
+            ``(compartment, outtype)`` covering the period ``(syear, eyear)``.
 
-                    
-                    except Exception: 
-                        os.remove(temp_file_path)
-                        print(f"File {temp_file_path} has been removed because of an error, try to read from binary files")
+            If the full cache is already present, returns without reading any
+            binaries. If one or more parameter files are missing, or if stale
+            files from a different period exist, the binaries are decoded once
+            and one ``.npy`` per parameter is written. Stale files are deleted
+            before decoding.
+            """
+            params = paramRecs[compartment.compartment + "_" + outtype]
+            os.makedirs(temp_directory, exist_ok=True)
 
-                    if syear < start_temp_year :
-                        simMatrixBefore = self.readSimDataFromBin(
-                            compartment, outtype, syear, start_temp_year
-                        )
-                        simMatrixBefore = simMatrixBefore[
-                            paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]
+            expected_paths = [
+                os.path.join(
+                    temp_directory,
+                    self._cache_filename(compartment, outtype, param, syear, eyear),
+                )
+                for param in params
+            ]
+            if all(os.path.exists(path) for path in expected_paths):
+                return
 
-                    if eyear > end_temp_year : 
-                        simMatrixAfter = self.readSimDataFromBin(
-                            compartment, outtype, end_temp_year, eyear
-                        )      
-                        simMatrixAfter = simMatrixAfter[
-                            paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]              
+            for stale in self._stale_cache_files(
+                temp_directory, compartment, outtype, params, syear, eyear
+            ):
+                stale_path = os.path.join(temp_directory, stale)
+                try:
+                    os.remove(stale_path)
+                    print(f"Evicted stale cache file : {stale_path}")
+                except OSError:
+                    pass
 
-                    # concatenate simMatrix
-                    if syear < start_temp_year and eyear > end_temp_year :
-                        simMatrix = np.hstack((simMatrixBefore, simMatrix, simMatrixAfter))
-                        ys = syear
-                        ye = eyear
-                        os.remove(temp_file_path)
-                        temp_file_name = f"{compartment.compartment}_{outtype}_{ys}{ye}_{param}.npy"
-                        temp_file_path = os.path.join(tempDirectory, temp_file_name)
-                        np.save(temp_file_path, simMatrix)
-
-
-                    elif syear < start_temp_year and eyear <= end_temp_year :
-                        simMatrix = np.hstack((simMatrixBefore, simMatrix))
-                        ys = syear
-                        ye = end_temp_year
-                        os.remove(temp_file_path)
-                        temp_file_name = f"{compartment.compartment}_{outtype}_{ys}{ye}_{param}.npy"
-                        temp_file_path = os.path.join(tempDirectory, temp_file_name)
-                        np.save(temp_file_path, simMatrix)
-
-
-                    elif syear >= start_temp_year and eyear > end_temp_year :
-                        simMatrix = np.hstack((simMatrix, simMatrixAfter))
-                        ys = start_temp_year
-                        ye = eyear
-                        os.remove(temp_file_path)
-                        temp_file_name = f"{compartment.compartment}_{outtype}_{ys}{ye}_{param}.npy"
-                        temp_file_path = os.path.join(tempDirectory, temp_file_name)
-                        np.save(temp_file_path, simMatrix)
-                                  
-                    return simMatrix
-
-                if check_temp_file is None :
-                    
-                    simMatrix = self.readSimDataFromBin(
-                        compartment, outtype, syear, eyear
-                    )
-                    
-                    for id_p, para in enumerate(
-                        paramRecs[compartment.compartment + "_" + outtype]
-                    ):
-                        temp_file_path = (
-                            tempDirectory
-                            + sep
-                            + compartment.compartment
-                            + "_"
-                            + outtype
-                            + "_"
-                            + str(syear)
-                            + str(eyear)
-                            + "_"
-                            + para
-                            + ".npy"
-                        )
-                        if not os.path.exists(temp_file_path):
-                            np.save(temp_file_path, simMatrix[id_p])
-                            print(f"Saved sim data in : {temp_file_path}")
-
-                    return simMatrix[
-                        paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]
-            
-
-
-            elif compartment.regime == 'Steady' : 
-                stime = time.time()
-                dtype = dtype = np.dtype(
-                        [
-                            ("begin", np.int32),
-                            ("values", np.float64, (50468,)),
-                            ("end", np.int32),
-                        ]
-                    )
-                
-                temp_file_path = (
-                    tempDirectory
-                    + sep
-                    + compartment.compartment
-                    + "_"
-                    + outtype
-                    + "_STEADY_"
-                    + param
-                    + ".npy"
+            stime = time.time()
+            if compartment.regime == "Transient":
+                simMatrix = self.readSimDataFromBin(
+                    compartment, outtype, syear, eyear
+                )
+            elif compartment.regime == "Steady":
+                simMatrix = self.readSimDataFromBinSteady(
+                    compartment, outtype, syear, eyear
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported regime '{compartment.regime}' for "
+                    f"compartment {compartment.compartment}."
                 )
 
+            for id_p, para in enumerate(params):
+                target = os.path.join(
+                    temp_directory,
+                    self._cache_filename(compartment, outtype, para, syear, eyear),
+                )
+                if not os.path.exists(target):
+                    np.save(target, simMatrix[id_p])
+                    print(f"Cached sim data : {target}")
 
-                if os.path.exists(temp_file_path) : 
-                    simMatrix = np.load(temp_file_path)
-                    etime = time.time()
-                    print(f"READING SIM DATA : {etime - stime} seconds")
+            print(f"DECODE AND CACHE : {time.time() - stime:.2f} seconds")
 
-                    return simMatrix
-                
-                else : 
-                    outfolder_path = compartment.out_caw_path
-                    outFileName = (
-                            outfolder_path
-                            + sep
-                            + compartment.compartment
-                            + "_"
-                            + outtype
-                            + ".00"
-                            + ".bin"
-                        )
-                    ncells = compartment.mesh.ncells
-                    nparams = nbRecs[compartment.compartment + "_" + outtype]
-                    total_ndays = (
-                        datetime.strptime(f"{eyear}-08-01", "%Y-%m-%d")
-                        - datetime.strptime(f"{syear}-07-31", "%Y-%m-%d")
-                        ).days - 1
-                    
+        def load_from_cache(
+            self,
+            compartment: Compartment,
+            outtype: str,
+            param: str,
+            syear: int,
+            eyear: int,
+            temp_directory: str,
+        ) -> np.ndarray:
+            """Load a single-parameter array from the on-disk cache.
 
-                    data = np.fromfile(outFileName, dtype=dtype)
-                    simMatrix = np.empty(
-                                (nparams, ncells, total_ndays), 
-                                dtype=np.float64
-                                )
-                    for nparam in range(nparams):
-                        for day in range(total_ndays) : 
-                            for n_cell in range(ncells) : 
-                                simMatrix[nparam, n_cell, day] = data['values'][nparam][n_cell]
-                                
-                                
-                    
-                                
-                    etime = time.time()
-                    print(f"READING SIM DATA : {etime - stime} seconds")
-                    print('Sim matrix has been save in TEMP folder')
-                    
-                    for id_p, para in enumerate(
-                        paramRecs[compartment.compartment + "_" + outtype]
-                    ):
-                        temp_file_path = (
-                            tempDirectory
-                            + sep
-                            + compartment.compartment
-                            + "_"
-                            + outtype
-                            + "_STEADY_"
-                            + param
-                            + ".npy"
-                        )
-                        if not os.path.exists(temp_file_path):
-                            np.save(temp_file_path, simMatrix[id_p])
-                            print(f"Saved sim data in : {temp_file_path}")
-                    return simMatrix[
-                        paramRecs[compartment.compartment + "_" + outtype].index(param)
-                        ]
+            Raises ``CacheMissError`` if the expected file is absent. A cache
+            miss here means ``HydrologicalTwin.load()`` did not run for this
+            ``(compartment, outtype)`` — it is a programmer error, not a
+            user-facing condition.
+            """
+            filename = self._cache_filename(
+                compartment, outtype, param, syear, eyear
+            )
+            path = os.path.join(temp_directory, filename)
+            if not os.path.exists(path):
+                raise CacheMissError(
+                    f"No cache for ({compartment.compartment}, {outtype}, "
+                    f"{param}, {syear}-{eyear}) at {path}. "
+                    "Did HydrologicalTwin.load() run?"
+                )
+            stime = time.time()
+            simMatrix = np.load(path)
+            print(f"LOAD FROM CACHE : {time.time() - stime:.2f} seconds ({filename})")
+            return simMatrix
 
         def readObsData(
             self,

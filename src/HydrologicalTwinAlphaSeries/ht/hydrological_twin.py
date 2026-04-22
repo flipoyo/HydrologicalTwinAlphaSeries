@@ -478,6 +478,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         self._require_state("load")
         self.compartments = self._build_compartments(request)
+        self._ensure_disk_cache()
         self._transition_to(TwinState.LOADED)
 
     def describe(
@@ -1209,15 +1210,14 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         comp = self.get_compartment(id_compartment)
 
-        # Read simulation data (returns NumPy array)
-        sim_matrix = self.temporal.readSimData(
+        # Read simulation data from the on-disk cache populated by load().
+        sim_matrix = self.temporal.load_from_cache(
             compartment=comp,
             outtype=outtype,
             param=param,
-            id_layer=id_layer,
             syear=syear,
             eyear=eyear,
-            tempDirectory=self.temp_directory,
+            temp_directory=self.temp_directory or "",
         )
 
 
@@ -1351,6 +1351,50 @@ class HydrologicalTwin(HTPersistenceMixin):
             cutsdate=cutsdate,
             cutedate=cutedate,
         )
+
+    def _ensure_disk_cache(self) -> None:
+        """Materialise the on-disk ``.npy`` cache for every compartment and
+        outtype declared by the project configuration.
+
+        For each ``(compartment, outtype)`` whose CaWaQS ``.bin`` file exists,
+        delegates to ``Manage.Temporal.decode_and_cache`` which is a no-op when
+        the cache is already present and covers the configured period.
+        """
+        if self.config_proj is None:
+            return
+        syear = int(self.config_proj.startSim)
+        eyear = int(self.config_proj.endsim)
+        temp_directory = self.temp_directory or self.out_caw_directory or ""
+        if not temp_directory:
+            return
+
+        for comp in self.compartments.values():
+            prefix = f"{comp.compartment}_"
+            for key, params in paramRecs.items():
+                if not key.startswith(prefix):
+                    continue
+                if not params:
+                    continue
+                outtype = key.split("_", 1)[1]
+                if comp.regime == "Transient":
+                    bin_file = os.path.join(
+                        comp.out_caw_path,
+                        f"{comp.compartment}_{outtype}.{syear}{syear + 1}.bin",
+                    )
+                else:
+                    bin_file = os.path.join(
+                        comp.out_caw_path,
+                        f"{comp.compartment}_{outtype}.00.bin",
+                    )
+                if not os.path.exists(bin_file):
+                    continue
+                self.temporal.decode_and_cache(
+                    compartment=comp,
+                    outtype=outtype,
+                    syear=syear,
+                    eyear=eyear,
+                    temp_directory=temp_directory,
+                )
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L3 — ESTIMATION LAYER  (comparison, filtering, inference)   ║
