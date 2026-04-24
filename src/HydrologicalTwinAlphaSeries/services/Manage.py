@@ -8,6 +8,7 @@ from typing import Union
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely.strtree import STRtree
 
 # plotly.offline.init_notebook_mode()
 # display(HTML(
@@ -18,7 +19,7 @@ from HydrologicalTwinAlphaSeries.config.constants import (
     paramRecs,
 )
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import combine_geometries, get_nearest_row
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import get_nearest_row
 
 # Import simobs
 """
@@ -1192,27 +1193,21 @@ class Manage:
             savepath = os.path.join(exd.post_process_directory, "TEMP", "OUTPCROOPCELLSLIST.dat")
 
             print("\tBuilding outcropping cells")
-            def checkLayerContainsCell(point, polygone):
-                return polygone.contains(point)
 
             mesh = aq_compartment.mesh.mesh
             outcropCells = list(mesh[0].layer)  # Make a copy
-            print(outcropCells)
 
             for n_layer, layer in zip(mesh.keys(), mesh.values()):
                 count = 0
 
                 if n_layer != 0:
-                    # Use shapely unary_union via spatial_utils
-                    outcropCells_geom = combine_geometries(
-                        [out_cell.geometry for out_cell in outcropCells]
-                    )
+                    # STRtree (Shapely 2.x) replaces a unary_union+contains check:
+                    # the union of thousands of polygons dominated runtime, while
+                    # a spatial index answers "is this centroid covered?" in O(log N).
+                    tree = STRtree([out_cell.geometry for out_cell in outcropCells])
 
                     for cell in layer.layer:
-                        # shapely geometry uses .centroid property
-                        if not checkLayerContainsCell(
-                            cell.geometry.centroid, outcropCells_geom
-                        ):
+                        if tree.query(cell.geometry.centroid, predicate="contains").size == 0:
                             outcropCells.append(cell)
                             count += 1
 
