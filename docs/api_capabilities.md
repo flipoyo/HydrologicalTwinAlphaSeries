@@ -38,10 +38,17 @@ such as `Compartment`, `Mesh`, `Observation`, or `Extraction` directly.
 ## Macro Intents
 
 ### `configure(request)`
-Attach project-level and geometry configuration.
+Attach project-level and geometry configuration. No I/O is performed.
 
 ### `load(request)`
-Accept a public project-load request and build compartments internally.
+Accept a public project-load request, build compartments internally, and
+materialise the on-disk simulation cache. For every `(compartment, outtype)`
+whose CaWaQS binary output is present, `load` ensures a `.npy` cache file
+exists for each parameter covering the configured `(startSim, endSim)`
+period. Files already present and matching the period are left untouched;
+stale files from a different period are evicted and re-decoded. After `load`
+returns, the twin is in the `LOADED` state and every `fetch(kind=
+"simulation_matrix", …)` call is a pure cache read.
 
 ### `describe(request)`
 Return the frontend catalog: compartments, layers, observations, units, supported
@@ -50,7 +57,9 @@ workflow kinds, and available outputs.
 ### `fetch(request)`
 Return workflow payloads through stable kinds. Current kinds include:
 
-- `simulation_matrix`
+- `simulation_matrix` — requires the on-disk cache materialised by `load`.
+  Raises `CacheMissError` if the cache is missing (programmer error:
+  `fetch` called without `load`).
 - `observations`
 - `sim_obs_bundle`
 - `spatial_map`
