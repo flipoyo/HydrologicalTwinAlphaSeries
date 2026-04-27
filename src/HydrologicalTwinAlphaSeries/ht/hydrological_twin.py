@@ -37,6 +37,7 @@ from .api_types import (
     LayerCatalog,
     LayerInfo,
     LoadRequest,
+    MaskRequest,
     ObservationCatalog,
     ObservationInfo,
     ObservationsResponse,
@@ -733,6 +734,39 @@ class HydrologicalTwin(HTPersistenceMixin):
             )
 
         raise ValueError(f"Unknown extract kind: {request.kind!r}")
+
+    def mask(
+        self,
+        id_compartment: Optional[int] = None,
+        polygon: Any = None,
+        request: Optional[MaskRequest] = None,
+        kind: str = "polygon_cells",
+        **kwargs: Any,
+    ) -> Any:
+        """Polygon-mask-driven extraction macro.
+
+        Dispatches on ``kind`` to spatial-mask workflows: cell selection
+        inside a polygon, sim-data restricted to that selection, and
+        boundary geometries (HYD reaches / AQ cell edges) on the
+        polygon's perimeter. See the ``twin-mask-macro`` spec for the
+        full kind catalogue.
+        """
+        self._require_state("mask")
+        if isinstance(id_compartment, MaskRequest) and request is None:
+            request = id_compartment
+            id_compartment = None
+        if request is None:
+            request = MaskRequest(
+                kind=kind,
+                id_compartment=id_compartment,
+                polygon=polygon,
+                **kwargs,
+            )
+        elif kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+
+        raise ValueError(f"Unknown mask kind: {request.kind!r}")
 
     def transform(
         self,

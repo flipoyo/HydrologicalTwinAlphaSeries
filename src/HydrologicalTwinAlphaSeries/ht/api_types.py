@@ -37,6 +37,7 @@ MINIMUM_STATE: Dict[str, TwinState] = {
     "load": TwinState.CONFIGURED,
     "describe": TwinState.LOADED,
     "fetch": TwinState.LOADED,
+    "mask": TwinState.LOADED,
     "transform": TwinState.LOADED,
     "render": TwinState.LOADED,
     "export": TwinState.LOADED,
@@ -110,6 +111,21 @@ class FetchRequest:
     output_csv_path: Optional[str] = None
     cell_ids: Optional[List[int]] = None
     variables: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MaskRequest:
+    kind: str = "polygon_cells"
+    id_compartment: Optional[int] = None
+    outtype: Optional[str] = None
+    param: Optional[str] = None
+    syear: Optional[int] = None
+    eyear: Optional[int] = None
+    id_layer: int = 0
+    cutsdate: Optional[str] = None
+    cutedate: Optional[str] = None
+    polygon: Any = None
+    cell_ids: Optional[List[int]] = None
 
 
 @dataclass
