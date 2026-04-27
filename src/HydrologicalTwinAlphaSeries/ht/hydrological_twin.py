@@ -766,6 +766,48 @@ class HydrologicalTwin(HTPersistenceMixin):
             unexpected = ", ".join(sorted(kwargs))
             raise TypeError(f"Unexpected keyword arguments: {unexpected}")
 
+        if request.kind == "area_values":
+            if request.cell_ids is not None and request.polygon is not None:
+                raise ValueError(
+                    "mask(kind='area_values') accepts either 'cell_ids' or "
+                    "'polygon', not both."
+                )
+            if request.cell_ids is None and request.polygon is None:
+                raise ValueError(
+                    "mask(kind='area_values') requires either 'cell_ids' or "
+                    "'polygon' to identify the cell subset."
+                )
+            missing = [
+                name
+                for name in ("id_compartment", "outtype", "param", "syear", "eyear")
+                if getattr(request, name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"mask(kind='area_values') requires non-None values for: {', '.join(missing)}."
+                )
+            if request.polygon is not None:
+                raise NotImplementedError(
+                    "mask(kind='area_values') with polygon requires "
+                    "cells_in_polygon — land S2+S3 first."
+                )
+            assert request.id_compartment is not None
+            assert request.outtype is not None
+            assert request.param is not None
+            assert request.syear is not None
+            assert request.eyear is not None
+            return self.extract_area(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cell_ids=np.asarray(request.cell_ids),
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
         raise ValueError(f"Unknown mask kind: {request.kind!r}")
 
     def transform(
