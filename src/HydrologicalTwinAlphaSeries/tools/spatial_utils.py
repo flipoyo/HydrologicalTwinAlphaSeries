@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import geopandas as gpd
 import numpy as np
@@ -270,3 +270,70 @@ def reproject_to_match(
     if gdf.crs == target_crs:
         return gdf
     return gdf.to_crs(target_crs)
+
+
+# ---------------------------------------------------------------------------
+# Polygon-mask geometric helpers
+#
+# Pure functions consumed by HydrologicalTwin.mask() and reusable
+# standalone (no twin instance required). See the
+# ``polygon-geometry-ops`` capability spec.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_id_col(gdf: gpd.GeoDataFrame, id_col: Optional[Union[str, int]]) -> Optional[str]:
+    """Resolve ``id_col`` to a column name, or None to mean 'use the index'."""
+    if id_col is None:
+        return None
+    if isinstance(id_col, int):
+        return gdf.columns[id_col]
+    return id_col
+
+
+def _polygon_components(polygon: Any) -> List[Any]:
+    """Return the constituent Polygons of ``polygon`` (single Polygon or MultiPolygon)."""
+    if isinstance(polygon, shapely.MultiPolygon):
+        return list(polygon.geoms)
+    return [polygon]
+
+
+def cells_in_polygon(
+    mesh_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Optional[Union[str, int]] = None,
+) -> List[Any]:
+    """Return the ids of mesh cells whose centroid lies inside ``polygon``.
+
+    Containment uses ``polygon.contains(centroid)``, which naturally treats
+    interior rings (holes) as outside — so a cell whose centroid falls inside
+    a hole is excluded. ``MultiPolygon`` inputs are handled by iterating
+    their components and unioning the matches.
+
+    A Shapely STRtree on cell centroids prefilters candidates by the
+    polygon's bounding box, keeping the helper fast on large meshes
+    (tested up to ~14 000 cells).
+
+    :param mesh_gdf: GeoDataFrame of mesh cells (polygon geometries)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read cell ids from.
+        ``None`` (default) returns the GeoDataFrame's index values.
+    :return: List of cell ids inside the polygon, in mesh-row order.
+    """
+    if mesh_gdf.empty:
+        return []
+
+    centroids = mesh_gdf.geometry.centroid
+    tree = shapely.STRtree(list(centroids.values))
+
+    matched_positions: set = set()
+    for component in _polygon_components(polygon):
+        candidate_positions = tree.query(component, predicate="intersects")
+        for pos in candidate_positions:
+            if component.contains(centroids.iloc[int(pos)]):
+                matched_positions.add(int(pos))
+
+    sorted_positions = sorted(matched_positions)
+    col_name = _resolve_id_col(mesh_gdf, id_col)
+    if col_name is None:
+        return [mesh_gdf.index[p] for p in sorted_positions]
+    return [mesh_gdf.iloc[p][col_name] for p in sorted_positions]
