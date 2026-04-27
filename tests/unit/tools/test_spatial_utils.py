@@ -32,15 +32,6 @@ def test_cells_in_polygon_returns_known_subset():
     assert sorted(result) == [0, 1, 3, 4]
 
 
-def test_cells_in_polygon_uses_index_when_id_col_none():
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(0.1, 0.1, 1.9, 1.9)
-
-    result = cells_in_polygon(mesh, polygon)
-
-    assert sorted(result) == [0, 1, 3, 4]
-
-
 def test_cells_in_polygon_id_col_as_integer_position():
     mesh = _grid_mesh(nx=3, ny=3)
     polygon = box(0.1, 0.1, 1.9, 1.9)
