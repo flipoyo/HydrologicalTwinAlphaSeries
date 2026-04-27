@@ -113,7 +113,7 @@ class FetchRequest:
     variables: List[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
+@dataclass
 class MaskRequest:
     kind: str = "polygon_cells"
     id_compartment: Optional[int] = None

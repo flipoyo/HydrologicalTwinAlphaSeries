@@ -733,7 +733,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 },
             )
 
-        raise ValueError(f"Unknown extract kind: {request.kind!r}")
+        raise ValueError(f"Unknown fetch kind: {request.kind!r}")
 
     def mask(
         self,
