@@ -3,10 +3,11 @@
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import box
+from shapely.geometry import LineString, box
 
 from HydrologicalTwinAlphaSeries.ht import (
     CellSelectionResponse,
+    HydBoundaryResponse,
     HydrologicalTwin,
     MaskRequest,
     ValuesResponse,
@@ -231,3 +232,87 @@ def test_mask_area_values_with_polygon_crs_mismatch_raises(monkeypatch):
 
     with pytest.raises(CRSMismatchError):
         twin.mask(**_area_values_kwargs(polygon=polygon, polygon_crs="EPSG:4326"))
+
+
+# ---------------------------------------------------------------------------
+# S5 — kind="boundary_hyd" + HydBoundaryResponse
+# ---------------------------------------------------------------------------
+
+
+def _hyd_network(reaches: dict, *, crs="EPSG:3857") -> gpd.GeoDataFrame:
+    """Build a HYD network GeoDataFrame from a {reach_id: LineString} dict."""
+    return gpd.GeoDataFrame(
+        {"reach_id": list(reaches.keys())},
+        geometry=list(reaches.values()),
+        crs=crs,
+    )
+
+
+def test_mask_boundary_hyd_returns_hyd_boundary_response(monkeypatch):
+    network = _hyd_network(
+        {
+            1: LineString([(2.0, 5.0), (8.0, 5.0)]),  # wholly inside (0..10 box)
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # straddles boundary
+            3: LineString([(20.0, 5.0), (30.0, 5.0)]),  # wholly outside
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    response = twin.mask(kind="boundary_hyd", id_compartment=1, polygon=polygon)
+
+    assert isinstance(response, HydBoundaryResponse)
+    assert response.reach_ids == [2]
+    assert len(response.geometries) == 1
+    assert list(response.geometries[0].coords) == [(5.0, 5.0), (15.0, 5.0)]
+    assert response.meta["id_compartment"] == 1
+    assert response.meta["kind"] == "boundary_hyd"
+
+
+def test_mask_boundary_hyd_missing_id_compartment_raises(monkeypatch):
+    network = _hyd_network({1: LineString([(0.0, 0.0), (1.0, 0.0)])})
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    with pytest.raises(ValueError, match="requires both 'id_compartment' and 'polygon'"):
+        twin.mask(kind="boundary_hyd", polygon=polygon)
+
+
+def test_mask_boundary_hyd_missing_polygon_raises(monkeypatch):
+    network = _hyd_network({1: LineString([(0.0, 0.0), (1.0, 0.0)])})
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+
+    with pytest.raises(ValueError, match="requires both 'id_compartment' and 'polygon'"):
+        twin.mask(kind="boundary_hyd", id_compartment=1)
+
+
+def test_mask_boundary_hyd_crs_mismatch_raises(monkeypatch):
+    network = _hyd_network(
+        {1: LineString([(2.0, 5.0), (15.0, 5.0)])}, crs="EPSG:3857"
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    with pytest.raises(CRSMismatchError):
+        twin.mask(
+            kind="boundary_hyd",
+            id_compartment=1,
+            polygon=polygon,
+            polygon_crs="EPSG:4326",
+        )
+
+
+def test_mask_boundary_hyd_no_boundary_reaches_returns_empty(monkeypatch):
+    network = _hyd_network(
+        {
+            1: LineString([(2.0, 5.0), (8.0, 5.0)]),  # wholly inside
+            2: LineString([(20.0, 5.0), (30.0, 5.0)]),  # wholly outside
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    response = twin.mask(kind="boundary_hyd", id_compartment=1, polygon=polygon)
+
+    assert response.reach_ids == []
+    assert response.geometries == []

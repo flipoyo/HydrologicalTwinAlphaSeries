@@ -276,6 +276,13 @@ class CellSelectionResponse:
 
 
 @dataclass
+class HydBoundaryResponse:
+    reach_ids: List[Any] = field(default_factory=list)
+    geometries: List[Any] = field(default_factory=list)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class BudgetComputationResponse:
     data: np.ndarray
     date_labels: np.ndarray

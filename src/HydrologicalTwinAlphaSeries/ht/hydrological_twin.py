@@ -17,6 +17,7 @@ from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     cells_in_polygon,
+    reaches_on_polygon_boundary,
     verify_crs_match,
 )
 
@@ -35,6 +36,7 @@ from .api_types import (
     ExportRequest,
     ExportResult,
     FetchRequest,
+    HydBoundaryResponse,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
@@ -832,6 +834,31 @@ class HydrologicalTwin(HTPersistenceMixin):
             cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
             return CellSelectionResponse(
                 cell_ids=list(cell_ids),
+                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            )
+
+        if request.kind == "boundary_hyd":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd') requires both 'id_compartment' and 'polygon'."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            reach_ids = reaches_on_polygon_boundary(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            id_col_name = (
+                network_gdf.columns[id_col] if isinstance(id_col, int) else id_col
+            )
+            boundary_rows = network_gdf[network_gdf[id_col_name].isin(reach_ids)]
+            return HydBoundaryResponse(
+                reach_ids=list(reach_ids),
+                geometries=list(boundary_rows.geometry),
                 meta={"id_compartment": request.id_compartment, "kind": request.kind},
             )
 
