@@ -6,6 +6,7 @@ import pytest
 from shapely.geometry import LineString, box
 
 from HydrologicalTwinAlphaSeries.ht import (
+    AqBoundaryResponse,
     CellSelectionResponse,
     HydBoundaryResponse,
     HydrologicalTwin,
@@ -316,3 +317,89 @@ def test_mask_boundary_hyd_no_boundary_reaches_returns_empty(monkeypatch):
 
     assert response.reach_ids == []
     assert response.geometries == []
+
+
+# ---------------------------------------------------------------------------
+# S7 — kind="boundary_aq" + AqBoundaryResponse
+# ---------------------------------------------------------------------------
+
+
+def test_mask_boundary_aq_returns_aq_boundary_response(monkeypatch):
+    """3x1 strip; polygon covers only middle cell — its 2 outside neighbours give 2 boundary edges."""
+    mesh = _grid_mesh(nx=3, ny=1)
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only cell 1's centroid
+
+    response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
+
+    assert isinstance(response, AqBoundaryResponse)
+    assert sorted(response.cell_ids) == [1, 1]
+    assert len(response.edge_geometries) == 2
+    assert all(edge.geom_type == "LineString" for edge in response.edge_geometries)
+    assert response.meta["id_compartment"] == 2
+    assert response.meta["id_layer"] == 0
+    assert response.meta["kind"] == "boundary_aq"
+
+
+def test_mask_boundary_aq_passes_id_layer_through(monkeypatch):
+    """id_layer reaches _resolve_mesh_gdf and ends up in the response meta."""
+    mesh = _grid_mesh(nx=3, ny=1)
+    captured_layers = []
+
+    def fake_resolve_mesh_gdf(id_compartment, id_layer=0):
+        captured_layers.append(id_layer)
+        return mesh
+
+    twin = _twin_in_loaded_state()
+    monkeypatch.setattr(twin, "_resolve_mesh_gdf", fake_resolve_mesh_gdf)
+    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_a, **_kw: "cell_id")
+    polygon = box(1.1, 0.1, 1.9, 0.9)
+
+    response = twin.mask(
+        kind="boundary_aq", id_compartment=2, polygon=polygon, id_layer=3
+    )
+
+    assert captured_layers == [3]
+    assert response.meta["id_layer"] == 3
+
+
+def test_mask_boundary_aq_missing_id_compartment_raises(monkeypatch):
+    mesh = _grid_mesh(nx=3, ny=1)
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(1.1, 0.1, 1.9, 0.9)
+
+    with pytest.raises(ValueError, match="requires both 'id_compartment' and 'polygon'"):
+        twin.mask(kind="boundary_aq", polygon=polygon)
+
+
+def test_mask_boundary_aq_missing_polygon_raises(monkeypatch):
+    mesh = _grid_mesh(nx=3, ny=1)
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+
+    with pytest.raises(ValueError, match="requires both 'id_compartment' and 'polygon'"):
+        twin.mask(kind="boundary_aq", id_compartment=2)
+
+
+def test_mask_boundary_aq_crs_mismatch_raises(monkeypatch):
+    mesh = _grid_mesh(nx=3, ny=1, crs="EPSG:3857")
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(1.1, 0.1, 1.9, 0.9)
+
+    with pytest.raises(CRSMismatchError):
+        twin.mask(
+            kind="boundary_aq",
+            id_compartment=2,
+            polygon=polygon,
+            polygon_crs="EPSG:4326",
+        )
+
+
+def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):
+    mesh = _grid_mesh(nx=3, ny=1)
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(100.0, 100.0, 200.0, 200.0)
+
+    response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
+
+    assert response.cell_ids == []
+    assert response.edge_geometries == []

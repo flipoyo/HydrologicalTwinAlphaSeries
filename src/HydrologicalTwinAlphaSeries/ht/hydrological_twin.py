@@ -16,6 +16,7 @@ from HydrologicalTwinAlphaSeries.services.Manage import Manage
 from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    aq_cells_on_polygon_boundary,
     cells_in_polygon,
     reaches_on_polygon_boundary,
     verify_crs_match,
@@ -24,6 +25,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
@@ -860,6 +862,31 @@ class HydrologicalTwin(HTPersistenceMixin):
                 reach_ids=list(reach_ids),
                 geometries=list(boundary_rows.geometry),
                 meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            )
+
+        if request.kind == "boundary_aq":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq') requires both 'id_compartment' and 'polygon'."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids, edge_geometries = aq_cells_on_polygon_boundary(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            return AqBoundaryResponse(
+                cell_ids=list(cell_ids),
+                edge_geometries=list(edge_geometries),
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer": request.id_layer,
+                    "kind": request.kind,
+                },
             )
 
         raise ValueError(f"Unknown mask kind: {request.kind!r}")

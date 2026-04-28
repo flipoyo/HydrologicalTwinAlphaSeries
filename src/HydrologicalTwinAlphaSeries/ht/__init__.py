@@ -1,4 +1,5 @@
 from HydrologicalTwinAlphaSeries.ht.api_types import (
+    AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
@@ -35,6 +36,7 @@ from HydrologicalTwinAlphaSeries.ht.api_types import (
 from HydrologicalTwinAlphaSeries.ht.hydrological_twin import HydrologicalTwin
 
 __all__ = [
+    "AqBoundaryResponse",
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
     "BudgetComputationResponse",

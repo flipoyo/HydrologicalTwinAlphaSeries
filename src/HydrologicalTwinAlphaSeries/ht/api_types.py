@@ -283,6 +283,13 @@ class HydBoundaryResponse:
 
 
 @dataclass
+class AqBoundaryResponse:
+    cell_ids: List[Any] = field(default_factory=list)
+    edge_geometries: List[Any] = field(default_factory=list)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class BudgetComputationResponse:
     data: np.ndarray
     date_labels: np.ndarray
