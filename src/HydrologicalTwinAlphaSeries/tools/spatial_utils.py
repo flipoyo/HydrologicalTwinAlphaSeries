@@ -332,3 +332,69 @@ def cells_in_polygon(
     sorted_positions = sorted(matched_positions)
     col_name = _resolve_id_col(mesh_gdf, id_col)
     return [mesh_gdf.iloc[p][col_name] for p in sorted_positions]
+
+
+def _reach_endpoints(geom: Any) -> tuple:
+    """Return the two extreme endpoints (start, end) of a reach geometry.
+
+    For a ``LineString`` these are the first and last coordinates. For a
+    ``MultiLineString`` we take the start of the first sub-line and the end
+    of the last sub-line — i.e. the chained reach's two extreme endpoints.
+    Caller-side: this is intentional for the boundary-XOR test, where what
+    matters is whether the reach as a whole straddles the polygon, not
+    whether each segment does.
+    """
+    if isinstance(geom, shapely.MultiLineString):
+        sublines = list(geom.geoms)
+        start = shapely.Point(sublines[0].coords[0])
+        end = shapely.Point(sublines[-1].coords[-1])
+        return start, end
+    coords = list(geom.coords)
+    return shapely.Point(coords[0]), shapely.Point(coords[-1])
+
+
+def reaches_on_polygon_boundary(
+    network_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Union[str, int],
+) -> List[Any]:
+    """Return reach ids whose two endpoints straddle the polygon.
+
+    A reach is on the boundary IFF exactly one of its endpoints lies inside
+    ``polygon`` and the other lies outside (XOR of ``polygon.contains``
+    over the two endpoints). ``polygon.contains`` naturally treats interior
+    rings as outside, so a reach with one endpoint inside a hole and the
+    other in the polygon's filled area still qualifies as a boundary reach
+    — no separate hole-handling code needed.
+
+    A Shapely STRtree on reach geometries (bounding-box prefilter) is used
+    to prune candidates before the exact endpoint XOR check, keeping the
+    helper performant on large networks.
+
+    :param network_gdf: GeoDataFrame of HYD reaches (LineString / MultiLineString)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read reach ids from.
+    :return: List of reach ids whose endpoints straddle the polygon.
+    """
+    if network_gdf.empty:
+        return []
+
+    geometries = list(network_gdf.geometry.values)
+    tree = shapely.STRtree(geometries)
+    components = _polygon_components(polygon)
+
+    matched_positions: set = set()
+    for component in components:
+        candidate_positions = tree.query(component, predicate="intersects")
+        for pos in candidate_positions:
+            pos_int = int(pos)
+            start, end = _reach_endpoints(geometries[pos_int])
+            # Inside-polygon XOR — true boundary check. We use the FULL
+            # multi-component polygon for containment so a reach is "inside"
+            # if any component contains it; consistent with cells_in_polygon.
+            if polygon.contains(start) ^ polygon.contains(end):
+                matched_positions.add(pos_int)
+
+    sorted_positions = sorted(matched_positions)
+    col_name = _resolve_id_col(network_gdf, id_col)
+    return [network_gdf.iloc[p][col_name] for p in sorted_positions]
