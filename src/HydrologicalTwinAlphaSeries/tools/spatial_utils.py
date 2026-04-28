@@ -398,3 +398,65 @@ def reaches_on_polygon_boundary(
     sorted_positions = sorted(matched_positions)
     col_name = _resolve_id_col(network_gdf, id_col)
     return [network_gdf.iloc[p][col_name] for p in sorted_positions]
+
+
+def aq_cells_on_polygon_boundary(
+    aq_mesh_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Union[str, int],
+) -> tuple:
+    """Return AQ-mesh boundary edges separating inside-polygon cells from outside.
+
+    A boundary edge is a cell edge that connects a cell INSIDE the polygon to
+    a cell OUTSIDE the polygon (topological boundary of the masked AQ region —
+    NOT the geometric intersection with ``polygon.exterior``). "Inside" is
+    determined by centroid containment, same convention as
+    :func:`cells_in_polygon`; ``polygon.contains(centroid)`` treats interior
+    rings as outside, so cells in holes count as outside neighbours and
+    contribute boundary edges as expected.
+
+    Returns a tuple ``(cell_ids, edge_geometries)`` aligned per boundary edge:
+    for each (inside cell, outside cell) adjacency, one entry is appended
+    where ``cell_ids[i]`` is the inside-polygon cell's id and
+    ``edge_geometries[i]`` is the shared-edge geometry. An inside cell with
+    N outside neighbours contributes N entries.
+
+    Adjacency is computed from shared geometry edges via Shapely's
+    ``predicate="touches"`` STRtree query, then filtered to keep only
+    intersections that are LineString / MultiLineString (true edge-sharing,
+    excluding corner-only adjacency).
+
+    :param aq_mesh_gdf: GeoDataFrame of aquifer cells (polygon geometries)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read cell ids from.
+    :return: ``(cell_ids, edge_geometries)`` aligned per boundary edge.
+    """
+    if aq_mesh_gdf.empty:
+        return [], []
+
+    geometries = list(aq_mesh_gdf.geometry.values)
+    centroids = aq_mesh_gdf.geometry.centroid
+    inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
+    inside_positions = {i for i, inside in enumerate(inside_mask) if inside}
+
+    if not inside_positions:
+        return [], []
+
+    tree = shapely.STRtree(geometries)
+    col_name = _resolve_id_col(aq_mesh_gdf, id_col)
+
+    cell_ids_out: List[Any] = []
+    edge_geometries_out: List[Any] = []
+    for inside_pos in sorted(inside_positions):
+        cell_geom = geometries[inside_pos]
+        candidate_positions = tree.query(cell_geom, predicate="touches")
+        for cand_pos in candidate_positions:
+            cand_int = int(cand_pos)
+            if cand_int == inside_pos or cand_int in inside_positions:
+                continue
+            shared = cell_geom.intersection(geometries[cand_int])
+            if shared.geom_type in ("LineString", "MultiLineString"):
+                cell_ids_out.append(aq_mesh_gdf.iloc[inside_pos][col_name])
+                edge_geometries_out.append(shared)
+
+    return cell_ids_out, edge_geometries_out
