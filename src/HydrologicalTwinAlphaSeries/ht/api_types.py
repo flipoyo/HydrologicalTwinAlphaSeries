@@ -125,6 +125,7 @@ class MaskRequest:
     cutsdate: Optional[str] = None
     cutedate: Optional[str] = None
     polygon: Any = None
+    polygon_crs: Any = None
     cell_ids: Optional[List[int]] = None
 
 

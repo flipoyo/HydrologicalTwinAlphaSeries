@@ -15,7 +15,10 @@ from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.Manage import Manage
 from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    cells_in_polygon,
+    verify_crs_match,
+)
 
 from .api_types import (
     ALLOWED_TRANSITIONS,
@@ -786,26 +789,50 @@ class HydrologicalTwin(HTPersistenceMixin):
                 raise ValueError(
                     f"mask(kind='area_values') requires non-None values for: {', '.join(missing)}."
                 )
-            if request.polygon is not None:
-                raise NotImplementedError(
-                    "mask(kind='area_values') with polygon requires "
-                    "cells_in_polygon — land S2+S3 first."
-                )
             assert request.id_compartment is not None
             assert request.outtype is not None
             assert request.param is not None
             assert request.syear is not None
             assert request.eyear is not None
+            if request.polygon is not None:
+                mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                verify_crs_match(
+                    mesh_gdf.crs,
+                    request.polygon_crs,
+                    context="mask(kind='area_values')",
+                )
+                id_col = self._resolve_cell_id_col(request.id_compartment)
+                resolved_cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            else:
+                resolved_cell_ids = list(request.cell_ids or [])
             return self.extract_area(
                 id_compartment=request.id_compartment,
                 outtype=request.outtype,
                 param=request.param,
                 syear=request.syear,
                 eyear=request.eyear,
-                cell_ids=np.asarray(request.cell_ids),
+                cell_ids=np.asarray(resolved_cell_ids),
                 id_layer=request.id_layer,
                 cutsdate=request.cutsdate,
                 cutedate=request.cutedate,
+            )
+
+        if request.kind == "polygon_cells":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='polygon_cells') requires both 'id_compartment' and 'polygon'."
+                )
+            mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='polygon_cells')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            return CellSelectionResponse(
+                cell_ids=list(cell_ids),
+                meta={"id_compartment": request.id_compartment, "kind": request.kind},
             )
 
         raise ValueError(f"Unknown mask kind: {request.kind!r}")
@@ -1199,6 +1226,33 @@ class HydrologicalTwin(HTPersistenceMixin):
                 f"Available: {list(self.compartments.keys())}"
             )
         return self.compartments[id_compartment]
+
+    def _resolve_mesh_gdf(self, id_compartment: int, id_layer: int = 0) -> gpd.GeoDataFrame:
+        """Return the mesh GeoDataFrame for a compartment's layer.
+
+        Used by ``mask()`` kinds that operate on cell geometries.
+        """
+        compartment = self.get_compartment(id_compartment)
+        layer_name = compartment.mesh.layers_gis_name[id_layer]
+        return compartment.mesh.layer_gdfs[layer_name]
+
+    def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
+        """Return the cell-id column (name or integer position) configured for a compartment.
+
+        Reads ``config_geom.idColCells[id_compartment]``. Used by ``mask()``
+        polygon kinds to tell ``cells_in_polygon`` which column carries cell ids.
+        """
+        if self.config_geom is None:
+            raise InvalidStateError(
+                f"Cannot resolve cell-id column for compartment {id_compartment}: "
+                "config_geom is not loaded."
+            )
+        id_col = self.config_geom.idColCells.get(id_compartment)
+        if id_col is None:
+            raise ValueError(
+                f"No cell-id column configured for compartment {id_compartment} in idColCells."
+            )
+        return id_col
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
