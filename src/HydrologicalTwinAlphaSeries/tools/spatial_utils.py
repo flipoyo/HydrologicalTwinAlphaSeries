@@ -86,27 +86,6 @@ class SpatialIndex:
             return None
         return self.gdf.iloc[idx]
 
-    def get_nearest_k_indices(
-        self, point_geom: shapely.Point, k: int = 1
-    ) -> Union[np.ndarray, None]:
-        """
-        Get indices of the k nearest features to a point.
-
-        :param point_geom: Query point geometry
-        :type point_geom: shapely.Point
-        :param k: Number of nearest neighbors
-        :type k: int
-        :return: Array of indices into the GeoDataFrame
-        :rtype: Union[np.ndarray, None]
-        """
-        if self._tree is None:
-            return None
-
-        query_point = np.array([[point_geom.centroid.x, point_geom.centroid.y]])
-        _, indices = self._tree.query(query_point, k=k)
-        return indices
-
-
 # Cache for spatial indices (key: id(gdf))
 _spatial_index_cache: Dict[int, SpatialIndex] = {}
 
@@ -124,11 +103,6 @@ def get_spatial_index(gdf: gpd.GeoDataFrame) -> SpatialIndex:
     if gdf_id not in _spatial_index_cache:
         _spatial_index_cache[gdf_id] = SpatialIndex(gdf)
     return _spatial_index_cache[gdf_id]
-
-
-def clear_spatial_index_cache() -> None:
-    """Clear the spatial index cache."""
-    _spatial_index_cache.clear()
 
 
 def get_nearest_cell(
