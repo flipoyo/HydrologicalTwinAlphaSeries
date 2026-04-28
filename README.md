@@ -148,38 +148,33 @@ one on GitLab (frontend) and one on GitHub (backend).
 
 #### Initial setup (once per coordinated branch)
 
-1. **In `.gitmodules`**, set the tracked branch to the shared branch name:
-
-   ```ini
-   [submodule "external/HydrologicalTwinAlphaSeries"]
-       branch = <branch-name>
-   ```
-
-2. **Pull the backend branch** into the submodule:
+1. **Switch the submodule to the target branch**:
 
    ```bash
-   git submodule update --remote external/HydrologicalTwinAlphaSeries
+   cd external/HydrologicalTwinAlphaSeries
+   git checkout <branch-name>
+   cd -
    ```
 
-3. **Commit the pointer update** in the parent repo so GitLab records the
-   new submodule state:
+2. **After backend edits, commit and push inside the submodule first.**
+   The submodule is its own repository, so its history lives on GitHub
+   independently of the parent repo:
 
    ```bash
-   git add external/HydrologicalTwinAlphaSeries .gitmodules
+   cd external/HydrologicalTwinAlphaSeries
+   git add <files>
+   git commit -m "<backend commit message>"
+   git push origin <branch-name>
+   cd -
+   ```
+
+3. **Then commit the pointer update** in the parent repo so GitLab
+   records the new submodule state:
+
+   ```bash
+   git add external/HydrologicalTwinAlphaSeries
    git commit -m "Track backend branch <branch-name>"
    ```
-
-#### Ongoing synchronization
-
-Every time new commits are pushed to the tracked backend branch on GitHub,
-the parent repo will show a diff on `external/HydrologicalTwinAlphaSeries`.
-To stay in sync:
-
-```bash
-git submodule update --remote external/HydrologicalTwinAlphaSeries
-git add external/HydrologicalTwinAlphaSeries
-git commit -m "Update submodule to latest <branch-name>"
-```
 
 > **Tip:** commit the pointer update frequently. It keeps the frontend
 > aligned with the latest backend and avoids large, hard-to-debug jumps.
