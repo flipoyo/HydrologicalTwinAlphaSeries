@@ -303,6 +303,27 @@ def test_mask_boundary_hyd_crs_mismatch_raises(monkeypatch):
         )
 
 
+def test_mask_boundary_hyd_meta_carries_inflow_outflow_signs(monkeypatch):
+    """Retrofitted boundary_hyd: meta exposes inflow/outflow/signs from the new helper."""
+    network = _hyd_network(
+        {
+            1: LineString([(15.0, 5.0), (5.0, 5.0)]),  # inflow
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # outflow
+            3: LineString([(2.0, 2.0), (8.0, 8.0)]),   # internal
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    response = twin.mask(kind="boundary_hyd", id_compartment=1, polygon=polygon)
+
+    assert response.meta["inflow_ids"] == [1]
+    assert response.meta["outflow_ids"] == [2]
+    assert response.meta["internal_ids"] == [3]
+    assert response.meta["signs"] == {1: +1, 2: -1}
+    assert sorted(response.reach_ids) == [1, 2]
+
+
 def test_mask_boundary_hyd_no_boundary_reaches_returns_empty(monkeypatch):
     network = _hyd_network(
         {

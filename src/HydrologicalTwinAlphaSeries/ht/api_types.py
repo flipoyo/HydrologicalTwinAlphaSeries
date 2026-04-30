@@ -290,6 +290,37 @@ class AqBoundaryResponse:
 
 
 @dataclass
+class HydBoundaryFluxResponse:
+    """Per-boundary-reach signed discharge time series.
+
+    Q is shape (n_boundary_reaches, n_timesteps); rows aligned with
+    reach_ids (sorted ascending). Sign already applied: inflow positive,
+    outflow negative.
+    """
+    reach_ids: List[Any] = field(default_factory=list)
+    signs: Dict[Any, int] = field(default_factory=dict)
+    Q: Optional[np.ndarray] = None
+    dates: Optional[np.ndarray] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class AqBoundaryFluxResponse:
+    """Per-(boundary-cell, face-direction) flux time series.
+
+    fluxes is nested: ``fluxes[cell_id][direction]`` is a 1D ndarray of
+    length n_timesteps. Sign convention follows CaWaQS data (positive =
+    flux entering the cell). Unit conversion (m³/s → m³/d) is left to
+    the caller — the response carries raw m³/s data.
+    """
+    cell_ids: List[Any] = field(default_factory=list)
+    face_directions: Dict[Any, List[str]] = field(default_factory=dict)
+    fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
+    dates: Optional[np.ndarray] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class BudgetComputationResponse:
     data: np.ndarray
     date_labels: np.ndarray

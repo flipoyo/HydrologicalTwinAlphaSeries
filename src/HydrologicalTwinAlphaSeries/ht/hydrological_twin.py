@@ -18,7 +18,7 @@ from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extrac
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
-    reaches_on_polygon_boundary,
+    reaches_inflow_outflow_signs,
     verify_crs_match,
 )
 
@@ -851,17 +851,25 @@ class HydrologicalTwin(HTPersistenceMixin):
                 context="mask(kind='boundary_hyd')",
             )
             id_col = self._resolve_cell_id_col(request.id_compartment)
-            reach_ids = reaches_on_polygon_boundary(
+            classification = reaches_inflow_outflow_signs(
                 network_gdf, request.polygon, id_col=id_col
             )
+            boundary_ids = sorted(classification["boundary_ids"])
             id_col_name = (
                 network_gdf.columns[id_col] if isinstance(id_col, int) else id_col
             )
-            boundary_rows = network_gdf[network_gdf[id_col_name].isin(reach_ids)]
+            boundary_rows = network_gdf[network_gdf[id_col_name].isin(boundary_ids)]
             return HydBoundaryResponse(
-                reach_ids=list(reach_ids),
+                reach_ids=list(boundary_ids),
                 geometries=list(boundary_rows.geometry),
-                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
+                    "signs":          dict(classification["signs"]),
+                },
             )
 
         if request.kind == "boundary_aq":

@@ -1,4 +1,5 @@
 from HydrologicalTwinAlphaSeries.ht.api_types import (
+    AqBoundaryFluxResponse,
     AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
@@ -13,6 +14,7 @@ from HydrologicalTwinAlphaSeries.ht.api_types import (
     FacadeDescription,
     FacadeMethod,
     FetchRequest,
+    HydBoundaryFluxResponse,
     HydBoundaryResponse,
     HydrologicalRegimeResponse,
     InvalidStateError,
@@ -36,6 +38,7 @@ from HydrologicalTwinAlphaSeries.ht.api_types import (
 from HydrologicalTwinAlphaSeries.ht.hydrological_twin import HydrologicalTwin
 
 __all__ = [
+    "AqBoundaryFluxResponse",
     "AqBoundaryResponse",
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
@@ -50,6 +53,7 @@ __all__ = [
     "FacadeDescription",
     "FacadeMethod",
     "FetchRequest",
+    "HydBoundaryFluxResponse",
     "HydBoundaryResponse",
     "HydrologicalTwin",
     "HydrologicalRegimeResponse",
