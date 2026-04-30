@@ -8,6 +8,7 @@ from shapely.geometry import LineString, box
 from HydrologicalTwinAlphaSeries.ht import (
     AqBoundaryResponse,
     CellSelectionResponse,
+    HydBoundaryFluxResponse,
     HydBoundaryResponse,
     HydrologicalTwin,
     MaskRequest,
@@ -424,3 +425,106 @@ def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):
 
     assert response.cell_ids == []
     assert response.edge_geometries == []
+
+
+# ---------------------------------------------------------------------------
+# kind="boundary_hyd_flux"
+# ---------------------------------------------------------------------------
+
+
+def _make_q_response(n_reaches: int, n_timesteps: int = 5) -> ValuesResponse:
+    """Build a ValuesResponse where row i = constant i+1 (so we can read off
+    which reach the dispatcher subset / signed)."""
+    data = np.ones((n_reaches, n_timesteps)) * np.arange(1, n_reaches + 1).reshape(-1, 1)
+    dates = np.arange("2010-08-01", "2010-08-06", dtype="datetime64[D]")
+    return ValuesResponse(data=data, dates=dates)
+
+
+def test_mask_boundary_hyd_flux_subsets_and_applies_signs(monkeypatch):
+    """Reach 1 inflow (+1), reach 2 outflow (-1). Q row i+1 carries value i+1.
+    Expect Q[0]=+1.0 (reach 1 inflow), Q[1]=-2.0 (reach 2 outflow signed)."""
+    network = _hyd_network(
+        {
+            1: LineString([(15.0, 5.0), (5.0, 5.0)]),  # inflow
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # outflow
+            3: LineString([(2.0, 2.0), (8.0, 8.0)]),   # internal — not in boundary set
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=3))
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    response = twin.mask(
+        kind="boundary_hyd_flux",
+        id_compartment=1,
+        polygon=polygon,
+        syear=2010,
+        eyear=2011,
+    )
+
+    assert isinstance(response, HydBoundaryFluxResponse)
+    assert response.reach_ids == [1, 2]
+    assert response.signs == {1: +1, 2: -1}
+    assert response.Q.shape == (2, 5)
+    np.testing.assert_array_equal(response.Q[0], np.full(5, +1.0))   # reach 1 inflow
+    np.testing.assert_array_equal(response.Q[1], np.full(5, -2.0))   # reach 2 outflow signed
+
+
+def test_mask_boundary_hyd_flux_requires_syear_eyear(monkeypatch):
+    network = _hyd_network({1: LineString([(2.0, 5.0), (8.0, 5.0)])})
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    with pytest.raises(ValueError, match="requires 'syear' and 'eyear'"):
+        twin.mask(kind="boundary_hyd_flux", id_compartment=1, polygon=polygon)
+
+
+def test_mask_boundary_hyd_flux_no_boundary_returns_empty(monkeypatch):
+    network = _hyd_network(
+        {
+            1: LineString([(2.0, 5.0), (8.0, 5.0)]),    # internal — both endpoints inside
+            2: LineString([(20.0, 5.0), (30.0, 5.0)]),  # both outside
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=2))
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+
+    response = twin.mask(
+        kind="boundary_hyd_flux",
+        id_compartment=1,
+        polygon=polygon,
+        syear=2010,
+        eyear=2011,
+    )
+
+    assert response.reach_ids == []
+    assert response.Q.shape == (0, 5)
+    assert response.dates is not None and len(response.dates) == 5
+    assert response.meta["internal_ids"] == [1]
+
+
+def test_mask_boundary_hyd_flux_meta_carries_classification(monkeypatch):
+    network = _hyd_network(
+        {
+            1: LineString([(15.0, 5.0), (5.0, 5.0)]),  # inflow
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # outflow
+            3: LineString([(2.0, 2.0), (8.0, 8.0)]),   # internal
+        }
+    )
+    twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
+    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=3))
+
+    response = twin.mask(
+        kind="boundary_hyd_flux",
+        id_compartment=1,
+        polygon=box(0.0, 0.0, 10.0, 10.0),
+        syear=2010,
+        eyear=2011,
+    )
+
+    assert response.meta["inflow_ids"] == [1]
+    assert response.meta["outflow_ids"] == [2]
+    assert response.meta["internal_ids"] == [3]
+    assert response.meta["outtype"] == "Q"
+    assert response.meta["param"] == "discharge"

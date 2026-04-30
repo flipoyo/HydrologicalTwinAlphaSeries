@@ -38,6 +38,7 @@ from .api_types import (
     ExportRequest,
     ExportResult,
     FetchRequest,
+    HydBoundaryFluxResponse,
     HydBoundaryResponse,
     HydrologicalRegimeResponse,
     InvalidStateError,
@@ -869,6 +870,67 @@ class HydrologicalTwin(HTPersistenceMixin):
                     "outflow_ids":    list(classification["outflow_ids"]),
                     "internal_ids":   list(classification["internal_ids"]),
                     "signs":          dict(classification["signs"]),
+                },
+            )
+
+        if request.kind == "boundary_hyd_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires 'syear' and 'eyear' "
+                    "to read the discharge time series."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            classification = reaches_inflow_outflow_signs(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            boundary_ids = sorted(classification["boundary_ids"])
+            signs = {cid: classification["signs"][cid] for cid in boundary_ids}
+
+            q_response = self.read_values(
+                id_compartment=request.id_compartment,
+                outtype="Q",
+                param="discharge",
+                syear=request.syear,
+                eyear=request.eyear,
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
+            if not boundary_ids:
+                Q = np.empty((0, q_response.data.shape[1]))
+            else:
+                Q = np.vstack(
+                    [q_response.data[cid - 1, :] * signs[cid] for cid in boundary_ids]
+                )
+
+            return HydBoundaryFluxResponse(
+                reach_ids=boundary_ids,
+                signs=signs,
+                Q=Q,
+                dates=q_response.dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "Q",
+                    "param":          "discharge",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
                 },
             )
 
