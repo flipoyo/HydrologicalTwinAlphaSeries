@@ -10,12 +10,18 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
-from HydrologicalTwinAlphaSeries.config.constants import module_caw, obs_config, paramRecs
+from HydrologicalTwinAlphaSeries.config.constants import (
+    AQ_FACE_DIRECTIONS,
+    module_caw,
+    obs_config,
+    paramRecs,
+)
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.Manage import Manage
 from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     reaches_inflow_outflow_signs,
@@ -25,6 +31,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AqBoundaryFluxResponse,
     AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
@@ -956,6 +963,71 @@ class HydrologicalTwin(HTPersistenceMixin):
                     "id_compartment": request.id_compartment,
                     "id_layer": request.id_layer,
                     "kind": request.kind,
+                },
+            )
+
+        if request.kind == "boundary_aq_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires 'syear' and 'eyear' "
+                    "to read the face-flux time series."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            boundary_info = aq_cells_boundary_faces(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            boundary_faces = boundary_info["boundary_faces"]
+
+            # Pull the four AQ_MB face-flux params for the requested layer.
+            face_data: Dict[str, np.ndarray] = {}
+            dates: Optional[np.ndarray] = None
+            for direction, param in AQ_FACE_DIRECTIONS.items():
+                resp = self.read_values(
+                    id_compartment=request.id_compartment,
+                    outtype="MB",
+                    param=param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    id_layer=request.id_layer,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                )
+                face_data[direction] = resp.data
+                if dates is None:
+                    dates = resp.dates
+
+            # Build nested {cell_id: {direction: 1D ndarray}} for boundary cells only.
+            fluxes: Dict[Any, Dict[str, np.ndarray]] = {}
+            for cell_id, directions in boundary_faces.items():
+                fluxes[cell_id] = {
+                    direction: face_data[direction][cell_id - 1, :]
+                    for direction in directions
+                }
+
+            return AqBoundaryFluxResponse(
+                cell_ids=sorted(boundary_faces.keys()),
+                face_directions={cid: list(d) for cid, d in boundary_faces.items()},
+                fluxes=fluxes,
+                dates=dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "MB",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "interior_ids":   list(boundary_info["interior_ids"]),
                 },
             )
 

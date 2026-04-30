@@ -6,6 +6,7 @@ import pytest
 from shapely.geometry import LineString, box
 
 from HydrologicalTwinAlphaSeries.ht import (
+    AqBoundaryFluxResponse,
     AqBoundaryResponse,
     CellSelectionResponse,
     HydBoundaryFluxResponse,
@@ -528,3 +529,104 @@ def test_mask_boundary_hyd_flux_meta_carries_classification(monkeypatch):
     assert response.meta["internal_ids"] == [3]
     assert response.meta["outtype"] == "Q"
     assert response.meta["param"] == "discharge"
+
+
+# ---------------------------------------------------------------------------
+# kind="boundary_aq_flux"
+# ---------------------------------------------------------------------------
+
+
+def _aq_cross_mesh() -> "gpd.GeoDataFrame":
+    """Cross of 5 cells: cell 1 in centre (inside polygon), 4 outside neighbours
+    one per cardinal direction. Use 1-based ids so cell_id - 1 indexing works
+    on a 5-row data array (rows 0..4 = cells 1..5)."""
+    from shapely.geometry import box as _box
+    return gpd.GeoDataFrame(
+        {"cell_id": [1, 2, 3, 4, 5]},
+        geometry=[
+            _box(4.0, 4.0, 6.0, 6.0),  # 1 centre, inside
+            _box(4.0, 6.0, 6.0, 8.0),  # 2 north
+            _box(2.0, 4.0, 4.0, 6.0),  # 3 west
+            _box(6.0, 4.0, 8.0, 6.0),  # 4 east
+            _box(4.0, 2.0, 6.0, 4.0),  # 5 south
+        ],
+        crs="EPSG:3857",
+    )
+
+
+def _make_face_flux_response(n_cells: int, value: float, n_timesteps: int = 5) -> ValuesResponse:
+    """All-cells x all-timesteps flux array filled with a constant value."""
+    data = np.full((n_cells, n_timesteps), value, dtype=float)
+    dates = np.arange("2010-08-01", "2010-08-06", dtype="datetime64[D]")
+    return ValuesResponse(data=data, dates=dates)
+
+
+def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
+    """Centre cell has 4 boundary faces. Mock read_values to return a
+    different constant per face param so we can verify the dispatcher
+    picked up each direction's data correctly."""
+    mesh = _aq_cross_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh, cell_id_col="cell_id")
+    polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only cell 1's centroid
+
+    # AQ_FACE_DIRECTIONS = {east: flux_x_one, west: flux_x_two,
+    #                       south: flux_y_one, north: flux_y_two}
+    param_to_value = {
+        "flux_x_one": 1.0,  # east
+        "flux_x_two": 2.0,  # west
+        "flux_y_one": 3.0,  # south
+        "flux_y_two": 4.0,  # north
+    }
+
+    def fake_read_values(**kw):
+        return _make_face_flux_response(n_cells=5, value=param_to_value[kw["param"]])
+
+    monkeypatch.setattr(twin, "read_values", fake_read_values)
+
+    response = twin.mask(
+        kind="boundary_aq_flux",
+        id_compartment=1,
+        polygon=polygon,
+        syear=2010,
+        eyear=2011,
+    )
+
+    assert isinstance(response, AqBoundaryFluxResponse)
+    assert response.cell_ids == [1]
+    assert sorted(response.face_directions[1]) == ["east", "north", "south", "west"]
+    # Each direction's flux is 5 timesteps of the per-direction constant.
+    np.testing.assert_array_equal(response.fluxes[1]["east"],  np.full(5, 1.0))
+    np.testing.assert_array_equal(response.fluxes[1]["west"],  np.full(5, 2.0))
+    np.testing.assert_array_equal(response.fluxes[1]["south"], np.full(5, 3.0))
+    np.testing.assert_array_equal(response.fluxes[1]["north"], np.full(5, 4.0))
+
+
+def test_mask_boundary_aq_flux_requires_syear_eyear(monkeypatch):
+    mesh = _aq_cross_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh, cell_id_col="cell_id")
+    polygon = box(3.5, 3.5, 6.5, 6.5)
+
+    with pytest.raises(ValueError, match="requires 'syear' and 'eyear'"):
+        twin.mask(kind="boundary_aq_flux", id_compartment=1, polygon=polygon)
+
+
+def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
+    mesh = _aq_cross_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh, cell_id_col="cell_id")
+    monkeypatch.setattr(
+        twin, "read_values",
+        lambda **kw: _make_face_flux_response(n_cells=5, value=0.0),
+    )
+    polygon = box(100.0, 100.0, 200.0, 200.0)
+
+    response = twin.mask(
+        kind="boundary_aq_flux",
+        id_compartment=1,
+        polygon=polygon,
+        syear=2010,
+        eyear=2011,
+    )
+
+    assert response.cell_ids == []
+    assert response.face_directions == {}
+    assert response.fluxes == {}
