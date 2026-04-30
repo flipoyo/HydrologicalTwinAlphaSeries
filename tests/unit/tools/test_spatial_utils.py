@@ -7,8 +7,10 @@ import pytest
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, box
 
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
+    reaches_inflow_outflow_signs,
     reaches_on_polygon_boundary,
 )
 
@@ -366,3 +368,157 @@ def test_aq_cells_on_polygon_boundary_id_col_as_integer_position():
 
     assert sorted(cell_ids) == [1, 1]
     assert len(edges) == 2
+
+
+# ---------------------------------------------------------------------------
+# reaches_inflow_outflow_signs — directional classification
+# ---------------------------------------------------------------------------
+
+
+def test_reaches_inflow_outflow_signs_classifies_inflow_and_outflow():
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+    network = _network(
+        {
+            1: LineString([(15.0, 5.0), (5.0, 5.0)]),  # fnode outside, tnode inside → inflow
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # fnode inside, tnode outside → outflow
+            3: LineString([(2.0, 2.0), (8.0, 8.0)]),   # both inside → internal
+            4: LineString([(20.0, 5.0), (30.0, 5.0)]), # both outside → skipped
+        }
+    )
+
+    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+
+    assert result["inflow_ids"] == [1]
+    assert result["outflow_ids"] == [2]
+    assert result["internal_ids"] == [3]
+    assert sorted(result["boundary_ids"]) == [1, 2]
+    assert result["signs"] == {1: +1, 2: -1}
+    # Crossing geometries: one Point per boundary reach, parallel to crossing_ids.
+    assert result["crossing_ids"] == [1, 2]
+    assert all(g.geom_type in ("Point", "MultiPoint") for g in result["crossing_geometries"])
+
+
+def test_reaches_inflow_outflow_signs_empty_network():
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+    network = gpd.GeoDataFrame({"reach_id": []}, geometry=[], crs="EPSG:3857")
+
+    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+
+    assert result["inflow_ids"] == []
+    assert result["outflow_ids"] == []
+    assert result["boundary_ids"] == []
+    assert result["signs"] == {}
+
+
+def test_reaches_inflow_outflow_signs_handles_multilinestring():
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+    multi = MultiLineString(
+        [
+            LineString([(15.0, 5.0), (12.0, 5.0)]),  # outside fnode chain
+            LineString([(8.0, 5.0), (5.0, 5.0)]),    # inside tnode chain
+        ]
+    )
+    network = _network({77: multi})
+
+    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+
+    assert result["inflow_ids"] == [77]
+    assert result["signs"][77] == +1
+
+
+def test_reaches_on_polygon_boundary_now_delegates_to_signs_helper():
+    """The XOR wrapper still returns the same boundary set after the refactor."""
+    polygon = box(0.0, 0.0, 10.0, 10.0)
+    network = _network(
+        {
+            1: LineString([(15.0, 5.0), (5.0, 5.0)]),  # inflow
+            2: LineString([(5.0, 5.0), (15.0, 5.0)]),  # outflow
+            3: LineString([(2.0, 2.0), (8.0, 8.0)]),   # internal
+        }
+    )
+
+    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+
+    assert result == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# aq_cells_boundary_faces — per-cell direction labels
+# ---------------------------------------------------------------------------
+
+
+def test_aq_cells_boundary_faces_single_inside_cell_four_directions():
+    """Cross of 5 cells: centre is the only inside cell, 4 outside neighbours,
+    one per cardinal direction. Each contributes one face on the centre cell.
+    """
+    cells = {
+        0: box(4.0, 4.0, 6.0, 6.0),  # centre, inside polygon
+        1: box(4.0, 6.0, 6.0, 8.0),  # north neighbour (dy>0 → "north")
+        2: box(2.0, 4.0, 4.0, 6.0),  # west neighbour  (dx<0 → "east")
+        3: box(6.0, 4.0, 8.0, 6.0),  # east neighbour  (dx>0 → "west")
+        4: box(4.0, 2.0, 6.0, 4.0),  # south neighbour (dy<0 → "south")
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only centre cell's centroid (5,5)
+
+    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    assert result["interior_ids"] == [0]
+    assert result["boundary_ids"] == [0]
+    assert sorted(result["boundary_faces"][0]) == ["east", "north", "south", "west"]
+    assert set(result["edges_by_face"][0].keys()) == {"north", "east", "west", "south"}
+    for edge in result["edges_by_face"][0].values():
+        assert edge.geom_type in ("LineString", "MultiLineString")
+
+
+def test_aq_cells_boundary_faces_excludes_corner_only_neighbours():
+    """3x3 grid; polygon covers cell 4 only. Diagonal neighbours touch only
+    at a point — must NOT be counted as boundary faces."""
+    cells = []
+    ids = []
+    for j in range(3):
+        for i in range(3):
+            cells.append(box(i, j, i + 1, j + 1))
+            ids.append(j * 3 + i)
+    mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
+    polygon = box(1.1, 1.1, 1.9, 1.9)  # only cell 4 (centre) inside
+
+    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    # 4 edge-sharing neighbours; 4 corner-only excluded.
+    assert sorted(result["boundary_faces"][4]) == ["east", "north", "south", "west"]
+
+
+def test_aq_cells_boundary_faces_all_inside_no_boundary():
+    cells = []
+    ids = []
+    for j in range(3):
+        for i in range(3):
+            cells.append(box(i, j, i + 1, j + 1))
+            ids.append(j * 3 + i)
+    mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
+    polygon = box(0.0, 0.0, 3.0, 3.0)  # covers everything
+
+    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    assert sorted(result["interior_ids"]) == ids
+    assert result["boundary_ids"] == []
+    assert result["boundary_faces"] == {}
+
+
+def test_aq_cells_boundary_faces_empty_mesh():
+    mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
+    polygon = box(0.0, 0.0, 1.0, 1.0)
+
+    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    assert result == {
+        "interior_ids":   [],
+        "boundary_ids":   [],
+        "boundary_faces": {},
+        "edges_by_face":  {},
+    }

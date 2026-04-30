@@ -327,51 +327,109 @@ def _reach_endpoints(geom: Any) -> tuple:
     return shapely.Point(coords[0]), shapely.Point(coords[-1])
 
 
+def reaches_inflow_outflow_signs(
+    network_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Union[str, int],
+) -> Dict[str, Any]:
+    """Classify HYD reaches by flow direction relative to ``polygon``.
+
+    CaWaQS digitises reaches in flow direction, so endpoint order encodes
+    direction: ``geom.coords[0]`` is the upstream node (fnode), ``coords[-1]``
+    is the downstream node (tnode). For ``MultiLineString``, we use the
+    chained reach's two extreme nodes (start of first sub-line, end of
+    last sub-line).
+
+    Classification:
+        * inflow:    fnode outside, tnode inside  → water enters sub-area  (+1)
+        * outflow:   fnode inside,  tnode outside → water exits sub-area   (-1)
+        * internal:  both nodes inside            → fully internal reach
+        * (both outside) → silently skipped
+
+    For each boundary reach, ``geom.intersection(polygon.boundary)`` gives
+    the crossing geometry (typically a Point; MultiPoint for re-entrant
+    polygons). The XOR-only :func:`reaches_on_polygon_boundary` is now a
+    thin wrapper over this richer helper.
+
+    Returns a dict with keys ``inflow_ids``, ``outflow_ids``, ``internal_ids``,
+    ``boundary_ids`` (= inflow + outflow), ``crossing_geometries``,
+    ``crossing_ids`` (parallel to crossing_geometries), and
+    ``signs`` ({cell_id: +1 or -1}).
+    """
+    empty: Dict[str, Any] = {
+        "inflow_ids":          [],
+        "outflow_ids":         [],
+        "internal_ids":        [],
+        "boundary_ids":        [],
+        "crossing_geometries": [],
+        "crossing_ids":        [],
+        "signs":               {},
+    }
+    if network_gdf.empty:
+        return empty
+
+    col_name = _resolve_id_col(network_gdf, id_col)
+    poly_boundary = polygon.boundary
+
+    inflow_ids: List[Any] = []
+    outflow_ids: List[Any] = []
+    internal_ids: List[Any] = []
+    crossing_geometries: List[Any] = []
+    crossing_ids: List[Any] = []
+    signs: Dict[Any, int] = {}
+
+    geometries = list(network_gdf.geometry.values)
+    ids = list(network_gdf[col_name].values)
+
+    for geom, cell_id in zip(geometries, ids):
+        fnode, tnode = _reach_endpoints(geom)
+        f_in = polygon.contains(fnode)
+        t_in = polygon.contains(tnode)
+
+        if f_in and t_in:
+            internal_ids.append(cell_id)
+        elif (not f_in) and t_in:
+            inflow_ids.append(cell_id)
+            crossing_geometries.append(geom.intersection(poly_boundary))
+            crossing_ids.append(cell_id)
+            signs[cell_id] = +1
+        elif f_in and (not t_in):
+            outflow_ids.append(cell_id)
+            crossing_geometries.append(geom.intersection(poly_boundary))
+            crossing_ids.append(cell_id)
+            signs[cell_id] = -1
+        # both outside → skip
+
+    return {
+        "inflow_ids":          inflow_ids,
+        "outflow_ids":         outflow_ids,
+        "internal_ids":        internal_ids,
+        "boundary_ids":        inflow_ids + outflow_ids,
+        "crossing_geometries": crossing_geometries,
+        "crossing_ids":        crossing_ids,
+        "signs":               signs,
+    }
+
+
 def reaches_on_polygon_boundary(
     network_gdf: gpd.GeoDataFrame,
     polygon: Any,
     id_col: Union[str, int],
 ) -> List[Any]:
-    """Return reach ids whose two endpoints straddle the polygon.
+    """Return reach ids whose two endpoints straddle the polygon (sorted).
 
-    A reach is on the boundary IFF exactly one of its endpoints lies inside
-    ``polygon`` and the other lies outside (XOR of ``polygon.contains``
-    over the two endpoints). ``polygon.contains`` naturally treats interior
-    rings as outside, so a reach with one endpoint inside a hole and the
-    other in the polygon's filled area still qualifies as a boundary reach
-    — no separate hole-handling code needed.
-
-    A Shapely STRtree on reach geometries (bounding-box prefilter) is used
-    to prune candidates before the exact endpoint XOR check, keeping the
-    helper performant on large networks.
+    Thin wrapper over :func:`reaches_inflow_outflow_signs`: returns the
+    union of inflow + outflow ids, sorted ascending. ``polygon.contains``
+    treats interior rings as outside — a reach with one endpoint inside a
+    hole still qualifies as a boundary reach.
 
     :param network_gdf: GeoDataFrame of HYD reaches (LineString / MultiLineString)
     :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
     :param id_col: Column name (or integer position) to read reach ids from.
-    :return: List of reach ids whose endpoints straddle the polygon.
+    :return: List of reach ids whose endpoints straddle the polygon (sorted).
     """
-    if network_gdf.empty:
-        return []
-
-    geometries = list(network_gdf.geometry.values)
-    tree = shapely.STRtree(geometries)
-    components = _polygon_components(polygon)
-
-    matched_positions: set = set()
-    for component in components:
-        candidate_positions = tree.query(component, predicate="intersects")
-        for pos in candidate_positions:
-            pos_int = int(pos)
-            start, end = _reach_endpoints(geometries[pos_int])
-            # Inside-polygon XOR — true boundary check. We use the FULL
-            # multi-component polygon for containment so a reach is "inside"
-            # if any component contains it; consistent with cells_in_polygon.
-            if polygon.contains(start) ^ polygon.contains(end):
-                matched_positions.add(pos_int)
-
-    sorted_positions = sorted(matched_positions)
-    col_name = _resolve_id_col(network_gdf, id_col)
-    return [network_gdf.iloc[p][col_name] for p in sorted_positions]
+    classification = reaches_inflow_outflow_signs(network_gdf, polygon, id_col=id_col)
+    return sorted(classification["boundary_ids"])
 
 
 def aq_cells_on_polygon_boundary(
@@ -434,3 +492,97 @@ def aq_cells_on_polygon_boundary(
                 edge_geometries_out.append(shared)
 
     return cell_ids_out, edge_geometries_out
+
+
+def aq_cells_boundary_faces(
+    aq_mesh_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Union[str, int],
+) -> Dict[str, Any]:
+    """Identify boundary AQ cells with cardinal-direction face labels.
+
+    A boundary cell is an interior cell (centroid inside the polygon) that
+    shares a face with an outside cell. The face direction is determined
+    from the centroid offset between the boundary cell and its outside
+    neighbour: if ``|dx| ≥ |dy|`` then ``"east" if dx < 0 else "west"``,
+    else ``"south" if dy < 0 else "north"``. Corner-touching neighbours
+    (intersection is a Point) are filtered out — only true edge-sharing
+    counts as a flux face. Direction labelling preserves the original
+    feature-branch convention (cf. branch_migration/backend_50.patch L327-333).
+
+    Returns a dict with keys:
+        * ``interior_ids``:    sorted list of all cells with centroid inside
+        * ``boundary_ids``:    sorted list of cell ids touching ≥1 outside cell
+        * ``boundary_faces``:  ``{cell_id: ["east"|"west"|"south"|"north", ...]}``
+        * ``edges_by_face``:   ``{cell_id: {direction: shapely.Geometry}}``
+                               (per-face union of shared boundary parts)
+    """
+    empty: Dict[str, Any] = {
+        "interior_ids":   [],
+        "boundary_ids":   [],
+        "boundary_faces": {},
+        "edges_by_face":  {},
+    }
+    if aq_mesh_gdf.empty:
+        return empty
+
+    col_name = _resolve_id_col(aq_mesh_gdf, id_col)
+    geometries = list(aq_mesh_gdf.geometry.values)
+    centroids = aq_mesh_gdf.geometry.centroid
+    ids = list(aq_mesh_gdf[col_name].values)
+
+    inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
+    interior_positions = [i for i, x in enumerate(inside_mask) if x]
+    interior_ids = sorted([ids[i] for i in interior_positions])
+
+    if not interior_ids:
+        return empty
+
+    outside_set = {ids[i] for i, x in enumerate(inside_mask) if not x}
+    tree = shapely.STRtree(geometries)
+
+    boundary_faces: Dict[Any, List[str]] = {}
+    edges_by_face_parts: Dict[Any, Dict[str, List[Any]]] = {}
+
+    for inside_pos in interior_positions:
+        cell_id = ids[inside_pos]
+        cell_geom = geometries[inside_pos]
+        cell_cx = cell_geom.centroid.x
+        cell_cy = cell_geom.centroid.y
+
+        candidate_positions = tree.query(cell_geom, predicate="touches")
+        for cand_pos in candidate_positions:
+            cand_int = int(cand_pos)
+            if cand_int == inside_pos:
+                continue
+            neigh_id = ids[cand_int]
+            if neigh_id not in outside_set:
+                continue
+            neigh_geom = geometries[cand_int]
+
+            shared = cell_geom.boundary.intersection(neigh_geom.boundary)
+            if shared.is_empty or shared.geom_type == "Point":
+                continue
+
+            dx = neigh_geom.centroid.x - cell_cx
+            dy = neigh_geom.centroid.y - cell_cy
+            if abs(dx) >= abs(dy):
+                face = "east" if dx < 0 else "west"
+            else:
+                face = "south" if dy < 0 else "north"
+
+            boundary_faces.setdefault(cell_id, []).append(face)
+            edges_by_face_parts.setdefault(cell_id, {}).setdefault(face, []).append(shared)
+
+    boundary_ids = sorted(boundary_faces.keys())
+    edges_by_face = {
+        cell_id: {face: unary_union(parts) for face, parts in dir_parts.items()}
+        for cell_id, dir_parts in edges_by_face_parts.items()
+    }
+
+    return {
+        "interior_ids":   interior_ids,
+        "boundary_ids":   boundary_ids,
+        "boundary_faces": boundary_faces,
+        "edges_by_face":  edges_by_face,
+    }
