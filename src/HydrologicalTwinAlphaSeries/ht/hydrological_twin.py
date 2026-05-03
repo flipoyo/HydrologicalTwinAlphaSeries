@@ -10,16 +10,29 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
-from HydrologicalTwinAlphaSeries.config.constants import module_caw, obs_config, paramRecs
+from HydrologicalTwinAlphaSeries.config.constants import (
+    AQ_FACE_DIRECTIONS,
+    module_caw,
+    obs_config,
+    paramRecs,
+)
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.Manage import Manage
 from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    aq_cells_boundary_faces,
+    aq_cells_on_polygon_boundary,
+    cells_in_polygon,
+    reaches_inflow_outflow_signs,
+    verify_crs_match,
+)
 
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AqBoundaryFluxResponse,
+    AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
@@ -32,11 +45,14 @@ from .api_types import (
     ExportRequest,
     ExportResult,
     FetchRequest,
+    HydBoundaryFluxResponse,
+    HydBoundaryResponse,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
     LayerInfo,
     LoadRequest,
+    MaskRequest,
     ObservationCatalog,
     ObservationInfo,
     ObservationsResponse,
@@ -733,7 +749,290 @@ class HydrologicalTwin(HTPersistenceMixin):
                 },
             )
 
-        raise ValueError(f"Unknown extract kind: {request.kind!r}")
+        raise ValueError(f"Unknown fetch kind: {request.kind!r}")
+
+    def mask(
+        self,
+        id_compartment: Optional[int] = None,
+        polygon: Any = None,
+        request: Optional[MaskRequest] = None,
+        kind: str = "polygon_cells",
+        **kwargs: Any,
+    ) -> Any:
+        """Polygon-mask-driven extraction macro.
+
+        Dispatches on ``kind`` to spatial-mask workflows: cell selection
+        inside a polygon, sim-data restricted to that selection, and
+        boundary geometries (HYD reaches / AQ cell edges) on the
+        polygon's perimeter. See the ``twin-mask-macro`` spec for the
+        full kind catalogue.
+        """
+        self._require_state("mask")
+        if isinstance(id_compartment, MaskRequest) and request is None:
+            request = id_compartment
+            id_compartment = None
+        if request is None:
+            request = MaskRequest(
+                kind=kind,
+                id_compartment=id_compartment,
+                polygon=polygon,
+                **kwargs,
+            )
+        elif kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+
+        if request.kind == "area_values":
+            if request.cell_ids is not None and request.polygon is not None:
+                raise ValueError(
+                    "mask(kind='area_values') accepts either 'cell_ids' or "
+                    "'polygon', not both."
+                )
+            if request.cell_ids is None and request.polygon is None:
+                raise ValueError(
+                    "mask(kind='area_values') requires either 'cell_ids' or "
+                    "'polygon' to identify the cell subset."
+                )
+            missing = [
+                name
+                for name in ("id_compartment", "outtype", "param", "syear", "eyear")
+                if getattr(request, name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"mask(kind='area_values') requires non-None values for: {', '.join(missing)}."
+                )
+            assert request.id_compartment is not None
+            assert request.outtype is not None
+            assert request.param is not None
+            assert request.syear is not None
+            assert request.eyear is not None
+            if request.polygon is not None:
+                mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                verify_crs_match(
+                    mesh_gdf.crs,
+                    request.polygon_crs,
+                    context="mask(kind='area_values')",
+                )
+                id_col = self._resolve_cell_id_col(request.id_compartment)
+                resolved_cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            else:
+                resolved_cell_ids = list(request.cell_ids or [])
+            return self.extract_area(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cell_ids=np.asarray(resolved_cell_ids),
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
+        if request.kind == "polygon_cells":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='polygon_cells') requires both 'id_compartment' and 'polygon'."
+                )
+            mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='polygon_cells')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            return CellSelectionResponse(
+                cell_ids=list(cell_ids),
+                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            )
+
+        if request.kind == "boundary_hyd":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd') requires both 'id_compartment' and 'polygon'."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            classification = reaches_inflow_outflow_signs(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            boundary_ids = sorted(classification["boundary_ids"])
+            id_col_name = (
+                network_gdf.columns[id_col] if isinstance(id_col, int) else id_col
+            )
+            boundary_rows = network_gdf[network_gdf[id_col_name].isin(boundary_ids)]
+            return HydBoundaryResponse(
+                reach_ids=list(boundary_ids),
+                geometries=list(boundary_rows.geometry),
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
+                    "signs":          dict(classification["signs"]),
+                },
+            )
+
+        if request.kind == "boundary_hyd_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires 'syear' and 'eyear' "
+                    "to read the discharge time series."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            classification = reaches_inflow_outflow_signs(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            boundary_ids = sorted(classification["boundary_ids"])
+            signs = {cid: classification["signs"][cid] for cid in boundary_ids}
+
+            q_response = self.read_values(
+                id_compartment=request.id_compartment,
+                outtype="Q",
+                param="discharge",
+                syear=request.syear,
+                eyear=request.eyear,
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
+            if not boundary_ids:
+                Q = np.empty((0, q_response.data.shape[1]))
+            else:
+                Q = np.vstack(
+                    [q_response.data[cid - 1, :] * signs[cid] for cid in boundary_ids]
+                )
+
+            return HydBoundaryFluxResponse(
+                reach_ids=boundary_ids,
+                signs=signs,
+                Q=Q,
+                dates=q_response.dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "Q",
+                    "param":          "discharge",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
+                },
+            )
+
+        if request.kind == "boundary_aq":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq') requires both 'id_compartment' and 'polygon'."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids, edge_geometries = aq_cells_on_polygon_boundary(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            return AqBoundaryResponse(
+                cell_ids=list(cell_ids),
+                edge_geometries=list(edge_geometries),
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer": request.id_layer,
+                    "kind": request.kind,
+                },
+            )
+
+        if request.kind == "boundary_aq_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires 'syear' and 'eyear' "
+                    "to read the face-flux time series."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            boundary_info = aq_cells_boundary_faces(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            boundary_faces = boundary_info["boundary_faces"]
+
+            # Pull the four AQ_MB face-flux params for the requested layer.
+            face_data: Dict[str, np.ndarray] = {}
+            dates: Optional[np.ndarray] = None
+            for direction, param in AQ_FACE_DIRECTIONS.items():
+                resp = self.read_values(
+                    id_compartment=request.id_compartment,
+                    outtype="MB",
+                    param=param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    id_layer=request.id_layer,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                )
+                face_data[direction] = resp.data
+                if dates is None:
+                    dates = resp.dates
+
+            # Build nested {cell_id: {direction: 1D ndarray}} for boundary cells only.
+            fluxes: Dict[Any, Dict[str, np.ndarray]] = {}
+            for cell_id, directions in boundary_faces.items():
+                fluxes[cell_id] = {
+                    direction: face_data[direction][cell_id - 1, :]
+                    for direction in directions
+                }
+
+            return AqBoundaryFluxResponse(
+                cell_ids=sorted(boundary_faces.keys()),
+                face_directions={cid: list(d) for cid, d in boundary_faces.items()},
+                fluxes=fluxes,
+                dates=dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "MB",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "interior_ids":   list(boundary_info["interior_ids"]),
+                },
+            )
+
+        raise ValueError(f"Unknown mask kind: {request.kind!r}")
 
     def transform(
         self,
@@ -1124,6 +1423,33 @@ class HydrologicalTwin(HTPersistenceMixin):
                 f"Available: {list(self.compartments.keys())}"
             )
         return self.compartments[id_compartment]
+
+    def _resolve_mesh_gdf(self, id_compartment: int, id_layer: int = 0) -> gpd.GeoDataFrame:
+        """Return the mesh GeoDataFrame for a compartment's layer.
+
+        Used by ``mask()`` kinds that operate on cell geometries.
+        """
+        compartment = self.get_compartment(id_compartment)
+        layer_name = compartment.mesh.layers_gis_name[id_layer]
+        return compartment.mesh.layer_gdfs[layer_name]
+
+    def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
+        """Return the cell-id column (name or integer position) configured for a compartment.
+
+        Reads ``config_geom.idColCells[id_compartment]``. Used by ``mask()``
+        polygon kinds to tell ``cells_in_polygon`` which column carries cell ids.
+        """
+        if self.config_geom is None:
+            raise InvalidStateError(
+                f"Cannot resolve cell-id column for compartment {id_compartment}: "
+                "config_geom is not loaded."
+            )
+        id_col = self.config_geom.idColCells.get(id_compartment)
+        if id_col is None:
+            raise ValueError(
+                f"No cell-id column configured for compartment {id_compartment} in idColCells."
+            )
+        return id_col
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
