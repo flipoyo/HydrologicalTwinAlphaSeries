@@ -13,11 +13,13 @@ version = "000.alpha.16"
 run = "python -m HydrologicalTwinAlphaSeries"
 test = "pytest"
 lint = "ruff check src tests"
+dev-setup = "pre-commit install"
 
 [dependencies]
 python = "3.11.*"
 pytest = ">=8,<9"
 ruff = ">=0.12,<1"
+pre-commit = ">=3.7"
 
 [pypi-dependencies]
 HydrologicalTwinAlphaSeries = { path = ".", editable = true }

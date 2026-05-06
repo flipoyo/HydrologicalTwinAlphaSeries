@@ -36,7 +36,8 @@ MINIMUM_STATE: Dict[str, TwinState] = {
     "configure": TwinState.EMPTY,
     "load": TwinState.CONFIGURED,
     "describe": TwinState.LOADED,
-    "extract": TwinState.LOADED,
+    "fetch": TwinState.LOADED,
+    "mask": TwinState.LOADED,
     "transform": TwinState.LOADED,
     "render": TwinState.LOADED,
     "export": TwinState.LOADED,
@@ -77,7 +78,7 @@ class DescribeRequest:
 
 
 @dataclass
-class ExtractRequest:
+class FetchRequest:
     kind: str = "simulation_matrix"
     id_compartment: Optional[int] = None
     outtype: Optional[str] = None
@@ -101,7 +102,6 @@ class ExtractRequest:
     layers: Optional[List[Any]] = None
     layer_names: Optional[List[str]] = None
     layer_id_offset: int = 0
-    outcropping_cell_ids: Optional[np.ndarray] = None
     save_directory: Optional[str] = None
     obs_geometry: Any = None
     network_gdf: Any = None
@@ -111,6 +111,22 @@ class ExtractRequest:
     output_csv_path: Optional[str] = None
     cell_ids: Optional[List[int]] = None
     variables: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MaskRequest:
+    kind: str = "polygon_cells"
+    id_compartment: Optional[int] = None
+    outtype: Optional[str] = None
+    param: Optional[str] = None
+    syear: Optional[int] = None
+    eyear: Optional[int] = None
+    id_layer: int = 0
+    cutsdate: Optional[str] = None
+    cutedate: Optional[str] = None
+    polygon: Any = None
+    polygon_crs: Any = None
+    cell_ids: Optional[List[int]] = None
 
 
 @dataclass
@@ -199,7 +215,7 @@ class ExportRequest:
 
 
 @dataclass
-class ExtractValuesResponse:
+class ValuesResponse:
     data: np.ndarray
     dates: np.ndarray
     meta: Optional[Dict[str, Any]] = None
@@ -256,6 +272,51 @@ class SpatialMapResponse:
 @dataclass
 class CellSelectionResponse:
     cell_ids: List[int] = field(default_factory=list)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class HydBoundaryResponse:
+    reach_ids: List[Any] = field(default_factory=list)
+    geometries: List[Any] = field(default_factory=list)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class AqBoundaryResponse:
+    cell_ids: List[Any] = field(default_factory=list)
+    edge_geometries: List[Any] = field(default_factory=list)
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class HydBoundaryFluxResponse:
+    """Per-boundary-reach signed discharge time series.
+
+    Q is shape (n_boundary_reaches, n_timesteps); rows aligned with
+    reach_ids (sorted ascending). Sign already applied: inflow positive,
+    outflow negative.
+    """
+    reach_ids: List[Any] = field(default_factory=list)
+    signs: Dict[Any, int] = field(default_factory=dict)
+    Q: Optional[np.ndarray] = None
+    dates: Optional[np.ndarray] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class AqBoundaryFluxResponse:
+    """Per-(boundary-cell, face-direction) flux time series.
+
+    fluxes is nested: ``fluxes[cell_id][direction]`` is a 1D ndarray of
+    length n_timesteps. Sign convention follows CaWaQS data (positive =
+    flux entering the cell). Unit conversion (m³/s → m³/d) is left to
+    the caller — the response carries raw m³/s data.
+    """
+    cell_ids: List[Any] = field(default_factory=list)
+    face_directions: Dict[Any, List[str]] = field(default_factory=dict)
+    fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
+    dates: Optional[np.ndarray] = None
     meta: Optional[Dict[str, Any]] = None
 
 

@@ -10,16 +10,29 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
-from HydrologicalTwinAlphaSeries.config.constants import module_caw, obs_config, paramRecs
+from HydrologicalTwinAlphaSeries.config.constants import (
+    AQ_FACE_DIRECTIONS,
+    module_caw,
+    obs_config,
+    paramRecs,
+)
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.Manage import Manage
 from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    aq_cells_boundary_faces,
+    aq_cells_on_polygon_boundary,
+    cells_in_polygon,
+    reaches_inflow_outflow_signs,
+    verify_crs_match,
+)
 
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AqBoundaryFluxResponse,
+    AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
@@ -31,13 +44,15 @@ from .api_types import (
     DescribeRequest,
     ExportRequest,
     ExportResult,
-    ExtractRequest,
-    ExtractValuesResponse,
+    FetchRequest,
+    HydBoundaryFluxResponse,
+    HydBoundaryResponse,
     HydrologicalRegimeResponse,
     InvalidStateError,
     LayerCatalog,
     LayerInfo,
     LoadRequest,
+    MaskRequest,
     ObservationCatalog,
     ObservationInfo,
     ObservationsResponse,
@@ -53,6 +68,7 @@ from .api_types import (
     TwinCatalog,
     TwinDescription,
     TwinState,
+    ValuesResponse,
 )
 from .persistence import HTPersistenceMixin
 
@@ -306,7 +322,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 "sim_obs_bundle",
                 "spatial_map",
                 "catchment_cells",
-                "aquifer_outcropping",
+                "aquifer_outcropping_map",
                 "aq_balance_inputs",
             ],
             transform_kinds=[
@@ -397,7 +413,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     def _resolve_layer_infos(
         self,
         id_compartment: int,
-        request: ExtractRequest,
+        request: FetchRequest,
     ) -> List[LayerInfo]:
         if request.layers is not None:
             return request.layers
@@ -478,6 +494,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         self._require_state("load")
         self.compartments = self._build_compartments(request)
+        self._ensure_disk_cache()
         self._transition_to(TwinState.LOADED)
 
     def describe(
@@ -502,24 +519,24 @@ class HydrologicalTwin(HTPersistenceMixin):
         )
 
 
-    def extract(
+    def fetch(
         self,
         id_compartment: Optional[int] = None,
         outtype: Optional[str] = None,
         param: Optional[str] = None,
         syear: Optional[int] = None,
         eyear: Optional[int] = None,
-        request: Optional[ExtractRequest] = None,
+        request: Optional[FetchRequest] = None,
         kind: str = "simulation_matrix",
         **kwargs: Any,
     ) -> Any:
-        """Extract frontend-ready workflow payloads via the canonical macro API."""
-        self._require_state("extract")
-        if isinstance(id_compartment, ExtractRequest) and request is None:
+        """Fetch frontend-ready workflow payloads via the canonical macro API."""
+        self._require_state("fetch")
+        if isinstance(id_compartment, FetchRequest) and request is None:
             request = id_compartment
             id_compartment = None
         if request is None:
-            request = ExtractRequest(
+            request = FetchRequest(
                 kind=kind,
                 id_compartment=id_compartment,
                 outtype=outtype,
@@ -534,7 +551,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         if request.kind == "simulation_matrix":
             if request.target_unit and request.outtype == "MB":
-                return self.extract_watbal_for_map(
+                return self.read_watbal_converted(
                     id_compartment=request.id_compartment,
                     outtype=request.outtype,
                     param=request.param,
@@ -545,7 +562,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                     id_layer=request.id_layer,
                     target_unit=request.target_unit,
                 )
-            return self.extract_values(
+            return self.read_values(
                 id_compartment=request.id_compartment,
                 outtype=request.outtype,
                 param=request.param,
@@ -633,7 +650,6 @@ class HydrologicalTwin(HTPersistenceMixin):
                     frequency=frequency_label,
                     pluriannual=request.pluriannual,
                     layer_id_offset=request.layer_id_offset,
-                    outcropping_cell_ids=request.outcropping_cell_ids,
                 )
 
             return SpatialMapResponse(
@@ -659,14 +675,36 @@ class HydrologicalTwin(HTPersistenceMixin):
                 meta={"id_compartment": request.id_compartment, "kind": request.kind},
             )
 
-        if request.kind == "aquifer_outcropping":
+        if request.kind == "aquifer_outcropping_map":
+            frequency_label = self._normalize_frequency(request.frequency, target="long")
             cell_ids = self._build_aquifer_outcropping(
                 id_compartment=request.id_compartment,
                 save_directory=request.save_directory,
             )
-            return CellSelectionResponse(
-                cell_ids=list(cell_ids),
-                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            gdf = self._build_aq_spatial_gdf(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+                layers=self.get_all_layers(request.id_compartment),
+                agg=request.agg or "mean",
+                frequency=frequency_label,
+                pluriannual=request.pluriannual,
+                layer_id_offset=request.layer_id_offset,
+                outcropping_cell_ids=cell_ids,
+            )
+            return SpatialMapResponse(
+                gdf=gdf,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "param": request.param,
+                    "frequency": frequency_label,
+                    "agg": request.agg,
+                    "resolution": "outcropping",
+                },
             )
 
         if request.kind == "aq_balance_inputs":
@@ -687,7 +725,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             dates = None
             for label in selected:
                 backend_param = alias_to_param.get(label, label)
-                response = self.extract_values(
+                response = self.read_values(
                     id_compartment=request.id_compartment,
                     outtype=request.outtype or "MB",
                     param=backend_param,
@@ -711,7 +749,290 @@ class HydrologicalTwin(HTPersistenceMixin):
                 },
             )
 
-        raise ValueError(f"Unknown extract kind: {request.kind!r}")
+        raise ValueError(f"Unknown fetch kind: {request.kind!r}")
+
+    def mask(
+        self,
+        id_compartment: Optional[int] = None,
+        polygon: Any = None,
+        request: Optional[MaskRequest] = None,
+        kind: str = "polygon_cells",
+        **kwargs: Any,
+    ) -> Any:
+        """Polygon-mask-driven extraction macro.
+
+        Dispatches on ``kind`` to spatial-mask workflows: cell selection
+        inside a polygon, sim-data restricted to that selection, and
+        boundary geometries (HYD reaches / AQ cell edges) on the
+        polygon's perimeter. See the ``twin-mask-macro`` spec for the
+        full kind catalogue.
+        """
+        self._require_state("mask")
+        if isinstance(id_compartment, MaskRequest) and request is None:
+            request = id_compartment
+            id_compartment = None
+        if request is None:
+            request = MaskRequest(
+                kind=kind,
+                id_compartment=id_compartment,
+                polygon=polygon,
+                **kwargs,
+            )
+        elif kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+
+        if request.kind == "area_values":
+            if request.cell_ids is not None and request.polygon is not None:
+                raise ValueError(
+                    "mask(kind='area_values') accepts either 'cell_ids' or "
+                    "'polygon', not both."
+                )
+            if request.cell_ids is None and request.polygon is None:
+                raise ValueError(
+                    "mask(kind='area_values') requires either 'cell_ids' or "
+                    "'polygon' to identify the cell subset."
+                )
+            missing = [
+                name
+                for name in ("id_compartment", "outtype", "param", "syear", "eyear")
+                if getattr(request, name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"mask(kind='area_values') requires non-None values for: {', '.join(missing)}."
+                )
+            assert request.id_compartment is not None
+            assert request.outtype is not None
+            assert request.param is not None
+            assert request.syear is not None
+            assert request.eyear is not None
+            if request.polygon is not None:
+                mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                verify_crs_match(
+                    mesh_gdf.crs,
+                    request.polygon_crs,
+                    context="mask(kind='area_values')",
+                )
+                id_col = self._resolve_cell_id_col(request.id_compartment)
+                resolved_cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            else:
+                resolved_cell_ids = list(request.cell_ids or [])
+            return self.extract_area(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cell_ids=np.asarray(resolved_cell_ids),
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
+        if request.kind == "polygon_cells":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='polygon_cells') requires both 'id_compartment' and 'polygon'."
+                )
+            mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='polygon_cells')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            return CellSelectionResponse(
+                cell_ids=list(cell_ids),
+                meta={"id_compartment": request.id_compartment, "kind": request.kind},
+            )
+
+        if request.kind == "boundary_hyd":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd') requires both 'id_compartment' and 'polygon'."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            classification = reaches_inflow_outflow_signs(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            boundary_ids = sorted(classification["boundary_ids"])
+            id_col_name = (
+                network_gdf.columns[id_col] if isinstance(id_col, int) else id_col
+            )
+            boundary_rows = network_gdf[network_gdf[id_col_name].isin(boundary_ids)]
+            return HydBoundaryResponse(
+                reach_ids=list(boundary_ids),
+                geometries=list(boundary_rows.geometry),
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
+                    "signs":          dict(classification["signs"]),
+                },
+            )
+
+        if request.kind == "boundary_hyd_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_hyd_flux') requires 'syear' and 'eyear' "
+                    "to read the discharge time series."
+                )
+            network_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                network_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_hyd_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            classification = reaches_inflow_outflow_signs(
+                network_gdf, request.polygon, id_col=id_col
+            )
+            boundary_ids = sorted(classification["boundary_ids"])
+            signs = {cid: classification["signs"][cid] for cid in boundary_ids}
+
+            q_response = self.read_values(
+                id_compartment=request.id_compartment,
+                outtype="Q",
+                param="discharge",
+                syear=request.syear,
+                eyear=request.eyear,
+                id_layer=request.id_layer,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+            )
+
+            if not boundary_ids:
+                Q = np.empty((0, q_response.data.shape[1]))
+            else:
+                Q = np.vstack(
+                    [q_response.data[cid - 1, :] * signs[cid] for cid in boundary_ids]
+                )
+
+            return HydBoundaryFluxResponse(
+                reach_ids=boundary_ids,
+                signs=signs,
+                Q=Q,
+                dates=q_response.dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "Q",
+                    "param":          "discharge",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "inflow_ids":     list(classification["inflow_ids"]),
+                    "outflow_ids":    list(classification["outflow_ids"]),
+                    "internal_ids":   list(classification["internal_ids"]),
+                },
+            )
+
+        if request.kind == "boundary_aq":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq') requires both 'id_compartment' and 'polygon'."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            cell_ids, edge_geometries = aq_cells_on_polygon_boundary(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            return AqBoundaryResponse(
+                cell_ids=list(cell_ids),
+                edge_geometries=list(edge_geometries),
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer": request.id_layer,
+                    "kind": request.kind,
+                },
+            )
+
+        if request.kind == "boundary_aq_flux":
+            if request.id_compartment is None or request.polygon is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires both 'id_compartment' "
+                    "and 'polygon'."
+                )
+            if request.syear is None or request.eyear is None:
+                raise ValueError(
+                    "mask(kind='boundary_aq_flux') requires 'syear' and 'eyear' "
+                    "to read the face-flux time series."
+                )
+            aq_mesh_gdf = self._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq_flux')",
+            )
+            id_col = self._resolve_cell_id_col(request.id_compartment)
+            boundary_info = aq_cells_boundary_faces(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            boundary_faces = boundary_info["boundary_faces"]
+
+            # Pull the four AQ_MB face-flux params for the requested layer.
+            face_data: Dict[str, np.ndarray] = {}
+            dates: Optional[np.ndarray] = None
+            for direction, param in AQ_FACE_DIRECTIONS.items():
+                resp = self.read_values(
+                    id_compartment=request.id_compartment,
+                    outtype="MB",
+                    param=param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    id_layer=request.id_layer,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                )
+                face_data[direction] = resp.data
+                if dates is None:
+                    dates = resp.dates
+
+            # Build nested {cell_id: {direction: 1D ndarray}} for boundary cells only.
+            fluxes: Dict[Any, Dict[str, np.ndarray]] = {}
+            for cell_id, directions in boundary_faces.items():
+                fluxes[cell_id] = {
+                    direction: face_data[direction][cell_id - 1, :]
+                    for direction in directions
+                }
+
+            return AqBoundaryFluxResponse(
+                cell_ids=sorted(boundary_faces.keys()),
+                face_directions={cid: list(d) for cid, d in boundary_faces.items()},
+                fluxes=fluxes,
+                dates=dates,
+                meta={
+                    "id_compartment": request.id_compartment,
+                    "id_layer":       request.id_layer,
+                    "outtype":        "MB",
+                    "syear":          request.syear,
+                    "eyear":          request.eyear,
+                    "kind":           request.kind,
+                    "interior_ids":   list(boundary_info["interior_ids"]),
+                },
+            )
+
+        raise ValueError(f"Unknown mask kind: {request.kind!r}")
 
     def transform(
         self,
@@ -729,6 +1050,11 @@ class HydrologicalTwin(HTPersistenceMixin):
             request = arr
             arr = None
         if request is None:
+            # Allow 'data' to be passed via kwargs (e.g. from frontend callers)
+            if arr is None and "data" in kwargs:
+                arr = kwargs.pop("data")
+            if dates is None and "dates" in kwargs:
+                dates = kwargs.pop("dates")
             request = TransformRequest(
                 kind=kind,
                 data=arr,
@@ -818,8 +1144,8 @@ class HydrologicalTwin(HTPersistenceMixin):
         if request.kind == "budget":
             data = request.data
             if data is None:
-                extracted = self.extract(
-                    request=ExtractRequest(
+                extracted = self.fetch(
+                    request=FetchRequest(
                         kind="simulation_matrix",
                         id_compartment=request.id_compartment,
                         outtype="MB",
@@ -856,8 +1182,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             data = request.data
             dates = request.dates
             if data is None or dates is None:
-                extracted = self.extract(
-                    request=ExtractRequest(
+                extracted = self.fetch(
+                    request=FetchRequest(
                         kind="simulation_matrix",
                         id_compartment=request.id_compartment,
                         outtype=request.outtype or "Q",
@@ -1040,9 +1366,9 @@ class HydrologicalTwin(HTPersistenceMixin):
                 ylabel=request.ylabel,
                 df_other_variable=request.df_other_variable,
                 other_variable_config=request.other_variable_config,
-                outFilePath=request.out_file_path,
-                critstart=request.crit_start,
-                critend=request.crit_end,
+                out_file_path=request.out_file_path,
+                crit_start=request.crit_start,
+                crit_end=request.crit_end,
                 aggr=request.aggr,
             )
         elif resolved_kind == "aq_flux_diagram":
@@ -1097,6 +1423,33 @@ class HydrologicalTwin(HTPersistenceMixin):
                 f"Available: {list(self.compartments.keys())}"
             )
         return self.compartments[id_compartment]
+
+    def _resolve_mesh_gdf(self, id_compartment: int, id_layer: int = 0) -> gpd.GeoDataFrame:
+        """Return the mesh GeoDataFrame for a compartment's layer.
+
+        Used by ``mask()`` kinds that operate on cell geometries.
+        """
+        compartment = self.get_compartment(id_compartment)
+        layer_name = compartment.mesh.layers_gis_name[id_layer]
+        return compartment.mesh.layer_gdfs[layer_name]
+
+    def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
+        """Return the cell-id column (name or integer position) configured for a compartment.
+
+        Reads ``config_geom.idColCells[id_compartment]``. Used by ``mask()``
+        polygon kinds to tell ``cells_in_polygon`` which column carries cell ids.
+        """
+        if self.config_geom is None:
+            raise InvalidStateError(
+                f"Cannot resolve cell-id column for compartment {id_compartment}: "
+                "config_geom is not loaded."
+            )
+        id_col = self.config_geom.idColCells.get(id_compartment)
+        if id_col is None:
+            raise ValueError(
+                f"No cell-id column configured for compartment {id_compartment} in idColCells."
+            )
+        return id_col
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
@@ -1168,7 +1521,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             mesh_ids=[p.id_mesh for p in obs.obs_points],
         )
 
-    def extract_values(
+    def read_values(
         self,
         id_compartment: int,
         outtype: str,
@@ -1178,20 +1531,19 @@ class HydrologicalTwin(HTPersistenceMixin):
         id_layer: int = 0,
         cutsdate: Optional[str] = None,
         cutedate: Optional[str] = None,
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract simulated values for a given variable and period (NumPy version)."""
 
         comp = self.get_compartment(id_compartment)
 
-        # Read simulation data (returns NumPy array)
-        sim_matrix = self.temporal.readSimData(
+        # Read simulation data from the on-disk cache populated by load().
+        sim_matrix = self.temporal.load_from_cache(
             compartment=comp,
             outtype=outtype,
             param=param,
-            id_layer=id_layer,
             syear=syear,
             eyear=eyear,
-            tempDirectory=self.temp_directory,
+            temp_directory=self.temp_directory or "",
         )
 
 
@@ -1218,7 +1570,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             sim_matrix = sim_matrix[:, mask]
             dates = dates[mask]
 
-        return ExtractValuesResponse(
+        return ValuesResponse(
             data=sim_matrix,
             dates=dates,
             meta={
@@ -1326,6 +1678,50 @@ class HydrologicalTwin(HTPersistenceMixin):
             cutedate=cutedate,
         )
 
+    def _ensure_disk_cache(self) -> None:
+        """Materialise the on-disk ``.npy`` cache for every compartment and
+        outtype declared by the project configuration.
+
+        For each ``(compartment, outtype)`` whose CaWaQS ``.bin`` file exists,
+        delegates to ``Manage.Temporal.decode_and_cache`` which is a no-op when
+        the cache is already present and covers the configured period.
+        """
+        if self.config_proj is None:
+            return
+        syear = int(self.config_proj.startSim)
+        eyear = int(self.config_proj.endsim)
+        temp_directory = self.temp_directory or self.out_caw_directory or ""
+        if not temp_directory:
+            return
+
+        for comp in self.compartments.values():
+            prefix = f"{comp.compartment}_"
+            for key, params in paramRecs.items():
+                if not key.startswith(prefix):
+                    continue
+                if not params:
+                    continue
+                outtype = key.split("_", 1)[1]
+                if comp.regime == "Transient":
+                    bin_file = os.path.join(
+                        comp.out_caw_path,
+                        f"{comp.compartment}_{outtype}.{syear}{syear + 1}.bin",
+                    )
+                else:
+                    bin_file = os.path.join(
+                        comp.out_caw_path,
+                        f"{comp.compartment}_{outtype}.00.bin",
+                    )
+                if not os.path.exists(bin_file):
+                    continue
+                self.temporal.decode_and_cache(
+                    compartment=comp,
+                    outtype=outtype,
+                    syear=syear,
+                    eyear=eyear,
+                    temp_directory=temp_directory,
+                )
+
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L3 — ESTIMATION LAYER  (comparison, filtering, inference)   ║
     # ╚════════════════════════════════════════════════════════════════╝
@@ -1381,7 +1777,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> dict:
         """Load sim+obs and build per-point NumPy arrays for rendering.
 
-        Combines extract_values + read_observations with per-point slicing.
+        Combines read_values + read_observations with per-point slicing.
         Both render_sim_obs_pdf and render_sim_obs_interactive use this method.
 
         Parameters
@@ -1392,7 +1788,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         simsdate, simedate : int
             Start/end years of simulation.
         plotstart, plotend : str, optional
-            Date strings for sim temporal slicing via extract_values.
+            Date strings for sim temporal slicing via read_values.
         id_layer : int
             Layer ID (default 0).
         aggr : None, float, or str, optional
@@ -1431,7 +1827,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                     context="observations vs mesh spatial linkage",
                 )
 
-        sim_response = self.extract_values(
+        sim_response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -1548,7 +1944,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             'ext_points': ext_points_data,
         }
 
-    def extract_watbal_for_map(
+    def read_watbal_converted(
         self,
         id_compartment: int,
         outtype: str,
@@ -1559,13 +1955,13 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: str = None,
         id_layer: int = 0,
         target_unit: str = 'mm/j',
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract watbal values with vectorized unit conversion.
 
-        Combines extract_values + Operator.convert_watbal_units.
-        Returns ExtractValuesResponse with converted data.
+        Combines read_values + Operator.convert_watbal_units.
+        Returns ValuesResponse with converted data.
         """
-        response = self.extract_values(
+        response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -1647,12 +2043,12 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract, aggregate, and assemble a WATBAL spatial map GeoDataFrame.
 
-        Composes: extract_watbal_for_map → aggregate_for_map → assemble_single_layer_geodataframe.
+        Composes: read_watbal_converted → aggregate_for_map → assemble_single_layer_geodataframe.
         """
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
-        response = self.extract_watbal_for_map(
+        response = self.read_watbal_converted(
             id_compartment=id_compartment, outtype=outtype, param=param,
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
@@ -1687,19 +2083,19 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract rain & ETR, compute effective rainfall, aggregate, assemble GeoDataFrame.
 
-        Composes: extract_watbal_for_map (×2) → compute_effective_rainfall
+        Composes: read_watbal_converted (×2) → compute_effective_rainfall
                   → aggregate_for_map → assemble_single_layer_geodataframe.
         """
         comp_info = self.get_compartment_info(id_compartment)
         layer_info = self.get_layer_info(id_compartment, id_layer)
 
-        rain = self.extract_watbal_for_map(
+        rain = self.read_watbal_converted(
             id_compartment=id_compartment, outtype="MB", param="rain",
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
             id_layer=id_layer, target_unit="mm/j",
         )
-        etr = self.extract_watbal_for_map(
+        etr = self.read_watbal_converted(
             id_compartment=id_compartment, outtype="MB", param="etr",
             syear=syear, eyear=eyear,
             cutsdate=cutsdate, cutedate=cutedate,
@@ -1740,7 +2136,7 @@ class HydrologicalTwin(HTPersistenceMixin):
     ) -> gpd.GeoDataFrame:
         """Extract, aggregate, and assemble an AQ spatial map GeoDataFrame.
 
-        Composes: extract_values → aggregate_for_map → assemble_multi_layer_geodataframe.
+        Composes: read_values → aggregate_for_map → assemble_multi_layer_geodataframe.
 
         :param layers: list of LayerInfo objects (single layer or all layers)
         :param layer_id_offset: starting layer ID (0 for MB, 1 for H)
@@ -1748,7 +2144,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         """
         comp_info = self.get_compartment_info(id_compartment)
 
-        response = self.extract_values(
+        response = self.read_values(
             id_compartment=id_compartment, outtype=outtype, param=param,
             syear=syear, eyear=eyear,
             id_layer=-9999,
@@ -2022,9 +2418,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         ylabel: str,
         df_other_variable: pd.DataFrame = None,
         other_variable_config: dict = None,
-        outFilePath: str = None,
-        critstart: str = None,
-        critend: str = None,
+        out_file_path: str = None,
+        crit_start: str = None,
+        crit_end: str = None,
         aggr: Union[None, float, str] = None,
     ) -> List[str]:
         """Read sim+obs data and render interactive Plotly figure.
@@ -2048,8 +2444,8 @@ class HydrologicalTwin(HTPersistenceMixin):
             aggr=aggr,
             compute_criteria=True,
             criteria_metrics=interactive_criteria_metrics,
-            crit_start=critstart,
-            crit_end=critend,
+            crit_start=crit_start,
+            crit_end=crit_end,
             obs_unit=obs_unit,
         )
 
@@ -2073,9 +2469,9 @@ class HydrologicalTwin(HTPersistenceMixin):
             ylabel=ylabel,
             df_other_variable=df_other_variable,
             other_variable_config=other_variable_config,
-            out_file_path=outFilePath,
-            crit_start=critstart,
-            crit_end=critend,
+            out_file_path=out_file_path,
+            crit_start=crit_start,
+            crit_end=crit_end,
             criteria_per_point=criteria_per_point,
         )
 
@@ -2165,7 +2561,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp = self.get_compartment(id_compartment)
         return comp.obs is not None
 
-    def extract_area_values(
+    def extract_area(
         self,
         id_compartment: int,
         outtype: str,
@@ -2179,7 +2575,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: Optional[str] = None,
         output_csv_path: Optional[Union[str, Path]] = None,
         **operator_kwargs: Any,
-    ) -> ExtractValuesResponse:
+    ) -> ValuesResponse:
         """Extract simulated values for specific cells (area subset).
 
         Target layer: L2 — Data Layer
@@ -2189,8 +2585,8 @@ class HydrologicalTwin(HTPersistenceMixin):
         2. **Spatial operator**: Provide spatial_operator name to auto-identify cells
 
         Typical workflows:
-        - Manual: data = twin.extract_area_values(cell_ids=[1,2,3], ...)
-        - Catchment: data = twin.extract_area_values(
+        - Manual: data = twin.extract_area(cell_ids=[1,2,3], ...)
+        - Catchment: data = twin.extract_area(
                          spatial_operator='catchment_cells',
                          obs_point=pt, network_gis_layer=layer, ...)
         - Then analyze: agg = twin.apply_temporal_operator(data.data, ...)
@@ -2233,13 +2629,13 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Returns
         -------
-        ExtractValuesResponse
+        ValuesResponse
             Contains data for only the specified/identified cells
 
         Examples
         --------
         Manual cell selection:
-            >>> data = twin.extract_area_values(
+            >>> data = twin.extract_area(
             ...     id_compartment=0,
             ...     cell_ids=np.array([103, 245, 567]),
             ...     outtype='MB',
@@ -2249,7 +2645,7 @@ class HydrologicalTwin(HTPersistenceMixin):
             ... )
 
         Catchment-based extraction:
-            >>> data = twin.extract_area_values(
+            >>> data = twin.extract_area(
             ...     id_compartment=0,
             ...     spatial_operator='catchment_cells',
             ...     obs_point=observation_point,
@@ -2266,7 +2662,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         comp = self.get_compartment(id_compartment)
 
         # First, extract all cells
-        full_response = self.extract_values(
+        full_response = self.read_values(
             id_compartment=id_compartment,
             outtype=outtype,
             param=param,
@@ -2279,7 +2675,7 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         # Subset to requested cells using Extractor
         # Support both manual cell_ids and spatial_operator modes
-        subset_data = Extractor().extract_spatial(
+        subset_data = Extractor().apply_spatial_mask(
             data=full_response.data,
             cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
             compartment=comp,
@@ -2331,7 +2727,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         elif cell_ids is not None:
             meta["cell_ids"] = cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids
 
-        return ExtractValuesResponse(
+        return ValuesResponse(
             data=subset_data,
             dates=full_response.dates,
             csv_path=csv_path,

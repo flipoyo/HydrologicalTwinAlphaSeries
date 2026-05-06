@@ -91,3 +91,15 @@ obs_config = {
     2: {"id_col_time": 1, "id_col_data": 3},
     1: {"id_col_time": 2, "id_col_data": 4},
 }
+
+# AQ face flux direction → CaWaQS AQ_MB parameter name.
+# Sign convention (CaWaQS): positive = flux entering the cell from that direction.
+# Direction is named from the inside cell's perspective relative to its outside
+# neighbour; the convention preserves the original feature-branch labelling
+# (cf. branch_migration/frontend_50.patch L2174-2181).
+AQ_FACE_DIRECTIONS = {
+    "east":  "flux_x_one",
+    "west":  "flux_x_two",
+    "south": "flux_y_one",
+    "north": "flux_y_two",
+}

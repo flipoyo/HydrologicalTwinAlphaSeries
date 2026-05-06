@@ -281,7 +281,7 @@ class Extractor:
     def __init__(self):
         pass
 
-    def extract_spatial(
+    def apply_spatial_mask(
         self,
         data: np.ndarray,
         cell_ids: Optional[List[int]] = None,
@@ -291,15 +291,15 @@ class Extractor:
         **operator_kwargs
     ) -> np.ndarray:
         """
-        Extract data for specific cells based on their IDs or spatial operator.
+        Apply a spatial mask to select data for specific cells.
 
         Two modes of operation:
-        1. Direct extraction: provide cell_ids explicitly
+        1. Direct selection: provide cell_ids explicitly
         2. Operator-based: provide spatial_operator name (translates to cell_ids internally)
 
         :param data: Array (n_cells, n_timesteps) of simulated values
         :type data: np.ndarray
-        :param cell_ids: List of cell IDs to extract. Use for manual selection.
+        :param cell_ids: List of cell IDs to select. Use for manual selection.
         :type cell_ids: Optional[List[int]]
         :param compartment: Compartment object (required for spatial operators)
         :type compartment: Optional[Compartment]
@@ -320,10 +320,10 @@ class Extractor:
 
         Examples:
             >>> # Manual cell selection
-            >>> extractor.extract_spatial(data, cell_ids=[103, 245, 567])
+            >>> extractor.apply_spatial_mask(data, cell_ids=[103, 245, 567])
 
-            >>> # Catchment-based extraction
-            >>> extractor.extract_spatial(
+            >>> # Catchment-based selection
+            >>> extractor.apply_spatial_mask(
             ...     data,
             ...     spatial_operator='catchment_cells',
             ...     compartment=comp,
@@ -410,7 +410,7 @@ class Extractor:
                 f"Available: 'catchment_cells', 'aquifer_outcropping'"
             )
     
-    def extract_temporal(
+    def apply_temporal_mask(
         self,
         data: np.ndarray,
         dates: np.ndarray,
@@ -418,7 +418,7 @@ class Extractor:
         end_date: Union[str, np.datetime64]
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Extract data for a specific time period based on date range.
+        Apply a temporal mask to select data for a specific time period.
         
         :param data: Array (n_cells, n_timesteps) of simulated values
         :type data: np.ndarray
@@ -428,12 +428,12 @@ class Extractor:
         :type start_date: Union[str, np.datetime64]
         :param end_date: End date (format: 'YYYY-MM-DD' or datetime64)
         :type end_date: Union[str, np.datetime64]
-        :return: Tuple of (extracted_data, extracted_dates)
+        :return: Tuple of (selected_data, selected_dates)
         :rtype: Tuple[np.ndarray, np.ndarray]
         
         Example:
-            >>> # Extract only data from 2020-2022
-            >>> data_subset, dates_subset = extractor.extract_temporal(
+            >>> # Select only data from 2020-2022
+            >>> data_subset, dates_subset = extractor.apply_temporal_mask(
             ...     data, dates, '2020-01-01', '2022-12-31'
             ... )
         """

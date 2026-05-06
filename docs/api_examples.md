@@ -18,10 +18,10 @@ ht = HydrologicalTwin(
 )
 ```
 
-## Extracting a simulation matrix
+## Reading a simulation matrix
 
 ```python
-resp = ht.extract_values(
+resp = ht.read_values(
     id_compartment=1,
     outtype="MB",
     param="recharge",
@@ -63,7 +63,7 @@ print(
         "configure",
         "load",
         "describe",
-        "extract",
+        "fetch",
         "transform",
         "render",
         "export",
