@@ -37,14 +37,17 @@ Do not drive HTAS through internal classes from \texttt{domain/},
 \section{Installation}
 
 \begin{verbatim}
-python -m pip install HydrologicalTwinAlphaSeries
+pixi install
 \end{verbatim}
 
-For local development inside this repository:
+To activate the repository workflow described in the project README:
 
 \begin{verbatim}
-python -m pip install -e .[dev]
+pixi run dev-setup
 \end{verbatim}
+
+Run the examples from the configured Pixi environment, for example through
+\texttt{pixi run python} or from an activated Pixi shell.
 
 \section{Public imports}
 
