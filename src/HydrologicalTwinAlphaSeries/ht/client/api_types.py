@@ -66,3 +66,21 @@ class SpatialMapAqResult:
 
     gdf: Any
     layer_name: str
+
+
+@dataclass(frozen=True)
+class CompareSimObsResult:
+    """Result of :meth:`HydrologicalTwinClient.compare_sim_obs`.
+
+    :param mode: ``"pdf"`` or ``"interactive"``.
+    :param pdf_path: Path to the PDF written in ``"pdf"`` mode, else ``None``.
+    :param html_path: Path to the HTML written in ``"interactive"`` mode, else
+        ``None``.
+    :param output_directory: Directory the artefacts were written to (matches
+        the ``directory`` / containing folder of ``out_file_path``).
+    """
+
+    mode: str
+    pdf_path: Optional[str] = None
+    html_path: Optional[str] = None
+    output_directory: str = ""

@@ -18,6 +18,7 @@ import numpy as np
 
 from .api_types import (
     BudgetBarplotResult,
+    CompareSimObsResult,
     HydrologicalRegimeResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
@@ -358,3 +359,124 @@ def run_spatial_map_aq(
     layer_name = f"{name_prefix}_{res_name}_{fz_label}_{ag_label}_[{display_unit}]"
 
     return SpatialMapAqResult(gdf=gdf, layer_name=layer_name)
+
+
+def _aggr_label(aggr) -> str:
+    """Compose the filename label for an aggregator value.
+
+    - ``None`` -> ``"DAILY"``  (used for Transient regime where no aggregator applies)
+    - ``float`` quantile -> ``"Q<value>"``
+    - ``str`` (``"mean"``, ``"min"``, ``"max"``, ``"sum"``) -> uppercase
+    """
+    if aggr is None:
+        return "DAILY"
+    if isinstance(aggr, float):
+        return f"Q{aggr}"
+    return str(aggr).upper()
+
+
+def run_compare_sim_obs(
+    twin,
+    mode: str,
+    compartment_name: str,
+    outtype: str,
+    param: str,
+    ylabel: str,
+    obs_unit: str,
+    plot_period: Tuple[str, str],
+    crit_period: Tuple[str, str],
+    directory: str,
+    id_layer: int = 0,
+    aggr=None,
+    regime: str = "Transient",
+) -> CompareSimObsResult:
+    """Render a sim-vs-obs comparison plot, either as PDF or interactive HTML.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param mode: ``"pdf"`` (static, multi-page PDF) or ``"interactive"``
+        (single HTML written via Plotly).
+    :param compartment_name: ``"AQ"`` or ``"HYD"``.
+    :param outtype: HT outtype code (``"H"`` or ``"Q"``).
+    :param param: HT param code (``"piezhead"`` or ``"discharge"``).
+    :param ylabel: Y-axis label shown on the plots.
+    :param obs_unit: Display unit string for the observations.
+    :param plot_period: ``(plotstart, plotend)`` as ``YYYY-MM-DD`` strings.
+    :param crit_period: ``(critstart, critend)`` as ``YYYY-MM-DD`` strings.
+    :param directory: Output directory (artefacts are written here).
+    :param id_layer: Layer index for the developer fetch.
+    :param aggr: Aggregator (``None``, a numeric quantile, or
+        ``"mean"``/``"min"``/``"max"``).
+    :param regime: ``"Steady"`` or ``"Transient"``; affects the interactive
+        output filename.
+    :returns: Paths to the artefacts produced.
+    """
+    if mode not in ("pdf", "interactive"):
+        raise ValueError(f"mode must be 'pdf' or 'interactive', got {mode!r}")
+
+    id_compartment = _resolve_compartment_id(twin, compartment_name)
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+    plotstart, plotend = plot_period
+    critstart, critend = crit_period
+    aggr_label = _aggr_label(aggr)
+    name_file = f"SIM_OBS_{compartment_name}_{aggr_label}"
+
+    if mode == "pdf":
+        render_result = twin.render(
+            kind="sim_obs_pdf",
+            id_compartment=id_compartment,
+            outtype=outtype,
+            param=param,
+            simsdate=syear,
+            simedate=eyear,
+            plotstartdate=plotstart,
+            plotenddate=plotend,
+            id_layer=id_layer,
+            directory=directory,
+            name_file=name_file,
+            ylabel=ylabel,
+            obs_unit=obs_unit,
+            crit_start=critstart,
+            crit_end=critend,
+            aggr=aggr,
+        )
+        artefacts = list(render_result.artefacts)
+        pdf_path = next((p for p in artefacts if p.lower().endswith(".pdf")), None)
+        return CompareSimObsResult(
+            mode="pdf",
+            pdf_path=pdf_path,
+            output_directory=directory,
+        )
+
+    if regime == "Steady":
+        out_file_path = os.path.join(directory, f"{name_file}_steady.html")
+    else:
+        out_file_path = os.path.join(
+            directory, f"{name_file}_{critstart}_{critend}.html"
+        )
+
+    render_result = twin.render(
+        kind="sim_obs_interactive",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        simsdate=syear,
+        simedate=eyear,
+        plotstart=plotstart,
+        plotend=plotend,
+        obs_unit=obs_unit,
+        ylabel=ylabel,
+        df_other_variable=None,
+        other_variable_config=None,
+        out_file_path=out_file_path,
+        crit_start=critstart,
+        crit_end=critend,
+        aggr=aggr,
+    )
+    artefacts = list(render_result.artefacts)
+    html_path = next((p for p in artefacts if p.lower().endswith(".html")), out_file_path)
+    return CompareSimObsResult(
+        mode="interactive",
+        html_path=html_path,
+        output_directory=directory,
+    )
