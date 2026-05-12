@@ -9,7 +9,7 @@ api_types in ``..api_types`` so the client surface can evolve independently
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 @dataclass(frozen=True)
@@ -37,3 +37,32 @@ class HydrologicalRegimeResult:
     png_paths: List[str] = field(default_factory=list)
     pdf_path: Optional[str] = None
     savepath: str = ""
+
+
+@dataclass(frozen=True)
+class SpatialMapWatbalResult:
+    """Result of :meth:`HydrologicalTwinClient.spatial_map_watbal`.
+
+    :param gdf: GeoDataFrame holding the cell geometries plus the aggregated
+        water-balance variable as an attribute column.
+    :param layer_name: Composed display name for the layer
+        (``"<param>_<syear><eyear> <fz> <agg>[<unit>]"``); the QGIS dialog uses
+        it as-is when converting the GeoDataFrame to a vector layer.
+    """
+
+    gdf: Any
+    layer_name: str
+
+
+@dataclass(frozen=True)
+class SpatialMapAqResult:
+    """Result of :meth:`HydrologicalTwinClient.spatial_map_aq`.
+
+    :param gdf: GeoDataFrame holding the AQ cell geometries plus the
+        aggregated parameter as an attribute column.
+    :param layer_name: Composed display name for the layer
+        (``"<prefix>_<resolution>_<fz>_<agg>_[<unit>]"``).
+    """
+
+    gdf: Any
+    layer_name: str

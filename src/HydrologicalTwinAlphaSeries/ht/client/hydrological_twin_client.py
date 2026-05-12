@@ -13,7 +13,12 @@ This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
 from __future__ import annotations
 
 from . import operations
-from .api_types import BudgetBarplotResult, HydrologicalRegimeResult
+from .api_types import (
+    BudgetBarplotResult,
+    HydrologicalRegimeResult,
+    SpatialMapAqResult,
+    SpatialMapWatbalResult,
+)
 
 
 class HydrologicalTwinClient:
@@ -32,3 +37,9 @@ class HydrologicalTwinClient:
 
     def hydrological_regime(self, **kwargs) -> HydrologicalRegimeResult:
         return operations.run_hydrological_regime(self.twin, **kwargs)
+
+    def spatial_map_watbal(self, **kwargs) -> SpatialMapWatbalResult:
+        return operations.run_spatial_map_watbal(self.twin, **kwargs)
+
+    def spatial_map_aq(self, **kwargs) -> SpatialMapAqResult:
+        return operations.run_spatial_map_aq(self.twin, **kwargs)

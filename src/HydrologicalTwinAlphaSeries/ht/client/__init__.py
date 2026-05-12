@@ -3,11 +3,18 @@
 See :class:`HydrologicalTwinClient` for the entry point.
 """
 
-from .api_types import BudgetBarplotResult, HydrologicalRegimeResult
+from .api_types import (
+    BudgetBarplotResult,
+    HydrologicalRegimeResult,
+    SpatialMapAqResult,
+    SpatialMapWatbalResult,
+)
 from .hydrological_twin_client import HydrologicalTwinClient
 
 __all__ = [
     "HydrologicalTwinClient",
     "BudgetBarplotResult",
     "HydrologicalRegimeResult",
+    "SpatialMapWatbalResult",
+    "SpatialMapAqResult",
 ]
