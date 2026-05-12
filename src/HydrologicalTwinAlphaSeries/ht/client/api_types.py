@@ -69,6 +69,49 @@ class SpatialMapAqResult:
 
 
 @dataclass(frozen=True)
+class CriteriaPointResult:
+    """Per-observation-point statistical-criteria result.
+
+    :param name: Display name of the observation point.
+    :param point_id: External id of the observation point.
+    :param layer_id: Index of the aquifer / hydro layer the point sits on.
+    :param geometry: Geometry of the point (e.g. shapely / WKT-compatible);
+        the dialog converts this to a QGIS feature.
+    :param criteria: Metric-key → numeric value mapping computed by the
+        criteria transform.
+    """
+
+    name: str
+    point_id: Any
+    layer_id: Any
+    geometry: Any
+    criteria: dict
+
+
+@dataclass(frozen=True)
+class StatisticalCriteriaResult:
+    """Result of :meth:`HydrologicalTwinClient.statistical_criteria`.
+
+    :param points: Per-observation-point criteria (one entry per point).
+    :param metrics: Ordered list of metric keys actually computed; matches
+        both the text-file header columns and the keys in
+        :attr:`CriteriaPointResult.criteria`.
+    :param compartment_name: ``"AQ"`` or ``"HYD"``.
+    :param period: ``(crit_start, crit_end)`` as ``YYYY-MM-DD`` strings.
+    :param txt_path: Path to the per-point criteria text file.
+    :param aq_layer_txt_path: Path to the AQ globals+by-layer text file
+        (only set when ``compartment_name == "AQ"``).
+    """
+
+    points: List[CriteriaPointResult] = field(default_factory=list)
+    metrics: List[str] = field(default_factory=list)
+    compartment_name: str = ""
+    period: tuple = ("", "")
+    txt_path: str = ""
+    aq_layer_txt_path: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class CompareSimObsResult:
     """Result of :meth:`HydrologicalTwinClient.compare_sim_obs`.
 

@@ -19,9 +19,11 @@ import numpy as np
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
+    CriteriaPointResult,
     HydrologicalRegimeResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
+    StatisticalCriteriaResult,
 )
 
 
@@ -479,4 +481,162 @@ def run_compare_sim_obs(
         mode="interactive",
         html_path=html_path,
         output_directory=directory,
+    )
+
+
+DEFAULT_CRITERIA_METRICS = (
+    "n_obs", "avg_obs", "avg_sim", "sum_ratio", "std_obs", "std_sim", "std_ratio",
+)
+
+
+def _write_criteria_text_file(path: str, metrics: Sequence[str], rows: Sequence[Tuple[str, str, dict]]) -> None:
+    """Write the per-point criteria text file (header + one row per point).
+
+    :param path: Output path.
+    :param metrics: Ordered metric keys, used both for header columns and row order.
+    :param rows: Iterable of ``(name, point_id, criteria_dict)`` tuples.
+    """
+    with open(path, "w") as f:
+        f.write("NAME\tCODE\t" + "\t".join(metrics) + "\t")
+        for name, point_id, crits in rows:
+            f.write(f"\n{name}\t{point_id}")
+            for k in metrics:
+                f.write(f"\t{crits[k]}")
+
+
+def _write_aq_global_and_by_layer(
+    path: str,
+    global_metrics: dict,
+    by_layer: dict,
+) -> None:
+    """Write the AQ-specific globals + by-layer criteria text file."""
+    with open(path, "w") as f:
+        f.write("__________________ GLOBALS STATISTICALS CRITERIA __________________\n")
+        for crit_name, crit_value in global_metrics.items():
+            f.write(f"\t{crit_name} : {crit_value}\n")
+        f.write("\n\n\n__________________ STATISTICALS CRITERIA BY AQ LAYERS ________________\n")
+        for id_layer in sorted(set(by_layer.keys())):
+            layer_crits = by_layer[id_layer]
+            f.write("- - - - - - - - - - - - - - - - - - -\n")
+            f.write(f"\t\t ID LAYER : {id_layer}\n")
+            f.write("- - - - - - - - - - - - - - - - - - -\n")
+            for crit_name, crit_value in layer_crits.items():
+                f.write(f"\t{crit_name} : {crit_value}\n")
+
+
+def run_statistical_criteria(
+    twin,
+    compartment_name: str,
+    outtype: str,
+    param: str,
+    period: Tuple[str, str],
+    output_dir: str,
+    metrics: Sequence[str] = None,
+    id_layer: int = 0,
+    aggr=None,
+    obs_unit: str = None,
+) -> StatisticalCriteriaResult:
+    """Compute statistical criteria at observation points and persist them.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param compartment_name: ``"AQ"`` or ``"HYD"``.
+    :param outtype: HT outtype code (``"H"`` or ``"Q"``).
+    :param param: HT param code (``"piezhead"`` or ``"discharge"``).
+    :param period: ``(crit_start, crit_end)`` as ``YYYY-MM-DD`` strings; the
+        same period is used for the plot range and the criteria range.
+    :param output_dir: Directory in which the criteria text files are
+        written.
+    :param metrics: User-selected metrics (e.g. ``"kge"``, ``"nash"``,
+        ``"rmse"``, ``"pbias"``, ``"avg_ratio"``). The default block
+        (``n_obs``, ``avg_obs``, ...) is always appended.
+    :param id_layer: Layer index for the developer fetch.
+    :param aggr: Aggregator for Steady regime (``None`` in Transient).
+    :param obs_unit: Observation unit, used by the developer fetch to convert
+        units when the dialog requested ``l/s``.
+    :returns: Per-point criteria, the ordered metric list, and the paths of
+        the text artefacts.
+    """
+    id_compartment = _resolve_compartment_id(twin, compartment_name)
+    obs_info = twin.get_observation_info(id_compartment)
+    if obs_info is None:
+        raise ValueError(
+            f"Compartment {compartment_name!r} has no observation points; "
+            f"cannot compute statistical criteria."
+        )
+
+    user_metrics = list(metrics) if metrics else []
+    listed_crits = user_metrics + [m for m in DEFAULT_CRITERIA_METRICS if m not in user_metrics]
+
+    crit_start, crit_end = period
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    bundle_response = twin.fetch(
+        kind="sim_obs_bundle",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        syear=syear,
+        eyear=eyear,
+        plotstart=crit_start,
+        plotend=crit_end,
+        id_layer=id_layer,
+        agg=aggr,
+        compute_criteria=True,
+        criteria_metrics=listed_crits,
+        crit_start=crit_start,
+        crit_end=crit_end,
+        obs_unit=obs_unit,
+    )
+
+    criteria_response = twin.transform(
+        kind="criteria",
+        bundle=bundle_response,
+        metrics=listed_crits,
+    )
+
+    points = []
+    rows = []
+    for i, _ in enumerate(criteria_response.per_point):
+        crits = criteria_response.per_point[i]["criteria"]
+        pt_name = obs_info.point_names[i]
+        pt_id = obs_info.point_ids[i]
+        pt_layer = obs_info.layer_ids[i]
+        pt_geom = obs_info.geometries[i]
+        points.append(
+            CriteriaPointResult(
+                name=pt_name,
+                point_id=pt_id,
+                layer_id=pt_layer,
+                geometry=pt_geom,
+                criteria=dict(crits),
+            )
+        )
+        rows.append((pt_name, pt_id, crits))
+
+    os.makedirs(output_dir, exist_ok=True)
+    txt_path = os.path.join(
+        output_dir, f"CRIT_STAT_{param}_{crit_start}{crit_end}.txt"
+    )
+    _write_criteria_text_file(txt_path, listed_crits, rows)
+
+    aq_layer_txt_path = None
+    if compartment_name == "AQ":
+        aq_layer_txt_path = os.path.join(
+            output_dir,
+            f"CRIT_STAT_BY_LAYER_AQ_{crit_start}{crit_end}.txt",
+        )
+        _write_aq_global_and_by_layer(
+            aq_layer_txt_path,
+            dict(criteria_response.global_metrics),
+            {k: dict(v) for k, v in criteria_response.by_layer.items()},
+        )
+
+    return StatisticalCriteriaResult(
+        points=points,
+        metrics=listed_crits,
+        compartment_name=compartment_name,
+        period=(crit_start, crit_end),
+        txt_path=txt_path,
+        aq_layer_txt_path=aq_layer_txt_path,
     )

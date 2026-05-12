@@ -6,9 +6,11 @@ See :class:`HydrologicalTwinClient` for the entry point.
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
+    CriteriaPointResult,
     HydrologicalRegimeResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
+    StatisticalCriteriaResult,
 )
 from .hydrological_twin_client import HydrologicalTwinClient
 
@@ -19,4 +21,6 @@ __all__ = [
     "SpatialMapWatbalResult",
     "SpatialMapAqResult",
     "CompareSimObsResult",
+    "StatisticalCriteriaResult",
+    "CriteriaPointResult",
 ]

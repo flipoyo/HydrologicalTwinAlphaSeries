@@ -19,6 +19,7 @@ from .api_types import (
     HydrologicalRegimeResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
+    StatisticalCriteriaResult,
 )
 
 
@@ -47,6 +48,8 @@ class HydrologicalTwinClient:
       recharge, surface overflow
     - :meth:`compare_sim_obs` — sim-vs-obs comparison plot in PDF or
       interactive HTML mode
+    - :meth:`statistical_criteria` — per-observation-point performance
+      metrics (KGE, NSE, RMSE, ...) plus globals/by-layer for AQ
     """
 
     def __init__(self, twin):
@@ -66,3 +69,6 @@ class HydrologicalTwinClient:
 
     def compare_sim_obs(self, **kwargs) -> CompareSimObsResult:
         return operations.run_compare_sim_obs(self.twin, **kwargs)
+
+    def statistical_criteria(self, **kwargs) -> StatisticalCriteriaResult:
+        return operations.run_statistical_criteria(self.twin, **kwargs)
