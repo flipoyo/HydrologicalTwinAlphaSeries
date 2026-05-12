@@ -8,6 +8,9 @@ from .api_types import (
     CompareSimObsResult,
     CriteriaPointResult,
     HydrologicalRegimeResult,
+    MaskAqBoundaryResult,
+    MaskHydBoundaryResult,
+    MaskWatbalResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
     StatisticalCriteriaResult,
@@ -23,4 +26,7 @@ __all__ = [
     "CompareSimObsResult",
     "StatisticalCriteriaResult",
     "CriteriaPointResult",
+    "MaskWatbalResult",
+    "MaskHydBoundaryResult",
+    "MaskAqBoundaryResult",
 ]

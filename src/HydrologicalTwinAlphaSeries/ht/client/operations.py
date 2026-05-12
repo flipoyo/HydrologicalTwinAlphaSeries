@@ -21,6 +21,9 @@ from .api_types import (
     CompareSimObsResult,
     CriteriaPointResult,
     HydrologicalRegimeResult,
+    MaskAqBoundaryResult,
+    MaskHydBoundaryResult,
+    MaskWatbalResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
     StatisticalCriteriaResult,
@@ -639,4 +642,285 @@ def run_statistical_criteria(
         period=(crit_start, crit_end),
         txt_path=txt_path,
         aq_layer_txt_path=aq_layer_txt_path,
+    )
+
+
+def _mesh_gdf_for(twin, id_compartment: int, id_layer: int = 0):
+    """Return the mesh GeoDataFrame for ``(compartment, layer)`` on a raw twin."""
+    compartment = twin.compartments[id_compartment]
+    layer_name = compartment.mesh.layers_gis_name[id_layer]
+    return compartment.mesh.layer_gdfs[layer_name]
+
+
+def _cell_id_col_name(twin, id_compartment: int, gdf) -> str:
+    """Resolve the cell-id column name (translate integer position to a name)."""
+    id_col = twin.config_geom.idColCells[id_compartment]
+    if isinstance(id_col, int):
+        return gdf.columns[id_col]
+    return id_col
+
+
+def _artefact_basename(compartment: str, param: str, outtype: str, syear, eyear) -> str:
+    """Filename root; the parent folder name already carries the area."""
+    years = f"{syear}-{eyear}"
+    if outtype:
+        return f"{compartment}_{param}_{outtype}_{years}"
+    return f"{compartment}_{param}_{years}"
+
+
+def run_mask_watbal(
+    twin,
+    polygon,
+    polygon_crs,
+    params: Sequence[str],
+    syear,
+    eyear,
+    output_dir: str,
+    temp_dir: str,
+    area_name: str,
+) -> MaskWatbalResult:
+    """Mask WATBAL cells inside a polygon and persist per-param time series.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon) defining the area.
+    :param polygon_crs: CRS string for ``polygon`` (e.g. ``"EPSG:2154"``).
+    :param params: WATBAL backend params (``"rain"``, ``"etp"``, ``"runoff"``,
+        ``"inf"``, ``"etr"``).
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for CSV artefacts.
+    :param temp_dir: Directory for numpy binary artefacts.
+    :param area_name: Display / filename token for the masked area.
+    :returns: Mesh-joined cells GDF + per-param artefact paths.
+    """
+    import pandas as pd  # noqa: PLC0415 — local import keeps top-of-module light
+
+    watbal_id = _resolve_compartment_id(twin, "WATBAL")
+
+    cells_response = twin.mask(
+        kind="polygon_cells",
+        id_compartment=watbal_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+
+    mesh_gdf = _mesh_gdf_for(twin, watbal_id)
+    id_col = _cell_id_col_name(twin, watbal_id, mesh_gdf)
+    cells_gdf = mesh_gdf[mesh_gdf[id_col].isin(cells_response.cell_ids)].copy()
+    layer_name = f"{area_name}_WATBAL_cells"
+
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(temp_dir, exist_ok=True)
+    artefacts = []
+    for param in params:
+        response = twin.mask(
+            kind="area_values",
+            id_compartment=watbal_id,
+            outtype="MB",
+            param=param,
+            syear=syear,
+            eyear=eyear,
+            polygon=polygon,
+            polygon_crs=polygon_crs,
+        )
+        base = _artefact_basename("WATBAL", param, "MB", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        npy_path = os.path.join(temp_dir, f"{base}.npy")
+        df = pd.DataFrame(
+            response.data.T,
+            index=pd.Index(response.dates, name="date"),
+            columns=[f"cell_{i}" for i in range(response.data.shape[0])],
+        )
+        df.to_csv(csv_path)
+        np.save(npy_path, response.data)
+        artefacts.append(csv_path)
+        artefacts.append(npy_path)
+
+    return MaskWatbalResult(
+        gdf=cells_gdf,
+        layer_name=layer_name,
+        artefacts=artefacts,
+    )
+
+
+def run_mask_hyd_boundary(
+    twin,
+    polygon,
+    polygon_crs,
+    syear,
+    eyear,
+    output_dir: str,
+    area_name: str,
+) -> MaskHydBoundaryResult:
+    """Mask HYD reaches on the polygon boundary + inside, and persist boundary fluxes.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon).
+    :param polygon_crs: CRS string for ``polygon``.
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for the per-reach signed-Q CSV.
+    :param area_name: Display / filename token for the masked area.
+    :returns: Boundary reaches gdf, inside reaches gdf, boundary-crossing
+        points gdf, plus the CSV artefact path (when fluxes are non-empty).
+    """
+    import geopandas as gpd  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415
+    from shapely.geometry import MultiPolygon  # noqa: PLC0415
+
+    hyd_id = _resolve_compartment_id(twin, "HYD")
+
+    boundary_resp = twin.mask(
+        kind="boundary_hyd",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    inside_resp = twin.mask(
+        kind="polygon_cells",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    flux_resp = twin.mask(
+        kind="boundary_hyd_flux",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+        syear=syear,
+        eyear=eyear,
+    )
+
+    network_gdf = _mesh_gdf_for(twin, hyd_id)
+    id_col = _cell_id_col_name(twin, hyd_id, network_gdf)
+    all_reach_ids = sorted(set(boundary_resp.reach_ids) | set(inside_resp.cell_ids))
+    boundary_set = set(boundary_resp.reach_ids)
+    inside_gdf = network_gdf[network_gdf[id_col].isin(all_reach_ids)].copy()
+    if not inside_gdf.empty:
+        inside_gdf["is_boundary"] = inside_gdf[id_col].isin(boundary_set)
+    inside_layer_name = f"{area_name}_HYD_reaches"
+
+    boundary_gdf = network_gdf[network_gdf[id_col].isin(boundary_resp.reach_ids)].copy()
+
+    components = (
+        list(polygon.geoms) if isinstance(polygon, MultiPolygon) else [polygon]
+    )
+    crossing_reach_ids = []
+    crossing_points = []
+    for reach_id, reach_geom in zip(boundary_resp.reach_ids, boundary_resp.geometries):
+        for component in components:
+            intersection = reach_geom.intersection(component.exterior)
+            if intersection.is_empty:
+                continue
+            if intersection.geom_type == "Point":
+                crossing_reach_ids.append(reach_id)
+                crossing_points.append(intersection)
+            elif intersection.geom_type == "MultiPoint":
+                for pt in intersection.geoms:
+                    crossing_reach_ids.append(reach_id)
+                    crossing_points.append(pt)
+
+    if crossing_points:
+        flux_gdf = gpd.GeoDataFrame(
+            {"reach_id": crossing_reach_ids},
+            geometry=crossing_points,
+            crs=polygon_crs,
+        )
+        flux_layer_name = f"{area_name}_HYD_boundary_points"
+    else:
+        flux_gdf = None
+        flux_layer_name = None
+
+    artefacts = []
+    if flux_resp.reach_ids:
+        os.makedirs(output_dir, exist_ok=True)
+        cols = {
+            f"reach_{rid}_Q_m3s": flux_resp.Q[i, :]
+            for i, rid in enumerate(flux_resp.reach_ids)
+        }
+        csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
+        base = _artefact_basename("HYD", "boundary", "Q", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        csv_df.to_csv(csv_path)
+        artefacts.append(csv_path)
+
+    return MaskHydBoundaryResult(
+        boundary_gdf=boundary_gdf,
+        inside_gdf=inside_gdf,
+        flux_gdf=flux_gdf,
+        layer_names=(inside_layer_name, flux_layer_name, None),
+        artefacts=artefacts,
+    )
+
+
+def run_mask_aq_boundary(
+    twin,
+    polygon,
+    polygon_crs,
+    syear,
+    eyear,
+    output_dir: str,
+    area_name: str,
+) -> MaskAqBoundaryResult:
+    """Mask AQ cells touching the polygon boundary and persist face-flux time series.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon).
+    :param polygon_crs: CRS string for ``polygon``.
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for the per-(cell, dir) flux CSV.
+    :param area_name: Display / filename token for the masked area.
+    :returns: AQ boundary-edges gdf + CSV artefact path (when fluxes are
+        non-empty). The fluxes themselves are written in m³/d.
+    """
+    import geopandas as gpd  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415
+
+    aq_id = _resolve_compartment_id(twin, "AQ")
+
+    response = twin.mask(
+        kind="boundary_aq",
+        id_compartment=aq_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    flux_resp = twin.mask(
+        kind="boundary_aq_flux",
+        id_compartment=aq_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+        syear=syear,
+        eyear=eyear,
+    )
+
+    if response.edge_geometries:
+        cells_gdf = gpd.GeoDataFrame(
+            {"cell_id": response.cell_ids},
+            geometry=list(response.edge_geometries),
+            crs=polygon_crs,
+        )
+        cells_layer_name = f"{area_name}_AQ_boundary_edges"
+    else:
+        cells_gdf = None
+        cells_layer_name = None
+
+    artefacts = []
+    if flux_resp.fluxes:
+        os.makedirs(output_dir, exist_ok=True)
+        cols = {}
+        for cell_id, dir_fluxes in flux_resp.fluxes.items():
+            for direction, arr in dir_fluxes.items():
+                cols[f"{cell_id}_{direction}_m3d"] = arr * 86400.0
+        csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
+        base = _artefact_basename("AQ", "boundary", "flux", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        csv_df.to_csv(csv_path)
+        artefacts.append(csv_path)
+
+    return MaskAqBoundaryResult(
+        cells_gdf=cells_gdf,
+        flux_gdf=None,
+        layer_names=(cells_layer_name, None),
+        artefacts=artefacts,
     )

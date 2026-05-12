@@ -127,3 +127,66 @@ class CompareSimObsResult:
     pdf_path: Optional[str] = None
     html_path: Optional[str] = None
     output_directory: str = ""
+
+
+@dataclass(frozen=True)
+class MaskWatbalResult:
+    """Result of :meth:`HydrologicalTwinClient.mask_watbal`.
+
+    :param gdf: GeoDataFrame of the masked WATBAL cells, already joined to
+        their mesh geometries. The caller can pass this straight to
+        ``convertGdfToVectorLayer``.
+    :param layer_name: Display name for the cells layer (one per area).
+    :param artefacts: On-disk artefact paths produced by the run, one CSV +
+        one .npy per requested param.
+    """
+
+    gdf: Any
+    layer_name: str
+    artefacts: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MaskHydBoundaryResult:
+    """Result of :meth:`HydrologicalTwinClient.mask_hyd_boundary`.
+
+    :param boundary_gdf: GeoDataFrame of HYD reaches that intersect the
+        polygon boundary (geometries are the original reach polylines).
+    :param inside_gdf: GeoDataFrame of HYD reaches that lie inside the
+        polygon (centroid-in test). Includes the boundary reaches with an
+        ``is_boundary`` column.
+    :param flux_gdf: Point GeoDataFrame of boundary crossings — one point
+        per (reach × polygon-exterior) intersection, with a ``reach_id``
+        attribute.
+    :param layer_names: Display names for the three layers, in
+        ``(inside, flux, boundary)`` order. ``flux`` may be ``None`` when
+        no crossings are found.
+    :param artefacts: On-disk artefact paths (one CSV with the per-reach
+        signed-Q time series, when fluxes are non-empty).
+    """
+
+    boundary_gdf: Any
+    inside_gdf: Any
+    flux_gdf: Any
+    layer_names: tuple = ("", "", "")
+    artefacts: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MaskAqBoundaryResult:
+    """Result of :meth:`HydrologicalTwinClient.mask_aq_boundary`.
+
+    :param cells_gdf: GeoDataFrame of AQ boundary edges (one feature per
+        edge, with a ``cell_id`` attribute).
+    :param flux_gdf: Placeholder for a future flux gdf; currently unused
+        (the time-series live in the CSV artefact).
+    :param layer_names: Display names for the layers, ``(cells, flux)``;
+        ``flux`` is ``None`` when no fluxes are emitted.
+    :param artefacts: On-disk artefact paths (one CSV with per-(cell, dir)
+        flux time series in m³/d, when fluxes are non-empty).
+    """
+
+    cells_gdf: Any
+    flux_gdf: Any
+    layer_names: tuple = ("", "")
+    artefacts: List[str] = field(default_factory=list)
