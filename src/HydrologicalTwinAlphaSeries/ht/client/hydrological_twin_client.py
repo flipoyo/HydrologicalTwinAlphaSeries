@@ -14,7 +14,7 @@ This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
 
 from __future__ import annotations
 
-from ..hydrological_twin import HydrologicalTwin
+from ..developer import HydrologicalTwin
 from . import operations
 from .api_types import (
     BudgetBarplotResult,
