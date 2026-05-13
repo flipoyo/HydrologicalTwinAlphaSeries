@@ -59,8 +59,8 @@ from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 from HydrologicalTwinAlphaSeries.config.constants import paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.Manage import Manage
-from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
 
+from ..persistence import HTPersistenceMixin
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
@@ -91,7 +91,6 @@ from .api_types import (
     TwinState,
     ValuesResponse,
 )
-from ..persistence import HTPersistenceMixin
 
 
 class HydrologicalTwin(HTPersistenceMixin):
