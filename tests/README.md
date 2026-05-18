@@ -7,8 +7,8 @@ the one piece of infrastructure that needs explanation — the
 
 ## What the smoke test does
 
-`integration/test_cvz_gis_smoke.py` walks the full HTAS macro API on a
-real, light CaWaQS simulation output (the `cvz-gis-testcase` fixture):
+`integration/test_cwv_gis_smoke.py` walks the full HTAS macro API on a
+real, light CaWaQS simulation output (the `cwv-gis-testcase` fixture):
 
 ```
 configure  →  load  →  describe  →  fetch  →  transform  →  render
@@ -41,13 +41,13 @@ value checks later if and when a real numerical incident slips past.
 ```bash
 # 1. Clone the testcase fixture somewhere (only this subdirectory matters)
 git clone --depth 1 --filter=blob:none --sparse \
-    --branch <tag-or-branch> \
+    --branch v0.1-cwv-gis-smoke-CI \
     https://gitlab.com/cawaqs/gtest/testcases.git /tmp/cawaqs-testcases
-git -C /tmp/cawaqs-testcases sparse-checkout set datasets/cvz-gis-testcase
+git -C /tmp/cawaqs-testcases sparse-checkout set datasets/cwv-gis-testcase
 
 # 2. Point the test at the cloned fixture and run it
-export CWAQS_FIXTURE_ROOT=/tmp/cawaqs-testcases/datasets/cvz-gis-testcase
-pixi run pytest tests/integration/test_cvz_gis_smoke.py -v
+export CWAQS_FIXTURE_ROOT=/tmp/cawaqs-testcases/datasets/cwv-gis-testcase
+pixi run pytest tests/integration/test_cwv_gis_smoke.py -v
 ```
 
 If `CWAQS_FIXTURE_ROOT` is unset, the test **skips cleanly** —
@@ -70,8 +70,8 @@ over time:
 ### 1. The pinned fixture tag in `ci.yml`
 
 The CI step clones `gitlab.com/cawaqs/gtest/testcases` at a fixed git
-tag (e.g. `v0.1-cvz-gis-smoke`). When the testcase repo legitimately
-evolves and we want CI to use the new version:
+tag (currently `v0.1-cwv-gis-smoke-CI`). When the testcase repo
+legitimately evolves and we want CI to use the new version:
 
 - Pick the new tag on the testcase repo.
 - Edit `.github/workflows/ci.yml` and bump the `--branch <tag>` value.

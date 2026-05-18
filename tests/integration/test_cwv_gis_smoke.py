@@ -1,4 +1,4 @@
-"""End-to-end macro-API smoke test on the cvz-gis-testcase fixture.
+"""End-to-end macro-API smoke test on the cwv-gis-testcase fixture.
 
 Asserts only that the pipeline runs without crashing and that a PNG is
 produced. No numerical assertions. See tests/README.md for context and
@@ -47,7 +47,7 @@ class _SmokeGeoProvider:
         return gdf
 
 
-def test_cvz_gis_smoke(tmp_path: Path) -> None:
+def test_cwv_gis_smoke(tmp_path: Path) -> None:
     fixture_root_str = os.environ.get(FIXTURE_ENV_VAR)
     if not fixture_root_str:
         pytest.skip(
@@ -66,7 +66,12 @@ def test_cvz_gis_smoke(tmp_path: Path) -> None:
     # ------------------------------------------------------------------
     caw_out_dir = fixture_root / "cawaqs_simulation" / "OUTPUT"
     config_geom_json = (
-        fixture_root / "cwv_config" / "config_geometries_4comp.json"
+        fixture_root
+        / "cawaqs_simulation"
+        / "OUTPUT"
+        / "PostProcessing"
+        / "CONFIG"
+        / "config_geometries_Testcase_4comp.json"
     )
     obs_dir = ""  # sentinel: no observations in this fixture
 
@@ -94,7 +99,7 @@ def test_cvz_gis_smoke(tmp_path: Path) -> None:
     config_proj = ConfigProject.fromDict(
         {
             "json_path_geometries": str(config_geom_json),
-            "projectName": "cvz_gis_smoke",
+            "projectName": "cwv_gis_smoke",
             "cawOutDirectory": str(caw_out_dir),
             "startSim": 1970,
             "endSim": 1972,
@@ -108,7 +113,7 @@ def test_cvz_gis_smoke(tmp_path: Path) -> None:
 
     twin = HydrologicalTwin(
         metadata={
-            "project": "cvz_gis_smoke",
+            "project": "cwv_gis_smoke",
             "regime": "Transient",
         }
     )
@@ -183,7 +188,7 @@ def test_cvz_gis_smoke(tmp_path: Path) -> None:
     result = twin.render(
         kind="budget_barplot",
         data=data_dict,
-        plot_title="cvz-gis-smoke",
+        plot_title="cwv-gis-smoke",
         output_folder=str(output_dir),
         output_name="smoke_budget",
         yaxis_unit="mm",
