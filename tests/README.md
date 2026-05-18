@@ -38,6 +38,12 @@ value checks later if and when a real numerical incident slips past.
 
 ## How to run it locally
 
+Run the commands from the **HTAS repo root** (the directory containing
+this submodule's `pixi.toml`). If you have cawaqsviz checked out, that
+is `external/HydrologicalTwinAlphaSeries/`; if you have HTAS standalone,
+it's the top of the repo. `pixi run test` is the same command CI uses,
+so what you see locally is what CI sees.
+
 ```bash
 # 1. Clone the testcase fixture somewhere (only this subdirectory matters)
 git clone --depth 1 --filter=blob:none --sparse \
@@ -45,9 +51,16 @@ git clone --depth 1 --filter=blob:none --sparse \
     https://gitlab.com/cawaqs/gtest/testcases.git /tmp/cawaqs-testcases
 git -C /tmp/cawaqs-testcases sparse-checkout set datasets/cwv-gis-testcase
 
-# 2. Point the test at the cloned fixture and run it
+# 2. Move into the HTAS pixi env (skip if you're already there)
+cd external/HydrologicalTwinAlphaSeries   # or just the HTAS repo root
+
+# 3. Point the test at the cloned fixture and run it — should pass + write a PNG
 export CWAQS_FIXTURE_ROOT=/tmp/cawaqs-testcases/datasets/cwv-gis-testcase
-pixi run pytest tests/integration/test_cwv_gis_smoke.py -v
+pixi run test tests/integration/test_cwv_gis_smoke.py -v
+
+# 4. Verify the SKIP path — re-run without the env var, expect SKIPPED (not FAILED)
+unset CWAQS_FIXTURE_ROOT
+pixi run test tests/integration/test_cwv_gis_smoke.py -v
 ```
 
 If `CWAQS_FIXTURE_ROOT` is unset, the test **skips cleanly** —
