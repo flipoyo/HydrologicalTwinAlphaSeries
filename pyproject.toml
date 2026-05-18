@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "HydrologicalTwinAlphaSeries"
-version = "000.alpha.16"
+version = "000.alpha.25"
 description = "Standalone backend package for the CaWaQS alpha-series hydrological twin workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,6 +36,9 @@ packages = ["src/HydrologicalTwinAlphaSeries"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [tool.ruff]
 line-length = 100
@@ -44,3 +47,6 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["HydrologicalTwinAlphaSeries"]

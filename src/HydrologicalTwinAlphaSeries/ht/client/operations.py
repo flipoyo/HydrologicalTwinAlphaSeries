@@ -1,0 +1,926 @@
+"""Orchestration layer for the HydrologicalTwinClient.
+
+Each ``run_<name>`` function takes a configured :class:`HydrologicalTwin` as
+its first positional argument and a small set of user-facing keyword
+arguments. The fetch -> transform -> render chaining for a given dialog
+operation lives here and nowhere else.
+
+This module has zero ``qgis.*`` / ``PyQt5`` / ``processing`` imports — it is
+usable from a notebook or a future HTTP server.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Sequence, Tuple
+
+import numpy as np
+
+from .api_types import (
+    BudgetBarplotResult,
+    CompareSimObsResult,
+    CriteriaPointResult,
+    HydrologicalRegimeResult,
+    MaskAqBoundaryResult,
+    MaskHydBoundaryResult,
+    MaskWatbalResult,
+    SpatialMapAqResult,
+    SpatialMapWatbalResult,
+    StatisticalCriteriaResult,
+)
+
+
+def _resolve_compartment_id(twin, name: str) -> int:
+    """Look up a compartment integer id from its string name on a raw twin."""
+    for info in twin.list_compartments():
+        if info.name == name:
+            return info.id_compartment
+    raise ValueError(
+        f"Compartment {name!r} not found on twin (known: "
+        f"{[c.name for c in twin.list_compartments()]})"
+    )
+
+
+def run_budget_barplot(
+    twin,
+    period: Tuple[str, str],
+    frequency: str,
+    agg: str,
+    pluriannual: bool,
+    output_dir: str,
+    variables: Sequence[str] = ("rain", "etr", "inf", "runoff"),
+    frequency_label: str = None,
+    agg_label: str = None,
+) -> BudgetBarplotResult:
+    """Fetch, transform and render a water-balance budget bar plot.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param period: ``(cutsdate, cutedate)`` as ``YYYY-MM-DD`` strings.
+    :param frequency: Aggregation frequency code (``"Y"``, ``"M"``, ``"D"``).
+    :param agg: Aggregation function (``"sum"``, ``"mean"``, ``"max"``, ``"min"``).
+    :param pluriannual: Whether to compute pluriannual aggregation.
+    :param output_dir: Directory in which both the PNG and the CSV are written.
+    :param variables: Water-balance variables to include.
+    :param frequency_label: Human label for the filename (e.g. ``"Annual"``);
+        defaults to ``frequency`` if not provided.
+    :param agg_label: Human label for the filename (e.g. ``"Sum"``);
+        defaults to ``agg`` if not provided.
+    :returns: Paths to the rendered PNG and the written CSV.
+    """
+    cutsdate, cutedate = period
+    watbal_id = _resolve_compartment_id(twin, "WATBAL")
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    data_dict = {}
+    for var in variables:
+        fetch_response = twin.fetch(
+            kind="simulation_matrix",
+            id_compartment=watbal_id,
+            outtype="MB",
+            param=var,
+            syear=syear,
+            eyear=eyear,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
+            id_layer=0,
+            target_unit="mm/j",
+        )
+        budget_response = twin.transform(
+            kind="budget",
+            data=fetch_response.data,
+            id_compartment=watbal_id,
+            param=var,
+            agg_dimension=agg,
+            frequency=frequency,
+            sdate=syear,
+            edate=eyear,
+            cutsdate=cutsdate,
+            cutedate=cutedate,
+            pluriannual=pluriannual,
+        )
+        data_dict[var] = (
+            budget_response.data,
+            budget_response.date_labels,
+            budget_response.param,
+        )
+
+    fz_label = frequency_label if frequency_label is not None else frequency
+    ag_label = agg_label if agg_label is not None else agg
+    output_basename = f"BUDGET_{cutsdate}{cutedate}{fz_label}_{ag_label}"
+    csv_path = os.path.join(output_dir, output_basename + ".csv")
+    all_vars = list(data_dict.keys())
+    combined_data = np.column_stack([data_dict[var][0] for var in all_vars])
+    np.savetxt(
+        csv_path,
+        combined_data,
+        delimiter="\t",
+        header="\t".join(all_vars),
+        comments="",
+        fmt="%.6f",
+    )
+
+    yaxis_unit = "mm" if agg == "sum" else "mm/day"
+    render_result = twin.render(
+        kind="budget_barplot",
+        data=data_dict,
+        plot_title=f"PERIOD : {cutsdate} - {cutedate}",
+        output_folder=output_dir,
+        output_name=output_basename,
+        yaxis_unit=yaxis_unit,
+    )
+    png_path = render_result.artefacts[0]
+
+    return BudgetBarplotResult(png_path=png_path, csv_path=csv_path)
+
+
+def run_hydrological_regime(
+    twin,
+    compartment_name: str,
+    outtype: str,
+    param: str,
+    var_label: str,
+    units: str,
+    savepath: str,
+    interactive: bool = False,
+    staticpng: bool = True,
+    staticpdf: bool = True,
+    period: Tuple[str, str] = ("", ""),
+) -> HydrologicalRegimeResult:
+    """Fetch, transform and render a hydrological regime plot.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param compartment_name: ``"HYD"`` for discharge, ``"AQ"`` for piezometric head.
+    :param outtype: HT outtype code (``"Q"`` or ``"H"``).
+    :param param: HT param code (``"discharge"`` or ``"piezhead"``).
+    :param var_label: Display variable name (``"Discharge"`` or ``"Piezometric Head"``).
+    :param units: Display units string used in the plots.
+    :param savepath: Directory in which the static artefacts are written.
+    :param interactive: Build the Plotly interactive figure too.
+    :param staticpng: Write per-observation-point PNG files.
+    :param staticpdf: Write a combined PDF.
+    :param period: ``(cutsdate, cutedate)`` as ``YYYY-MM-DD`` strings, used in filenames.
+    :returns: Paths to the PNGs and (optionally) the PDF that were written.
+    """
+    cutsdate, cutedate = period
+    id_compartment = _resolve_compartment_id(twin, compartment_name)
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    fetch_response = twin.fetch(
+        kind="simulation_matrix",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        syear=syear,
+        eyear=eyear,
+        id_layer=0,
+    )
+
+    regime_response = twin.transform(
+        kind="hydrological_regime",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        data=fetch_response.data,
+        dates=fetch_response.dates,
+        sdate=syear,
+        edate=eyear,
+    )
+
+    os.makedirs(savepath, exist_ok=True)
+
+    years = f"{cutsdate}_{cutedate}"
+    render_result = twin.render(
+        kind="hydrological_regime",
+        data=regime_response.data,
+        obs_point_names=regime_response.obs_point_names,
+        month_labels=regime_response.month_labels,
+        var=var_label,
+        units=units,
+        savepath=savepath,
+        interactive=interactive,
+        staticpng=staticpng,
+        staticpdf=staticpdf,
+        years=years,
+    )
+
+    artefacts = list(render_result.artefacts)
+    png_paths = [p for p in artefacts if p.lower().endswith(".png")]
+    pdf_path = next((p for p in artefacts if p.lower().endswith(".pdf")), None)
+
+    return HydrologicalRegimeResult(
+        png_paths=png_paths,
+        pdf_path=pdf_path,
+        savepath=savepath,
+    )
+
+
+def run_spatial_map_watbal(
+    twin,
+    param: str,
+    period: Tuple[str, str],
+    frequency: str,
+    agg,
+    pluriannual: bool,
+    id_layer: int,
+    target_unit: str = "mm/j",
+    layer_name_param: str = None,
+    frequency_label: str = None,
+    agg_label: str = None,
+) -> SpatialMapWatbalResult:
+    """Fetch a single-variable WATBAL spatial map.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param param: Water-balance variable (``"rain"``, ``"etr"``, ``"inf"``,
+        ``"runoff"``, ``"effective_rainfall"``, ...).
+    :param period: ``(cutsdate, cutedate)`` as ``YYYY-MM-DD`` strings; the years
+        are used in the composed layer name.
+    :param frequency: Aggregation frequency code (``"Y"``, ``"M"``, ``"D"``).
+    :param agg: Aggregation function (``"sum"``, ``"mean"``, ``"max"``,
+        ``"min"``) or a numeric quantile in ``]0, 1]``.
+    :param pluriannual: Whether to compute pluriannual aggregation.
+    :param id_layer: Integer index of the WATBAL resolution layer.
+    :param target_unit: Unit string passed to the developer fetch; pass
+        ``None`` to omit (matches ``effective_rainfall`` parity).
+    :param layer_name_param: Override for the layer-name prefix; defaults to
+        ``param``. Useful when the dialog displays ``"eff_rain"`` while the
+        backend param is ``"effective_rainfall"``.
+    :param frequency_label: Human label for the layer name (e.g. ``"Annual"``);
+        defaults to ``frequency`` if not provided.
+    :param agg_label: Human label for the layer name (e.g. ``"Sum"``); defaults
+        to ``str(agg)`` if not provided.
+    :returns: The GeoDataFrame plus the composed layer name.
+    """
+    cutsdate, cutedate = period
+    watbal_id = _resolve_compartment_id(twin, "WATBAL")
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    fetch_kwargs = dict(
+        kind="spatial_map",
+        id_compartment=watbal_id,
+        outtype="MB",
+        param=param,
+        syear=syear,
+        eyear=eyear,
+        cutsdate=cutsdate,
+        cutedate=cutedate,
+        id_layer=id_layer,
+        agg=agg,
+        frequency=frequency,
+        pluriannual=pluriannual,
+    )
+    if target_unit is not None:
+        fetch_kwargs["target_unit"] = target_unit
+
+    response = twin.fetch(**fetch_kwargs)
+    gdf = response.gdf
+
+    name_prefix = layer_name_param if layer_name_param is not None else param
+    fz_label = frequency_label if frequency_label is not None else frequency
+    ag_label = agg_label if agg_label is not None else str(agg)
+    wb_unit = "mm" if agg == "sum" else "mm/day"
+    layer_name = (
+        f"{name_prefix}_{cutsdate[:4]}{cutedate[:4]} {fz_label} {ag_label}[{wb_unit}]"
+    )
+
+    return SpatialMapWatbalResult(gdf=gdf, layer_name=layer_name)
+
+
+def run_spatial_map_aq(
+    twin,
+    outtype: str,
+    param: str,
+    layer_id_offset: int,
+    mode: dict,
+    period: Tuple[str, str],
+    frequency: str,
+    agg,
+    pluriannual: bool,
+    save_directory: str = None,
+    name_prefix: str = "",
+    unit: str = "m",
+    frequency_label: str = None,
+    agg_label: str = None,
+) -> SpatialMapAqResult:
+    """Fetch an AQ spatial map (piezometric head, fluxes, recharge, overflow).
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param outtype: HT outtype code (``"H"`` for head, ``"MB"`` for fluxes).
+    :param param: HT param code (``"piezhead"``, ``"flux_riv_to_aq"``, ...).
+    :param layer_id_offset: Layer-id offset passed to the developer fetch
+        (``1`` for piezometric head, ``0`` for fluxes).
+    :param mode: Dict produced by the AQ resolution combobox, with keys
+        ``kind`` (``"spatial_map"`` or ``"aquifer_outcropping_map"``),
+        ``layer`` (resolution name or ``None``), and ``label`` (display name).
+    :param period: ``(cutsdate, cutedate)`` as ``YYYY-MM-DD`` strings.
+    :param frequency: Aggregation frequency code.
+    :param agg: Aggregation function or numeric quantile.
+    :param pluriannual: Whether to compute pluriannual aggregation.
+    :param save_directory: Directory used when ``mode['kind']`` is
+        ``"aquifer_outcropping_map"`` (the developer fetch caches an
+        intermediate file there); ignored otherwise.
+    :param name_prefix: Layer-name prefix (``"H"``, ``"RivTOAq"``,
+        ``"RECHARGE"``, ``"OVERFLOW"``).
+    :param unit: Display unit (``"m"``, ``"m³/s"``); cumulative aggregation on a
+        rate strips the ``"/s"`` suffix.
+    :param frequency_label: Human label for the layer name; defaults to
+        ``frequency``.
+    :param agg_label: Human label for the layer name; defaults to ``str(agg)``.
+    :returns: The GeoDataFrame plus the composed layer name.
+    """
+    cutsdate, cutedate = period
+    aq_id = _resolve_compartment_id(twin, "AQ")
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    fetch_kwargs = dict(
+        kind=mode["kind"],
+        id_compartment=aq_id,
+        outtype=outtype,
+        param=param,
+        syear=syear,
+        eyear=eyear,
+        cutsdate=cutsdate,
+        cutedate=cutedate,
+        agg=agg,
+        frequency=frequency,
+        pluriannual=pluriannual,
+        layer_id_offset=layer_id_offset,
+    )
+    if mode["kind"] == "spatial_map":
+        fetch_kwargs["layer_names"] = [mode["layer"]]
+    else:
+        fetch_kwargs["save_directory"] = save_directory
+
+    response = twin.fetch(**fetch_kwargs)
+    gdf = response.gdf
+
+    res_name = mode["label"]
+    fz_label = frequency_label if frequency_label is not None else frequency
+    ag_label = agg_label if agg_label is not None else str(agg)
+    display_unit = unit.replace("/s", "") if agg == "sum" and "/s" in unit else unit
+    layer_name = f"{name_prefix}_{res_name}_{fz_label}_{ag_label}_[{display_unit}]"
+
+    return SpatialMapAqResult(gdf=gdf, layer_name=layer_name)
+
+
+def _aggr_label(aggr) -> str:
+    """Compose the filename label for an aggregator value.
+
+    - ``None`` -> ``"DAILY"``  (used for Transient regime where no aggregator applies)
+    - ``float`` quantile -> ``"Q<value>"``
+    - ``str`` (``"mean"``, ``"min"``, ``"max"``, ``"sum"``) -> uppercase
+    """
+    if aggr is None:
+        return "DAILY"
+    if isinstance(aggr, float):
+        return f"Q{aggr}"
+    return str(aggr).upper()
+
+
+def run_compare_sim_obs(
+    twin,
+    mode: str,
+    compartment_name: str,
+    outtype: str,
+    param: str,
+    ylabel: str,
+    obs_unit: str,
+    plot_period: Tuple[str, str],
+    crit_period: Tuple[str, str],
+    directory: str,
+    id_layer: int = 0,
+    aggr=None,
+    regime: str = "Transient",
+) -> CompareSimObsResult:
+    """Render a sim-vs-obs comparison plot, either as PDF or interactive HTML.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param mode: ``"pdf"`` (static, multi-page PDF) or ``"interactive"``
+        (single HTML written via Plotly).
+    :param compartment_name: ``"AQ"`` or ``"HYD"``.
+    :param outtype: HT outtype code (``"H"`` or ``"Q"``).
+    :param param: HT param code (``"piezhead"`` or ``"discharge"``).
+    :param ylabel: Y-axis label shown on the plots.
+    :param obs_unit: Display unit string for the observations.
+    :param plot_period: ``(plotstart, plotend)`` as ``YYYY-MM-DD`` strings.
+    :param crit_period: ``(critstart, critend)`` as ``YYYY-MM-DD`` strings.
+    :param directory: Output directory (artefacts are written here).
+    :param id_layer: Layer index for the developer fetch.
+    :param aggr: Aggregator (``None``, a numeric quantile, or
+        ``"mean"``/``"min"``/``"max"``).
+    :param regime: ``"Steady"`` or ``"Transient"``; affects the interactive
+        output filename.
+    :returns: Paths to the artefacts produced.
+    """
+    if mode not in ("pdf", "interactive"):
+        raise ValueError(f"mode must be 'pdf' or 'interactive', got {mode!r}")
+
+    id_compartment = _resolve_compartment_id(twin, compartment_name)
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+    plotstart, plotend = plot_period
+    critstart, critend = crit_period
+    aggr_label = _aggr_label(aggr)
+    name_file = f"SIM_OBS_{compartment_name}_{aggr_label}"
+
+    if mode == "pdf":
+        render_result = twin.render(
+            kind="sim_obs_pdf",
+            id_compartment=id_compartment,
+            outtype=outtype,
+            param=param,
+            simsdate=syear,
+            simedate=eyear,
+            plotstartdate=plotstart,
+            plotenddate=plotend,
+            id_layer=id_layer,
+            directory=directory,
+            name_file=name_file,
+            ylabel=ylabel,
+            obs_unit=obs_unit,
+            crit_start=critstart,
+            crit_end=critend,
+            aggr=aggr,
+        )
+        artefacts = list(render_result.artefacts)
+        pdf_path = next((p for p in artefacts if p.lower().endswith(".pdf")), None)
+        return CompareSimObsResult(
+            mode="pdf",
+            pdf_path=pdf_path,
+            output_directory=directory,
+        )
+
+    if regime == "Steady":
+        out_file_path = os.path.join(directory, f"{name_file}_steady.html")
+    else:
+        out_file_path = os.path.join(
+            directory, f"{name_file}_{critstart}_{critend}.html"
+        )
+
+    render_result = twin.render(
+        kind="sim_obs_interactive",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        simsdate=syear,
+        simedate=eyear,
+        plotstart=plotstart,
+        plotend=plotend,
+        obs_unit=obs_unit,
+        ylabel=ylabel,
+        df_other_variable=None,
+        other_variable_config=None,
+        out_file_path=out_file_path,
+        crit_start=critstart,
+        crit_end=critend,
+        aggr=aggr,
+    )
+    artefacts = list(render_result.artefacts)
+    html_path = next((p for p in artefacts if p.lower().endswith(".html")), out_file_path)
+    return CompareSimObsResult(
+        mode="interactive",
+        html_path=html_path,
+        output_directory=directory,
+    )
+
+
+DEFAULT_CRITERIA_METRICS = (
+    "n_obs", "avg_obs", "avg_sim", "sum_ratio", "std_obs", "std_sim", "std_ratio",
+)
+
+
+def _write_criteria_text_file(path: str, metrics: Sequence[str], rows: Sequence[Tuple[str, str, dict]]) -> None:
+    """Write the per-point criteria text file (header + one row per point).
+
+    :param path: Output path.
+    :param metrics: Ordered metric keys, used both for header columns and row order.
+    :param rows: Iterable of ``(name, point_id, criteria_dict)`` tuples.
+    """
+    with open(path, "w") as f:
+        f.write("NAME\tCODE\t" + "\t".join(metrics) + "\t")
+        for name, point_id, crits in rows:
+            f.write(f"\n{name}\t{point_id}")
+            for k in metrics:
+                f.write(f"\t{crits[k]}")
+
+
+def _write_aq_global_and_by_layer(
+    path: str,
+    global_metrics: dict,
+    by_layer: dict,
+) -> None:
+    """Write the AQ-specific globals + by-layer criteria text file."""
+    with open(path, "w") as f:
+        f.write("__________________ GLOBALS STATISTICALS CRITERIA __________________\n")
+        for crit_name, crit_value in global_metrics.items():
+            f.write(f"\t{crit_name} : {crit_value}\n")
+        f.write("\n\n\n__________________ STATISTICALS CRITERIA BY AQ LAYERS ________________\n")
+        for id_layer in sorted(set(by_layer.keys())):
+            layer_crits = by_layer[id_layer]
+            f.write("- - - - - - - - - - - - - - - - - - -\n")
+            f.write(f"\t\t ID LAYER : {id_layer}\n")
+            f.write("- - - - - - - - - - - - - - - - - - -\n")
+            for crit_name, crit_value in layer_crits.items():
+                f.write(f"\t{crit_name} : {crit_value}\n")
+
+
+def run_statistical_criteria(
+    twin,
+    compartment_name: str,
+    outtype: str,
+    param: str,
+    period: Tuple[str, str],
+    output_dir: str,
+    metrics: Sequence[str] = None,
+    id_layer: int = 0,
+    aggr=None,
+    obs_unit: str = None,
+) -> StatisticalCriteriaResult:
+    """Compute statistical criteria at observation points and persist them.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param compartment_name: ``"AQ"`` or ``"HYD"``.
+    :param outtype: HT outtype code (``"H"`` or ``"Q"``).
+    :param param: HT param code (``"piezhead"`` or ``"discharge"``).
+    :param period: ``(crit_start, crit_end)`` as ``YYYY-MM-DD`` strings; the
+        same period is used for the plot range and the criteria range.
+    :param output_dir: Directory in which the criteria text files are
+        written.
+    :param metrics: User-selected metrics (e.g. ``"kge"``, ``"nash"``,
+        ``"rmse"``, ``"pbias"``, ``"avg_ratio"``). The default block
+        (``n_obs``, ``avg_obs``, ...) is always appended.
+    :param id_layer: Layer index for the developer fetch.
+    :param aggr: Aggregator for Steady regime (``None`` in Transient).
+    :param obs_unit: Observation unit, used by the developer fetch to convert
+        units when the dialog requested ``l/s``.
+    :returns: Per-point criteria, the ordered metric list, and the paths of
+        the text artefacts.
+    """
+    id_compartment = _resolve_compartment_id(twin, compartment_name)
+    obs_info = twin.get_observation_info(id_compartment)
+    if obs_info is None:
+        raise ValueError(
+            f"Compartment {compartment_name!r} has no observation points; "
+            f"cannot compute statistical criteria."
+        )
+
+    user_metrics = list(metrics) if metrics else []
+    listed_crits = user_metrics + [m for m in DEFAULT_CRITERIA_METRICS if m not in user_metrics]
+
+    crit_start, crit_end = period
+    syear = twin.metadata["start_year"]
+    eyear = twin.metadata["end_year"]
+
+    bundle_response = twin.fetch(
+        kind="sim_obs_bundle",
+        id_compartment=id_compartment,
+        outtype=outtype,
+        param=param,
+        syear=syear,
+        eyear=eyear,
+        plotstart=crit_start,
+        plotend=crit_end,
+        id_layer=id_layer,
+        agg=aggr,
+        compute_criteria=True,
+        criteria_metrics=listed_crits,
+        crit_start=crit_start,
+        crit_end=crit_end,
+        obs_unit=obs_unit,
+    )
+
+    criteria_response = twin.transform(
+        kind="criteria",
+        bundle=bundle_response,
+        metrics=listed_crits,
+    )
+
+    points = []
+    rows = []
+    for i, _ in enumerate(criteria_response.per_point):
+        crits = criteria_response.per_point[i]["criteria"]
+        pt_name = obs_info.point_names[i]
+        pt_id = obs_info.point_ids[i]
+        pt_layer = obs_info.layer_ids[i]
+        pt_geom = obs_info.geometries[i]
+        points.append(
+            CriteriaPointResult(
+                name=pt_name,
+                point_id=pt_id,
+                layer_id=pt_layer,
+                geometry=pt_geom,
+                criteria=dict(crits),
+            )
+        )
+        rows.append((pt_name, pt_id, crits))
+
+    os.makedirs(output_dir, exist_ok=True)
+    txt_path = os.path.join(
+        output_dir, f"CRIT_STAT_{param}_{crit_start}{crit_end}.txt"
+    )
+    _write_criteria_text_file(txt_path, listed_crits, rows)
+
+    aq_layer_txt_path = None
+    if compartment_name == "AQ":
+        aq_layer_txt_path = os.path.join(
+            output_dir,
+            f"CRIT_STAT_BY_LAYER_AQ_{crit_start}{crit_end}.txt",
+        )
+        _write_aq_global_and_by_layer(
+            aq_layer_txt_path,
+            dict(criteria_response.global_metrics),
+            {k: dict(v) for k, v in criteria_response.by_layer.items()},
+        )
+
+    return StatisticalCriteriaResult(
+        points=points,
+        metrics=listed_crits,
+        compartment_name=compartment_name,
+        period=(crit_start, crit_end),
+        txt_path=txt_path,
+        aq_layer_txt_path=aq_layer_txt_path,
+    )
+
+
+def _mesh_gdf_for(twin, id_compartment: int, id_layer: int = 0):
+    """Return the mesh GeoDataFrame for ``(compartment, layer)`` on a raw twin."""
+    compartment = twin.compartments[id_compartment]
+    layer_name = compartment.mesh.layers_gis_name[id_layer]
+    return compartment.mesh.layer_gdfs[layer_name]
+
+
+def _cell_id_col_name(twin, id_compartment: int, gdf) -> str:
+    """Resolve the cell-id column name (translate integer position to a name)."""
+    id_col = twin.config_geom.idColCells[id_compartment]
+    if isinstance(id_col, int):
+        return gdf.columns[id_col]
+    return id_col
+
+
+def _artefact_basename(compartment: str, param: str, outtype: str, syear, eyear) -> str:
+    """Filename root; the parent folder name already carries the area."""
+    years = f"{syear}-{eyear}"
+    if outtype:
+        return f"{compartment}_{param}_{outtype}_{years}"
+    return f"{compartment}_{param}_{years}"
+
+
+def run_mask_watbal(
+    twin,
+    polygon,
+    polygon_crs,
+    params: Sequence[str],
+    syear,
+    eyear,
+    output_dir: str,
+    temp_dir: str,
+    area_name: str,
+) -> MaskWatbalResult:
+    """Mask WATBAL cells inside a polygon and persist per-param time series.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon) defining the area.
+    :param polygon_crs: CRS string for ``polygon`` (e.g. ``"EPSG:2154"``).
+    :param params: WATBAL backend params (``"rain"``, ``"etp"``, ``"runoff"``,
+        ``"inf"``, ``"etr"``).
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for CSV artefacts.
+    :param temp_dir: Directory for numpy binary artefacts.
+    :param area_name: Display / filename token for the masked area.
+    :returns: Mesh-joined cells GDF + per-param artefact paths.
+    """
+    import pandas as pd  # noqa: PLC0415 — local import keeps top-of-module light
+
+    watbal_id = _resolve_compartment_id(twin, "WATBAL")
+
+    cells_response = twin.mask(
+        kind="polygon_cells",
+        id_compartment=watbal_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+
+    mesh_gdf = _mesh_gdf_for(twin, watbal_id)
+    id_col = _cell_id_col_name(twin, watbal_id, mesh_gdf)
+    cells_gdf = mesh_gdf[mesh_gdf[id_col].isin(cells_response.cell_ids)].copy()
+    layer_name = f"{area_name}_WATBAL_cells"
+
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(temp_dir, exist_ok=True)
+    artefacts = []
+    for param in params:
+        response = twin.mask(
+            kind="area_values",
+            id_compartment=watbal_id,
+            outtype="MB",
+            param=param,
+            syear=syear,
+            eyear=eyear,
+            polygon=polygon,
+            polygon_crs=polygon_crs,
+        )
+        base = _artefact_basename("WATBAL", param, "MB", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        npy_path = os.path.join(temp_dir, f"{base}.npy")
+        df = pd.DataFrame(
+            response.data.T,
+            index=pd.Index(response.dates, name="date"),
+            columns=[f"cell_{i}" for i in range(response.data.shape[0])],
+        )
+        df.to_csv(csv_path)
+        np.save(npy_path, response.data)
+        artefacts.append(csv_path)
+        artefacts.append(npy_path)
+
+    return MaskWatbalResult(
+        gdf=cells_gdf,
+        layer_name=layer_name,
+        artefacts=artefacts,
+    )
+
+
+def run_mask_hyd_boundary(
+    twin,
+    polygon,
+    polygon_crs,
+    syear,
+    eyear,
+    output_dir: str,
+    area_name: str,
+) -> MaskHydBoundaryResult:
+    """Mask HYD reaches on the polygon boundary + inside, and persist boundary fluxes.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon).
+    :param polygon_crs: CRS string for ``polygon``.
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for the per-reach signed-Q CSV.
+    :param area_name: Display / filename token for the masked area.
+    :returns: Boundary reaches gdf, inside reaches gdf, boundary-crossing
+        points gdf, plus the CSV artefact path (when fluxes are non-empty).
+    """
+    import geopandas as gpd  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415
+    from shapely.geometry import MultiPolygon  # noqa: PLC0415
+
+    hyd_id = _resolve_compartment_id(twin, "HYD")
+
+    boundary_resp = twin.mask(
+        kind="boundary_hyd",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    inside_resp = twin.mask(
+        kind="polygon_cells",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    flux_resp = twin.mask(
+        kind="boundary_hyd_flux",
+        id_compartment=hyd_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+        syear=syear,
+        eyear=eyear,
+    )
+
+    network_gdf = _mesh_gdf_for(twin, hyd_id)
+    id_col = _cell_id_col_name(twin, hyd_id, network_gdf)
+    all_reach_ids = sorted(set(boundary_resp.reach_ids) | set(inside_resp.cell_ids))
+    boundary_set = set(boundary_resp.reach_ids)
+    inside_gdf = network_gdf[network_gdf[id_col].isin(all_reach_ids)].copy()
+    if not inside_gdf.empty:
+        inside_gdf["is_boundary"] = inside_gdf[id_col].isin(boundary_set)
+    inside_layer_name = f"{area_name}_HYD_reaches"
+
+    boundary_gdf = network_gdf[network_gdf[id_col].isin(boundary_resp.reach_ids)].copy()
+
+    components = (
+        list(polygon.geoms) if isinstance(polygon, MultiPolygon) else [polygon]
+    )
+    crossing_reach_ids = []
+    crossing_points = []
+    for reach_id, reach_geom in zip(boundary_resp.reach_ids, boundary_resp.geometries):
+        for component in components:
+            intersection = reach_geom.intersection(component.exterior)
+            if intersection.is_empty:
+                continue
+            if intersection.geom_type == "Point":
+                crossing_reach_ids.append(reach_id)
+                crossing_points.append(intersection)
+            elif intersection.geom_type == "MultiPoint":
+                for pt in intersection.geoms:
+                    crossing_reach_ids.append(reach_id)
+                    crossing_points.append(pt)
+
+    if crossing_points:
+        flux_gdf = gpd.GeoDataFrame(
+            {"reach_id": crossing_reach_ids},
+            geometry=crossing_points,
+            crs=polygon_crs,
+        )
+        flux_layer_name = f"{area_name}_HYD_boundary_points"
+    else:
+        flux_gdf = None
+        flux_layer_name = None
+
+    artefacts = []
+    if flux_resp.reach_ids:
+        os.makedirs(output_dir, exist_ok=True)
+        cols = {
+            f"reach_{rid}_Q_m3s": flux_resp.Q[i, :]
+            for i, rid in enumerate(flux_resp.reach_ids)
+        }
+        csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
+        base = _artefact_basename("HYD", "boundary", "Q", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        csv_df.to_csv(csv_path)
+        artefacts.append(csv_path)
+
+    return MaskHydBoundaryResult(
+        boundary_gdf=boundary_gdf,
+        inside_gdf=inside_gdf,
+        flux_gdf=flux_gdf,
+        layer_names=(inside_layer_name, flux_layer_name, None),
+        artefacts=artefacts,
+    )
+
+
+def run_mask_aq_boundary(
+    twin,
+    polygon,
+    polygon_crs,
+    syear,
+    eyear,
+    output_dir: str,
+    area_name: str,
+) -> MaskAqBoundaryResult:
+    """Mask AQ cells touching the polygon boundary and persist face-flux time series.
+
+    :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
+    :param polygon: Shapely polygon (or MultiPolygon).
+    :param polygon_crs: CRS string for ``polygon``.
+    :param syear: Simulation start year.
+    :param eyear: Simulation end year.
+    :param output_dir: Directory for the per-(cell, dir) flux CSV.
+    :param area_name: Display / filename token for the masked area.
+    :returns: AQ boundary-edges gdf + CSV artefact path (when fluxes are
+        non-empty). The fluxes themselves are written in m³/d.
+    """
+    import geopandas as gpd  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415
+
+    aq_id = _resolve_compartment_id(twin, "AQ")
+
+    response = twin.mask(
+        kind="boundary_aq",
+        id_compartment=aq_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+    )
+    flux_resp = twin.mask(
+        kind="boundary_aq_flux",
+        id_compartment=aq_id,
+        polygon=polygon,
+        polygon_crs=polygon_crs,
+        syear=syear,
+        eyear=eyear,
+    )
+
+    if response.edge_geometries:
+        cells_gdf = gpd.GeoDataFrame(
+            {"cell_id": response.cell_ids},
+            geometry=list(response.edge_geometries),
+            crs=polygon_crs,
+        )
+        cells_layer_name = f"{area_name}_AQ_boundary_edges"
+    else:
+        cells_gdf = None
+        cells_layer_name = None
+
+    artefacts = []
+    if flux_resp.fluxes:
+        os.makedirs(output_dir, exist_ok=True)
+        cols = {}
+        for cell_id, dir_fluxes in flux_resp.fluxes.items():
+            for direction, arr in dir_fluxes.items():
+                cols[f"{cell_id}_{direction}_m3d"] = arr * 86400.0
+        csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
+        base = _artefact_basename("AQ", "boundary", "flux", syear, eyear)
+        csv_path = os.path.join(output_dir, f"{base}.csv")
+        csv_df.to_csv(csv_path)
+        artefacts.append(csv_path)
+
+    return MaskAqBoundaryResult(
+        cells_gdf=cells_gdf,
+        flux_gdf=None,
+        layer_names=(cells_layer_name, None),
+        artefacts=artefacts,
+    )

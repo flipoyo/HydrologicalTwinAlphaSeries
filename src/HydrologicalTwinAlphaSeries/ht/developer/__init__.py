@@ -1,4 +1,4 @@
-from HydrologicalTwinAlphaSeries.ht.developer import (
+from .api_types import (
     AqBoundaryFluxResponse,
     AqBoundaryResponse,
     AquiferBalanceInputsResponse,
@@ -17,7 +17,6 @@ from HydrologicalTwinAlphaSeries.ht.developer import (
     HydBoundaryFluxResponse,
     HydBoundaryResponse,
     HydrologicalRegimeResponse,
-    HydrologicalTwin,
     InvalidStateError,
     LayerCatalog,
     LoadRequest,
@@ -36,6 +35,7 @@ from HydrologicalTwinAlphaSeries.ht.developer import (
     TwinState,
     ValuesResponse,
 )
+from .hydrological_twin import HydrologicalTwin
 
 __all__ = [
     "AqBoundaryFluxResponse",

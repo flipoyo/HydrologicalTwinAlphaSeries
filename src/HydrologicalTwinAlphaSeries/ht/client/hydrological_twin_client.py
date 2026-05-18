@@ -1,0 +1,125 @@
+"""Coarse-grained, dialog-shaped client API for HydrologicalTwin.
+
+The :class:`HydrologicalTwinClient` exposes one method per user-facing
+operation that the QGIS plug-in surfaces in its dialogs, plus the lifecycle
+primitives (``configure`` / ``load`` / ``describe`` / ``is_ready``) and a
+one-call ``build`` classmethod that runs the lifecycle end-to-end. Each
+operation call wraps the ``fetch -> transform -> render`` chain so that
+notebook users (today) and a future HTTP server (tomorrow) can reproduce a
+dialog operation with a single call.
+
+This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
+``PyQt5`` / ``processing`` imports.
+"""
+
+from __future__ import annotations
+
+from ..developer import HydrologicalTwin
+from . import operations
+from .api_types import (
+    BudgetBarplotResult,
+    CompareSimObsResult,
+    HydrologicalRegimeResult,
+    MaskAqBoundaryResult,
+    MaskHydBoundaryResult,
+    MaskWatbalResult,
+    SpatialMapAqResult,
+    SpatialMapWatbalResult,
+    StatisticalCriteriaResult,
+)
+
+
+class HydrologicalTwinClient:
+    """Coarse-grained, dialog-shaped API on top of :class:`HydrologicalTwin`.
+
+    One method per user-facing operation surfaced by the QGIS plug-in. Each
+    method wraps a ``fetch -> transform -> render`` chain into a single call
+    that returns a typed result dataclass and is safe to drive from a
+    notebook today, from an HTTP server tomorrow — no ``qgis.*`` / ``PyQt5``
+    / ``processing`` imports anywhere in this package.
+
+    Method bodies are intentionally thin (≤5 statements): they delegate to
+    the matching :func:`operations.run_*` function, which owns the
+    orchestration. Add a new operation by (1) defining a ``*Result``
+    dataclass in :mod:`api_types`, (2) implementing ``run_<name>`` in
+    :mod:`operations`, and (3) adding a one-line facade method here.
+
+    Lifecycle:
+
+    - :meth:`__init__` — construct from metadata; the underlying twin starts
+      in ``EMPTY`` state.
+    - :meth:`configure` / :meth:`load` — primitives that forward to the
+      underlying twin; callers (e.g. ``ExploreData``) wrap each call to map
+      developer-side errors to application-level ones.
+    - :meth:`describe` / :meth:`is_ready` — cheap inspection helpers.
+    - :meth:`build` — classmethod that runs ``configure`` + ``load`` in one
+      call; convenience entry point for notebook users.
+
+    Operations:
+
+    - :meth:`budget_barplot` — water-balance bar plot (PNG + CSV)
+    - :meth:`hydrological_regime` — discharge / piezometric-head regime
+      plots (per-point PNGs and combined PDF)
+    - :meth:`spatial_map_watbal` — single-variable WATBAL spatial map (gdf)
+    - :meth:`spatial_map_aq` — AQ spatial map (gdf): head, fluxes,
+      recharge, surface overflow
+    - :meth:`compare_sim_obs` — sim-vs-obs comparison plot in PDF or
+      interactive HTML mode
+    - :meth:`statistical_criteria` — per-observation-point performance
+      metrics (KGE, NSE, RMSE, ...) plus globals/by-layer for AQ
+    - :meth:`mask_watbal` — per-param WATBAL cell masking with persisted
+      artefacts and a mesh-joined gdf
+    - :meth:`mask_hyd_boundary` — HYD reaches on a polygon boundary plus
+      inside-reaches plus boundary fluxes
+    - :meth:`mask_aq_boundary` — AQ cells inside a polygon plus boundary
+      fluxes
+    """
+
+    def __init__(self, metadata: dict):
+        self._twin = HydrologicalTwin(metadata=metadata)
+
+    def configure(self, **kwargs):
+        return self._twin.configure(**kwargs)
+
+    def load(self, **kwargs):
+        return self._twin.load(**kwargs)
+
+    def describe(self):
+        return self._twin.describe()
+
+    def is_ready(self) -> bool:
+        return self._twin.state.value in {"LOADED", "READY"}
+
+    @classmethod
+    def build(cls, metadata: dict, *, configure_kwargs: dict, load_kwargs: dict) -> "HydrologicalTwinClient":
+        client = cls(metadata)
+        client.configure(**configure_kwargs)
+        client.load(**load_kwargs)
+        return client
+
+    def budget_barplot(self, **kwargs) -> BudgetBarplotResult:
+        return operations.run_budget_barplot(self._twin, **kwargs)
+
+    def hydrological_regime(self, **kwargs) -> HydrologicalRegimeResult:
+        return operations.run_hydrological_regime(self._twin, **kwargs)
+
+    def spatial_map_watbal(self, **kwargs) -> SpatialMapWatbalResult:
+        return operations.run_spatial_map_watbal(self._twin, **kwargs)
+
+    def spatial_map_aq(self, **kwargs) -> SpatialMapAqResult:
+        return operations.run_spatial_map_aq(self._twin, **kwargs)
+
+    def compare_sim_obs(self, **kwargs) -> CompareSimObsResult:
+        return operations.run_compare_sim_obs(self._twin, **kwargs)
+
+    def statistical_criteria(self, **kwargs) -> StatisticalCriteriaResult:
+        return operations.run_statistical_criteria(self._twin, **kwargs)
+
+    def mask_watbal(self, **kwargs) -> MaskWatbalResult:
+        return operations.run_mask_watbal(self._twin, **kwargs)
+
+    def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:
+        return operations.run_mask_hyd_boundary(self._twin, **kwargs)
+
+    def mask_aq_boundary(self, **kwargs) -> MaskAqBoundaryResult:
+        return operations.run_mask_aq_boundary(self._twin, **kwargs)
