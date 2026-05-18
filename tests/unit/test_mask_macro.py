@@ -12,10 +12,11 @@ from HydrologicalTwinAlphaSeries.ht import (
     HydBoundaryFluxResponse,
     HydBoundaryResponse,
     HydrologicalTwin,
+    InvalidStateError,
     MaskRequest,
+    TwinState,
     ValuesResponse,
 )
-from HydrologicalTwinAlphaSeries.ht.api_types import InvalidStateError, TwinState
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import CRSMismatchError
 
 
