@@ -49,8 +49,21 @@ The backend is intended to be integrated as an external dependency (e.g. Git sub
 * `src/HydrologicalTwinAlphaSeries/services`
   Computational services and transformation operators
 
-* `src/HydrologicalTwinAlphaSeries/ht`
-  Backend facade and exposed API types
+* `src/HydrologicalTwinAlphaSeries/ht/client`
+  Consumer-facing surface. `HydrologicalTwinClient` exposes one coarse-grained
+  method per dialog operation, `operations.py` chains
+  fetch → transform → render, and `api_types.py` defines the user-facing
+  result dataclasses. Zero `qgis.*` / `PyQt5` imports.
+
+* `src/HydrologicalTwinAlphaSeries/ht/developer`
+  Developer-side facade (formerly `ht/`). Holds the `HydrologicalTwin`
+  class with the 8 canonical macro-verbs (`configure`, `load`, `describe`,
+  `fetch`, `mask`, `transform`, `render`, `export`), its `api_types`
+  (Request / Response dataclasses), and the dispatching internals
+  (`dispatch.py`, `handlers.py`, `accessors.py`).
+
+* `src/HydrologicalTwinAlphaSeries/ht/persistence.py`
+  Pickle save/load mixin shared by the facade.
 
 * `src/HydrologicalTwinAlphaSeries/config`
   Configuration models and constants
@@ -83,8 +96,16 @@ flowchart TD
     disk_out[("Plots & exports<br/><i>PNG / PDF / HTML</i>")]
 
     subgraph HT ["ht/"]
-        facade["HydrologicalTwin<br/><i>monolithic facade</i>"]
-        api["api_types<br/><i>Request / Response<br/>dataclasses</i>"]
+        subgraph HTClient ["client/"]
+            client["HydrologicalTwinClient<br/><i>dialog-shaped API</i>"]
+            ops["operations<br/><i>fetch → transform → render<br/>chaining</i>"]
+            client_api["api_types<br/><i>user-facing Result<br/>dataclasses</i>"]
+        end
+        subgraph HTDeveloper ["developer/"]
+            facade["HydrologicalTwin<br/><i>macro-verb facade</i>"]
+            api["api_types<br/><i>Request / Response<br/>dataclasses</i>"]
+            dispatch["dispatch · handlers · accessors<br/><i>internal verbs</i>"]
+        end
         persist["persistence<br/><i>pickle save / load mixin</i>"]
     end
 
@@ -112,10 +133,15 @@ flowchart TD
         spatial["spatial_utils<br/><i>CRS checks, nearest-row queries</i>"]
     end
 
-    consumer -- "Request objects" --> facade
-    facade -. "Response objects<br/>(ndarray + dates + metadata)" .-> consumer
-    facade --- api
+    consumer -- "Operation call" --> client
+    client -. "Result objects<br/>(paths + metadata)" .-> consumer
+    client --- client_api
+    client --> ops
+    ops --> facade
+
+    facade -- "Request / Response" --> api
     facade --- persist
+    facade --- dispatch
 
     facade --> manage
     facade --> vecop
@@ -146,6 +172,7 @@ flowchart TD
     manage -- "reads" --> disk_in
     renderer -- "writes" --> disk_out
 
+    classDef htclient fill:#ede7f6,stroke:#673AB7,stroke-width:2px
     classDef htlayer fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px
     classDef services fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
     classDef domain fill:#fff3e0,stroke:#FF9800,stroke-width:2px
@@ -153,7 +180,8 @@ flowchart TD
     classDef tools fill:#fce4ec,stroke:#E91E63,stroke-width:1px
     classDef external fill:#f5f5f5,stroke:#9E9E9E,stroke-width:1px,stroke-dasharray: 5 5
 
-    class facade,api,persist htlayer
+    class client,ops,client_api htclient
+    class facade,api,dispatch,persist htlayer
     class manage,vecop,renderer services
     class compartment,mesh,obs,extraction,timeframe domain
     class configmod,constants,factory config
@@ -163,7 +191,8 @@ flowchart TD
 
 | Layer | Role |
 |-------|------|
-| **`ht/`** (purple) | Public surface. `HydrologicalTwin` is the single entry point for external consumers; `api_types` defines the Request/Response contract; `persistence` adds pickle save/load. |
+| **`ht/client/`** (deep purple) | Consumer-facing surface. `HydrologicalTwinClient` exposes one dialog-shaped method per operation; `operations` chains fetch → transform → render; `api_types` defines the user-facing Result dataclasses. |
+| **`ht/developer/`** (purple) | Developer-side facade. `HydrologicalTwin` owns the 8 canonical macro-verbs; `api_types` defines the Request/Response contract; `dispatch`/`handlers`/`accessors` carry the internal verbs. `persistence` (at `ht/` top level) adds pickle save/load. |
 | **`services/`** (green) | Stateless computation. `Manage` handles binary I/O and temporal aggregation, `Vec_Operator` groups vectorized operators (transform / extract / compare), `Renderer` produces plots. |
 | **`domain/`** (orange) | Domain entities. `Compartment` aggregates `Mesh`, `Observations`, and `Extraction`; `TimeFrame` carries the simulation date axis. |
 | **`config/`** (blue) | Configuration models (`ConfigGeometry`, `ConfigProject`), shared `constants` (CaWaQS module names, observation types), and a generic JSON-backed `FactoryClass`. |
@@ -176,9 +205,15 @@ cylinders (`disk_in`, `disk_out`) are the only filesystem boundaries — every
 other node is pure Python.
 
 **What this reveals.**
-- The facade reaches every package directly; nothing else in the codebase
-  imports `ht/`. This is the property that lets the backend be lifted into a
-  separate process or server later.
+- External consumers only see `ht/client/`. The client is a thin
+  orchestration layer that calls into `ht/developer/`; nothing outside
+  `ht/` imports the developer facade directly. This two-step boundary is
+  what lets the client surface evolve independently (e.g. for future HTTP
+  transport) while the developer facade remains the stable computational
+  entry point.
+- The developer facade reaches every other package directly. This is the
+  property that lets the backend be lifted into a separate process or
+  server later.
 - `Renderer` is the only writer to `disk_out`. In the long-term server
   scenario, this responsibility is expected to move to the frontend so the
   backend returns data instead of files.
