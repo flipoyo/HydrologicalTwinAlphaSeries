@@ -84,6 +84,14 @@ jobs:
       - name: Lint
         run: pixi run lint
 
+      - name: Clone CaWaQS testcase fixture
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            --branch v0.1-cwv-gis-smoke-CI \
+            https://gitlab.com/cawaqs/gtest/testcases.git "$RUNNER_TEMP/testcases"
+          git -C "$RUNNER_TEMP/testcases" sparse-checkout set datasets/cwv-gis-testcase
+          echo "CWAQS_FIXTURE_ROOT=$RUNNER_TEMP/testcases/datasets/cwv-gis-testcase" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: pixi run test
 
