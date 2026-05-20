@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Bump version in pyproject.toml and pixi.toml
+      - name: Bump version in pyproject.toml
         id: bump
         run: |
           python - <<'EOF'
@@ -73,16 +73,6 @@ jobs:
           text = text[: m.start(2)] + new_ver + text[m.end(2) :]
           pyproject.write_text(text)
 
-          # --- pixi.toml ---
-          pixi = root / "pixi.toml"
-          text2 = pixi.read_text()
-          m2 = re.search(r'^(version\s*=\s*["\'])([^"\']+)(["\'])', text2, re.MULTILINE)
-          if not m2:
-              print("ERROR: version field not found in pixi.toml", file=sys.stderr)
-              sys.exit(1)
-          text2 = text2[: m2.start(2)] + new_ver + text2[m2.end(2) :]
-          pixi.write_text(text2)
-
           print(f"Bumped version: {old_ver} -> {new_ver}")
           # Expose the new version to subsequent steps via $GITHUB_OUTPUT.
           import os
@@ -95,6 +85,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml pixi.toml
+          git add pyproject.toml
           git commit -m "chore: bump version ${{ steps.bump.outputs.old_version }} -> ${{ steps.bump.outputs.new_version }}"
           git push

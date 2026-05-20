@@ -56,23 +56,15 @@ jobs:
       - name: Install environment
         run: pixi install
 
-      - name: Check version consistency
+      - name: Check Pixi config is in pyproject.toml
         run: |
-          pyproject_ver=$(python -c "
+          python -c "
           import tomllib, pathlib
           data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
-          print(data['project']['version'])
+          pixi = data['tool']['pixi']
+          assert pixi['workspace']['channels'] == ['conda-forge']
+          assert pixi['workspace']['platforms'] == ['linux-64']
           ")
-          pixi_ver=$(python -c "
-          import tomllib, pathlib
-          data = tomllib.loads(pathlib.Path('pixi.toml').read_text())
-          print(data['workspace']['version'])
-          ")
-          if [ "$pyproject_ver" != "$pixi_ver" ]; then
-            echo "::error::Version mismatch: pyproject.toml=$pyproject_ver vs pixi.toml=$pixi_ver"
-            exit 1
-          fi
-          echo "Versions are consistent: $pyproject_ver"
 
       - name: Enforce QGIS-free backend
         run: |

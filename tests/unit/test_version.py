@@ -28,11 +28,10 @@ def test_version_matches_metadata():
 
 
 def test_pixi_version_matches_pyproject():
-    """pixi.toml version must stay in sync with pyproject.toml."""
-    pyproject_ver = _pyproject_version()
-    pixi_toml = Path(__file__).resolve().parents[2] / "pixi.toml"
-    pixi_data = tomllib.loads(pixi_toml.read_text())
-    pixi_ver = pixi_data["workspace"]["version"]
-    assert pyproject_ver == pixi_ver, (
-        f"Version mismatch: pyproject.toml={pyproject_ver!r} vs pixi.toml={pixi_ver!r}"
-    )
+    """Pixi configuration must be merged into pyproject.toml."""
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text())
+    pixi = data["tool"]["pixi"]
+    assert pixi["workspace"]["channels"] == ["conda-forge"]
+    assert pixi["workspace"]["platforms"] == ["linux-64"]
+    assert pixi["tasks"]["test"] == "pytest"
