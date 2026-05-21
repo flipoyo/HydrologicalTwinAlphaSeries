@@ -49,6 +49,7 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, module_caw
+from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
@@ -197,7 +198,7 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
         )
 
     if request.kind == "catchment_cells":
-        cell_ids = twin.spatial.getCatchmentCellsIds(
+        cell_ids = Spatial().getCatchmentCellsIds(
             request.obs_geometry,
             request.network_gdf,
             request.network_col_name_cell,

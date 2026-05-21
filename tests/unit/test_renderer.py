@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
+from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
 
 
 def test_plot_budget_barplot_writes_png_without_show(tmp_path, monkeypatch):

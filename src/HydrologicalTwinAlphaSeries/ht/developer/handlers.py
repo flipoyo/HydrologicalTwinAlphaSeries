@@ -58,9 +58,13 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.services.Manage import Manage
-from HydrologicalTwinAlphaSeries.services.Renderer import Renderer
-from HydrologicalTwinAlphaSeries.services.Vec_Operator import Comparator, Extractor, Operator
+from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
+    assemble_multi_layer_geodataframe,
+    assemble_single_layer_geodataframe,
+)
+from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
+from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
+from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Extractor, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
 
 from .api_types import (
@@ -285,7 +289,7 @@ def _build_watbal_spatial_gdf(
         cell_ids=comp_info.cell_ids,
     )
 
-    return Manage.Spatial.assemble_single_layer_geodataframe(
+    return assemble_single_layer_geodataframe(
         agg_df=agg_df,
         cell_ids=layer_info.cell_ids,
         cell_geometries=layer_info.cell_geometries,
@@ -331,7 +335,7 @@ def _build_effective_rainfall_gdf(
         cell_ids=comp_info.cell_ids,
     )
 
-    return Manage.Spatial.assemble_single_layer_geodataframe(
+    return assemble_single_layer_geodataframe(
         agg_df=agg_df,
         cell_ids=layer_info.cell_ids,
         cell_geometries=layer_info.cell_geometries,
@@ -374,7 +378,7 @@ def _build_aq_spatial_gdf(
 
     crs = layers[0].crs if layers else None
 
-    gdf = Manage.Spatial.assemble_multi_layer_geodataframe(
+    gdf = assemble_multi_layer_geodataframe(
         agg_df=agg_df, layers=layers,
         crs=crs, layer_id_offset=layer_id_offset,
     )
@@ -390,7 +394,7 @@ def _build_aquifer_outcropping(
     id_compartment: int,
     save_directory: str = None,
 ) -> np.ndarray:
-    """Build aquifer outcropping cell ID array. Wraps Manage.Spatial.buildAqOutcropping."""
+    """Build aquifer outcropping cell ID array. Wraps Spatial.buildAqOutcropping."""
     comp = twin.get_compartment(id_compartment)
 
     class _ExdStub:
@@ -400,7 +404,7 @@ def _build_aquifer_outcropping(
     save = save_directory is not None
     exd_stub = _ExdStub(save_directory) if save else _ExdStub("")
 
-    cells = twin.spatial.buildAqOutcropping(
+    cells = Spatial().buildAqOutcropping(
         exd=exd_stub,
         aq_compartment=comp,
         save=save,
@@ -766,7 +770,7 @@ def extract_area(
         cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
         compartment=comp,
         spatial_operator=spatial_operator,
-        spatial_manager=twin.spatial,
+        spatial_manager=Spatial(),
         **operator_kwargs
     )
 

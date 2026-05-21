@@ -51,7 +51,7 @@ import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config.constants import obs_config, paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-from HydrologicalTwinAlphaSeries.services.Vec_Operator import Operator
+from HydrologicalTwinAlphaSeries.services.public.vec_operator import Operator
 
 from .api_types import (
     CompartmentInfo,
@@ -307,7 +307,7 @@ def read_observations(
 
 
 def read_sim_steady(twin: "HydrologicalTwin", id_compartment: int) -> pd.DataFrame:
-    """Read steady-state simulation data. Wraps Manage.Temporal.readSimSteady."""
+    """Read steady-state simulation data. Wraps Temporal.readSimSteady."""
     comp = twin.get_compartment(id_compartment)
     return twin.temporal.readSimSteady(comp)
 
@@ -319,7 +319,7 @@ def read_obs_steady(
     cutsdate: str = None,
     cutedate: str = None,
 ) -> pd.DataFrame:
-    """Read steady-state observation data. Wraps Manage.Temporal.readObsSteady."""
+    """Read steady-state observation data. Wraps Temporal.readObsSteady."""
     comp = twin.get_compartment(id_compartment)
     cfg = obs_config[id_compartment]
     return twin.temporal.readObsSteady(
