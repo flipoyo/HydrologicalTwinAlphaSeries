@@ -28,21 +28,26 @@ def test_version_matches_metadata():
 
 
 def test_pixi_version_matches_pyproject():
-    """Pixi workspace/tasks/dependencies in pyproject.toml must stay consistent."""
+    """Pixi config in pyproject.toml must stay well-formed and not duplicate [project] metadata."""
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     pixi = data["tool"]["pixi"]
 
     workspace = pixi["workspace"]
-    assert workspace["name"] == data["project"]["name"]
-    assert workspace["version"] == _pyproject_version()
+    # name, version and authors must NOT be duplicated in [tool.pixi.workspace]:
+    # pixi inherits them from the standard [project] table.
+    assert "name" not in workspace, (
+        "Remove 'name' from [tool.pixi.workspace]; it is inherited from [project]"
+    )
+    assert "version" not in workspace, (
+        "Remove 'version' from [tool.pixi.workspace]; it is inherited from [project]"
+    )
+    assert "authors" not in workspace, (
+        "Remove 'authors' from [tool.pixi.workspace]; it is inherited from [project]"
+    )
+    # pixi-only settings that [project] cannot express:
     assert workspace["channels"] == ["conda-forge"]
     assert workspace["platforms"] == ["linux-64"]
-    assert workspace["authors"] == [
-        "Nicolas Flipo",
-        "Simone Mazzarelli",
-        "HydrologicalTwinAlphaSeries contributors",
-    ]
 
     tasks = pixi["tasks"]
     assert tasks["run"] == "python -m HydrologicalTwinAlphaSeries"

@@ -56,23 +56,6 @@ jobs:
       - name: Install environment
         run: pixi install
 
-      - name: Check Pixi config is in pyproject.toml
-        run: |
-          python -c "
-          import tomllib, pathlib
-          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
-          pixi = data['tool']['pixi']
-          ws = pixi['workspace']
-          # name and version must NOT be duplicated here:
-          # pixi inherits them from the standard [project] table.
-          assert 'name' not in ws, 'Remove name from [tool.pixi.workspace]; it is inherited from [project]'
-          assert 'version' not in ws, 'Remove version from [tool.pixi.workspace]; it is inherited from [project]'
-          # pixi-only settings that [project] cannot express:
-          assert ws['channels'] == ['conda-forge']
-          assert ws['platforms'] == ['linux-64']
-          "
-
-
       - name: Enforce QGIS-free backend
         run: |
           if grep -R -nE '^\s*(from|import)\s+(qgis(\.PyQt)?|PyQt5?)\b' src; then
