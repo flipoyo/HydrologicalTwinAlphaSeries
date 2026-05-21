@@ -39,7 +39,7 @@ value checks later if and when a real numerical incident slips past.
 ## How to run it locally
 
 Run the commands from the **HTAS repo root** (the directory containing
-this submodule's `pixi.toml`). If you have cawaqsviz checked out, that
+this submodule's `pyproject.toml`). If you have cawaqsviz checked out, that
 is `external/HydrologicalTwinAlphaSeries/`; if you have HTAS standalone,
 it's the top of the repo. `pixi run test` is the same command CI uses,
 so what you see locally is what CI sees.

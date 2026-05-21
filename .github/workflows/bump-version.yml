@@ -25,12 +25,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Bump version in pyproject.toml and pixi.toml
+      - name: Bump version in pyproject.toml
         id: bump
         run: |
           python - <<'EOF'
           import re
           import sys
+          import tomllib
           from pathlib import Path
 
           def bump(version: str) -> str:
@@ -59,29 +60,37 @@ jobs:
               else:
                   return f"{iii + 1:03d}.alpha.01"
 
+          def replace_version_in_section(text: str, section: str, new_version: str) -> str:
+              """Replace the version value inside a TOML section."""
+              section_re = re.compile(
+                  rf"(^\[{re.escape(section)}\][^\n]*\n?)(.*?)(?=^\[|\Z)",
+                  re.MULTILINE | re.DOTALL,
+              )
+              m = section_re.search(text)
+              if not m:
+                  print(f"ERROR: section [{section}] not found in pyproject.toml", file=sys.stderr)
+                  sys.exit(1)
+
+              body = m.group(2)
+              version_re = re.compile(r'^(version\s*=\s*["\'])([^"\']+)(["\'])', re.MULTILINE)
+              mv = version_re.search(body)
+              if not mv:
+                  print(f"ERROR: version field not found in [{section}] in pyproject.toml", file=sys.stderr)
+                  sys.exit(1)
+
+              body = body[: mv.start(2)] + new_version + body[mv.end(2) :]
+              return text[: m.start(2)] + body + text[m.end(2) :]
+
           root = Path(".")
 
           # --- pyproject.toml ---
           pyproject = root / "pyproject.toml"
           text = pyproject.read_text()
-          m = re.search(r'^(version\s*=\s*["\'])([^"\']+)(["\'])', text, re.MULTILINE)
-          if not m:
-              print("ERROR: version field not found in pyproject.toml", file=sys.stderr)
-              sys.exit(1)
-          old_ver = m.group(2)
+          old_ver = tomllib.loads(text)["project"]["version"]
           new_ver = bump(old_ver)
-          text = text[: m.start(2)] + new_ver + text[m.end(2) :]
+          text = replace_version_in_section(text, "project", new_ver)
+          text = replace_version_in_section(text, "tool.pixi.workspace", new_ver)
           pyproject.write_text(text)
-
-          # --- pixi.toml ---
-          pixi = root / "pixi.toml"
-          text2 = pixi.read_text()
-          m2 = re.search(r'^(version\s*=\s*["\'])([^"\']+)(["\'])', text2, re.MULTILINE)
-          if not m2:
-              print("ERROR: version field not found in pixi.toml", file=sys.stderr)
-              sys.exit(1)
-          text2 = text2[: m2.start(2)] + new_ver + text2[m2.end(2) :]
-          pixi.write_text(text2)
 
           print(f"Bumped version: {old_ver} -> {new_ver}")
           # Expose the new version to subsequent steps via $GITHUB_OUTPUT.
@@ -95,6 +104,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml pixi.toml
+          git add pyproject.toml
           git commit -m "chore: bump version ${{ steps.bump.outputs.old_version }} -> ${{ steps.bump.outputs.new_version }}"
           git push
