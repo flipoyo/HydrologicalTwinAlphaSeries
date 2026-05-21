@@ -16,6 +16,10 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
+from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
+    save_area_values_npy,
+)
+
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
@@ -732,7 +736,8 @@ def run_mask_watbal(
             columns=[f"cell_{i}" for i in range(response.data.shape[0])],
         )
         df.to_csv(csv_path)
-        np.save(npy_path, response.data)
+        # Tier-1 privileged write — see services/SECURITY.md.
+        save_area_values_npy(npy_path, response.data)
         artefacts.append(csv_path)
         artefacts.append(npy_path)
 

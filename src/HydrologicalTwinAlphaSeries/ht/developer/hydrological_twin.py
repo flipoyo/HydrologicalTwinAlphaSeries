@@ -58,7 +58,8 @@ import pandas as pd
 from HydrologicalTwinAlphaSeries.config import ConfigGeometry, ConfigProject
 from HydrologicalTwinAlphaSeries.config.constants import paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
-from HydrologicalTwinAlphaSeries.services.Manage import Manage
+from HydrologicalTwinAlphaSeries.services.public.budget import Budget
+from HydrologicalTwinAlphaSeries.services.public.temporal import Temporal
 
 from ..persistence import HTPersistenceMixin
 from .api_types import (
@@ -168,10 +169,9 @@ class HydrologicalTwin(HTPersistenceMixin):
         # Compartments indexed by CaWaQS compartment ID (int)
         self.compartments: Dict[int, Compartment] = {}
 
-        # Domain services reusing existing logic#Watch that is is a global set up that can be tuned within compartment 
-        self.temporal = Manage.Temporal()
-        self.spatial = Manage.Spatial()
-        self.budget = Manage.Budget()
+        # Domain services reusing existing logic#Watch that is is a global set up that can be tuned within compartment
+        self.temporal = Temporal()
+        self.budget = Budget()
 
         # Auto-configure if full config provided at construction time
         if config_geom is not None and config_proj is not None:
@@ -758,7 +758,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         return accessors.read_observations(self, id_compartment, syear, eyear)
 
     def read_sim_steady(self, id_compartment: int) -> pd.DataFrame:
-        """Read steady-state simulation data. Wraps Manage.Temporal.readSimSteady."""
+        """Read steady-state simulation data. Wraps Temporal.readSimSteady."""
         from . import accessors
         return accessors.read_sim_steady(self, id_compartment)
 
@@ -769,7 +769,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutsdate: str = None,
         cutedate: str = None,
     ) -> pd.DataFrame:
-        """Read steady-state observation data. Wraps Manage.Temporal.readObsSteady."""
+        """Read steady-state observation data. Wraps Temporal.readObsSteady."""
         from . import accessors
         return accessors.read_obs_steady(
             self, id_compartment, obs_aggr,
@@ -938,7 +938,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         id_compartment: int,
         save_directory: str = None,
     ) -> np.ndarray:
-        """Build aquifer outcropping cell ID array. Wraps Manage.Spatial.buildAqOutcropping."""
+        """Build aquifer outcropping cell ID array. Wraps Spatial.buildAqOutcropping."""
         from . import handlers
         return handlers._build_aquifer_outcropping(
             self, id_compartment, save_directory=save_directory,

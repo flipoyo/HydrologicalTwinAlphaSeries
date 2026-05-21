@@ -306,7 +306,7 @@ class Extractor:
         :param spatial_operator: Name of spatial operator ('catchment_cells' or
             'aquifer_outcropping')
         :type spatial_operator: Optional[str]
-        :param spatial_manager: Instance of Manage.Spatial() (required for spatial operators)
+        :param spatial_manager: Instance of Spatial() (required for spatial operators)
         :param operator_kwargs: Additional kwargs for the spatial operator
         :return: Array (n_selected_cells, n_timesteps)
         :rtype: np.ndarray
@@ -366,7 +366,7 @@ class Extractor:
         :type operator: str
         :param compartment: Compartment object with mesh and configuration
         :type compartment: Compartment
-        :param spatial_manager: Instance of Manage.Spatial()
+        :param spatial_manager: Instance of Spatial()
         :param kwargs: Operator-specific parameters. ``**kwargs`` collects all
             additional keyword arguments into a dictionary called kwargs. This
             allows the function to accept a variable number of named parameters
