@@ -503,12 +503,17 @@ def _write_criteria_text_file(path: str, metrics: Sequence[str], rows: Sequence[
     :param metrics: Ordered metric keys, used both for header columns and row order.
     :param rows: Iterable of ``(name, point_id, criteria_dict)`` tuples.
     """
+    name_w = max(8, max((len(r[0]) for r in rows), default=0) + 2)
+    code_w = max(8, max((len(str(r[1])) for r in rows), default=0) + 2)
+    col_w  = max(12, max(len(m) for m in metrics) + 2)
+
     with open(path, "w") as f:
-        f.write("NAME\tCODE\t" + "\t".join(metrics) + "\t")
+        f.write("NAME".ljust(name_w) + "CODE".ljust(code_w))
+        f.write("".join(m.rjust(col_w) for m in metrics) + "\n")
         for name, point_id, crits in rows:
-            f.write(f"\n{name}\t{point_id}")
-            for k in metrics:
-                f.write(f"\t{crits[k]}")
+            f.write(str(name).ljust(name_w) + str(point_id).ljust(code_w))
+            f.write("".join(f"{crits[k]:>{col_w}.4g}" for k in metrics) + "\n")
+
 
 
 def _write_aq_global_and_by_layer(
