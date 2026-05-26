@@ -5,6 +5,8 @@ import numpy as np
 
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 
+from .metrics_spec import METRIC_SPEC
+
 
 class Operator:        
     def __init__(self):
@@ -454,6 +456,30 @@ class Extractor:
         
         return extracted_data, extracted_dates
 
+def _round_to_spec(crits: dict) -> dict:
+    # Apply per-metric display precision from METRIC_SPEC to every value in
+    # the result dict. NaN and None pass through unchanged so consumers'
+    # existing NaN handling stays in charge. Unknown keys (i.e. not yet
+    # registered in METRIC_SPEC) pass through raw rather than crashing —
+    # the spec-level "every metric has an entry" check is the right place
+    # to enforce coverage, not a runtime crash.
+    out: dict = {}
+    for k, v in crits.items():
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            out[k] = v
+            continue
+        spec = METRIC_SPEC.get(k)
+        if spec is None:
+            out[k] = v
+            continue
+        digits = spec["digits"]
+        if digits == 0:
+            out[k] = int(round(float(v)))
+        else:
+            out[k] = round(float(v), digits)
+    return out
+
+
 class Comparator:
     def __init__(self):
         pass
@@ -473,8 +499,8 @@ class Comparator:
         :type obs: np.ndarray
         :param metrics: List of metrics to calculate. If None, calculates all.
         :type metrics: List[str], optional
-        :return: Dictionary of metric_name: value
-        :rtype: dict
+        :return: Dictionary of metric_name: value (see "Return precision" below)
+        :rtype: dict[str, float | int]
 
         Available metrics:
         - 'nash': Nash-Sutcliffe Efficiency (NSE)
@@ -506,6 +532,13 @@ class Comparator:
 
         NaN handling: pairs where *either* obs or sim is NaN are dropped
         before any metric is computed.
+
+        Return precision: values in the returned dictionary are rounded to
+        the conventional precision defined in METRIC_SPEC (sibling module
+        `metrics_spec.py`). Metrics with `digits == 0` (currently `n_obs`)
+        are returned as Python `int`; all others as `float`. NaN values
+        pass through unchanged. There is no opt-out for raw, unrounded
+        output — no current caller needs one; add a parameter if one does.
         """
         if metrics is None:
             metrics = ["nash", "kge", "rmse", "pbias"]
@@ -623,7 +656,7 @@ class Comparator:
             sum_o = np.sum(obs_clean)
             results["sum_ratio"] = np.sum(sim_clean) / sum_o if sum_o != 0 else np.nan
 
-        return results
+        return _round_to_spec(results)
 
 
 
