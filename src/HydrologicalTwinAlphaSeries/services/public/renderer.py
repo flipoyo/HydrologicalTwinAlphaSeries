@@ -564,11 +564,16 @@ class Renderer:
             annotations.append(
                 dict(
                     text=text,
-                    x=1, y=1,
+                    x=0.995, y=0.995,
                     xref="paper", yref="paper",
+                    xanchor="right", yanchor="top",
                     showarrow=False,
                     align="left",
-                    font=dict(size=16),
+                    font=dict(size=12, family="Arial, sans-serif"),
+                    bgcolor="rgba(255,255,255,0.85)",
+                    bordercolor="rgba(0,0,0,0.3)",
+                    borderwidth=1,
+                    borderpad=6,
                 )
             )
 
