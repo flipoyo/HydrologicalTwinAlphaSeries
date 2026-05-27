@@ -65,3 +65,12 @@ def test_pixi_version_matches_pyproject():
         "path": ".",
         "editable": True,
     }
+
+
+def test_bump_workflow_updates_only_project_version():
+    """Version bump automation must use the canonical [project] version field."""
+    workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "bump-version.yml"
+    text = workflow.read_text()
+
+    assert 'replace_version_in_section(text, "project", new_ver)' in text
+    assert 'replace_version_in_section(text, "tool.pixi.workspace", new_ver)' not in text
