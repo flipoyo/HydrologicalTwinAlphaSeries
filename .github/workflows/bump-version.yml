@@ -89,7 +89,6 @@ jobs:
           old_ver = tomllib.loads(text)["project"]["version"]
           new_ver = bump(old_ver)
           text = replace_version_in_section(text, "project", new_ver)
-          text = replace_version_in_section(text, "tool.pixi.workspace", new_ver)
           pyproject.write_text(text)
 
           print(f"Bumped version: {old_ver} -> {new_ver}")
