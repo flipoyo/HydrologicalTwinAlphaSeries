@@ -15,7 +15,6 @@ This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
 from __future__ import annotations
 
 from ...services.public.automatic_detection_config import (
-    DetectionError,
     detect_from_out_caw,
     detect_project_neighbors,
 )
