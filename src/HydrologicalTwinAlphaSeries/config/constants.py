@@ -16,6 +16,10 @@ out_caw_folder = {
     4: "Output_NONSAT",
 }
 
+out_caw_folder_by_name = {
+    module_caw[k]: v for k, v in out_caw_folder.items()
+}
+
 ids_mesh = {
     1: [1],
     2: [2],

@@ -6,7 +6,7 @@ outputs are plain dicts.
 
 Exposed:
     - detect_from_out_caw(out_caw_directory)
-    - detect_project_neighbors(project_file_path, out_caw_directory)
+    - detect_project_neighbors(project_file_path)
     - DetectionError
 """
 
@@ -16,12 +16,9 @@ import re
 from pathlib import Path
 from typing import Optional
 
-COMPARTMENT_FOLDERS = {
-    "AQ": "Output_AQ",
-    "HYD": "Output_HYD",
-    "WATBAL": "Output_WATBAL",
-    "NSAT": "Output_NONSAT",
-}
+from HydrologicalTwinAlphaSeries.config.constants import (
+    out_caw_folder_by_name as COMPARTMENT_FOLDERS,
+)
 
 _YEAR_TOKEN = re.compile(r"^[A-Z]+_[A-Z]+\.(\d{8})\.bin$")
 _STEADY_TOKEN = re.compile(r"^[A-Z]+_[A-Z]+\.00\.bin$")
@@ -124,7 +121,6 @@ def detect_from_out_caw(out_caw_directory: str) -> dict:
 
 def detect_project_neighbors(
     project_file_path: Optional[str],
-    out_caw_directory: str,
 ) -> dict:
     """Best-effort lookup of QGIS project neighbors.
 
@@ -160,10 +156,7 @@ def detect_project_neighbors(
         result["geometry_config_path"] = str(geometry_matches[0])
 
     for candidate in (project_dir, project_dir.parent, project_dir.parent.parent):
-        try:
-            data_obs = candidate / "DATA_OBS"
-        except (OSError, ValueError):
-            continue
+        data_obs = candidate / "DATA_OBS"
         if data_obs.is_dir():
             result["obs_directory"] = str(data_obs)
             break

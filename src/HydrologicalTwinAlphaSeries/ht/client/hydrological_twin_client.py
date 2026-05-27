@@ -98,14 +98,6 @@ class HydrologicalTwinClient:
     def __init__(self, metadata: dict):
         self._twin = HydrologicalTwin(metadata=metadata)
 
-    @staticmethod
-    def detect_from_out_caw(out_caw_directory: str) -> dict:
-        return detect_from_out_caw(out_caw_directory)
-
-    @staticmethod
-    def detect_project_neighbors(project_file_path, out_caw_directory: str) -> dict:
-        return detect_project_neighbors(project_file_path, out_caw_directory)
-
     def configure(self, **kwargs):
         return self._twin.configure(**kwargs)
 
@@ -124,6 +116,15 @@ class HydrologicalTwinClient:
         client.configure(**configure_kwargs)
         client.load(**load_kwargs)
         return client
+
+    @staticmethod
+    def detect_from_out_caw(out_caw_directory: str) -> dict:
+        return detect_from_out_caw(out_caw_directory)
+
+    @staticmethod
+    def detect_project_neighbors(project_file_path) -> dict:
+        return detect_project_neighbors(project_file_path)
+
 
     def budget_barplot(self, **kwargs) -> BudgetBarplotResult:
         return operations.run_budget_barplot(self._twin, **kwargs)

@@ -83,7 +83,7 @@ def test_year_range_disagreement_warns(tmp_path):
 
 
 def test_project_neighbors_none_returns_all_none(tmp_path):
-    result = detect_project_neighbors(None, str(tmp_path))
+    result = detect_project_neighbors(None)
 
     assert result == {
         "geometry_config_path": None,
@@ -107,7 +107,7 @@ def test_project_neighbors_picks_most_recent_geometry_config(tmp_path):
     newer = project_dir / "config_geometries_CVZ.json"
     newer.touch()
 
-    result = detect_project_neighbors(str(project_file), str(tmp_path))
+    result = detect_project_neighbors(str(project_file))
 
     assert result["geometry_config_path"] == str(newer)
 
@@ -124,7 +124,7 @@ def test_project_neighbors_finds_sibling_data_obs(tmp_path):
     data_obs = parent / "DATA_OBS"
     data_obs.mkdir()
 
-    result = detect_project_neighbors(str(project_file), str(tmp_path))
+    result = detect_project_neighbors(str(project_file))
 
     assert result["geometry_config_path"].endswith("config_geometries_CVZ.json")
     assert result["obs_directory"] == str(data_obs)
@@ -135,7 +135,7 @@ def test_project_neighbors_existing_file_no_neighbors(tmp_path):
     project_file = tmp_path / "lone.qgz"
     project_file.touch()
 
-    result = detect_project_neighbors(str(project_file), str(tmp_path))
+    result = detect_project_neighbors(str(project_file))
 
     assert result["geometry_config_path"] is None
     assert result["obs_directory"] is None
