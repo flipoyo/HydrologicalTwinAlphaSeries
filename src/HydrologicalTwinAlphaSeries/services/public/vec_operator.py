@@ -5,6 +5,8 @@ import numpy as np
 
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 
+from .metrics_spec import METRIC_SPEC
+
 
 class Operator:        
     def __init__(self):
@@ -454,6 +456,30 @@ class Extractor:
         
         return extracted_data, extracted_dates
 
+def _round_to_spec(crits: dict) -> dict:
+    # Apply per-metric display precision from METRIC_SPEC to every value in
+    # the result dict. NaN and None pass through unchanged so consumers'
+    # existing NaN handling stays in charge. Unknown keys (i.e. not yet
+    # registered in METRIC_SPEC) pass through raw rather than crashing —
+    # the spec-level "every metric has an entry" check is the right place
+    # to enforce coverage, not a runtime crash.
+    out: dict = {}
+    for k, v in crits.items():
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            out[k] = v
+            continue
+        spec = METRIC_SPEC.get(k)
+        if spec is None:
+            out[k] = v
+            continue
+        digits = spec["digits"]
+        if digits == 0:
+            out[k] = int(round(float(v)))
+        else:
+            out[k] = round(float(v), digits)
+    return out
+
+
 class Comparator:
     def __init__(self):
         pass
@@ -473,17 +499,29 @@ class Comparator:
         :type obs: np.ndarray
         :param metrics: List of metrics to calculate. If None, calculates all.
         :type metrics: List[str], optional
-        :return: Dictionary of metric_name: value
-        :rtype: dict
+        :return: Dictionary of metric_name: value (see "Return precision" below)
+        :rtype: dict[str, float | int]
 
         Available metrics:
         - 'nash': Nash-Sutcliffe Efficiency (NSE)
-        - 'kge': Kling-Gupta Efficiency
+        - 'kge': Kling-Gupta Efficiency — **Kling 2012 (KGE'),** with
+          variability term α = CV_sim / CV_obs (ratio of coefficients of
+          variation). This differs from the original Gupta-2009 KGE, which
+          uses α = σ_sim / σ_obs. The 2012 variant is the operational
+          default (hydroeval, hydroGOF) because it makes the variability
+          and bias terms independent: in Gupta 2009 a change in the mean
+          shifts α through its shared σ, conflating the two error
+          components.
+        - 'pearson': Pearson correlation coefficient r (signed; exposes the
+          sign that the existing 'r2' hides).
         - 'rmse': Root Mean Square Error
-        - 'pbias': Percent Bias
+        - 'pbias': Percent Bias (%)
         - 'mae': Mean Absolute Error
+        - 'mean_bias': Signed mean bias, mean(sim) − mean(obs), in the
+          input data's unit. Positive ⇒ sim overshoots obs on average.
+          Distinct from 'pbias' (which is dimensionless, in percent).
         - 'r2': Coefficient of Determination
-        - 'n_obs': Count of valid sim/obs pairs (after NaN removal)
+        - 'n_obs': Count of pairwise-complete sim/obs pairs (both finite)
         - 'avg_obs': Mean of observed values
         - 'avg_sim': Mean of simulated values
         - 'std_obs': Standard deviation of observed values
@@ -491,12 +529,24 @@ class Comparator:
         - 'std_ratio': Ratio of standard deviations (σ_sim / σ_obs)
         - 'avg_ratio': Ratio of averages (mean_sim / mean_obs)
         - 'sum_ratio': Ratio of sums (Σsim / Σobs)
+
+        NaN handling: pairs where *either* obs or sim is NaN are dropped
+        before any metric is computed.
+
+        Return precision: values in the returned dictionary are rounded to
+        the conventional precision defined in METRIC_SPEC (sibling module
+        `metrics_spec.py`). Metrics with `digits == 0` (currently `n_obs`)
+        are returned as Python `int`; all others as `float`. NaN values
+        pass through unchanged. There is no opt-out for raw, unrounded
+        output — no current caller needs one; add a parameter if one does.
         """
         if metrics is None:
             metrics = ["nash", "kge", "rmse", "pbias"]
 
-        # Remove NaN values
-        mask = ~np.isnan(obs)
+        # Drop pairs where EITHER series is NaN (pairwise-complete).
+        # Masking only on obs would let sim NaNs at valid-obs timesteps
+        # poison every downstream metric to NaN — a silent failure mode.
+        mask = ~np.isnan(obs) & ~np.isnan(sim)
         obs_clean = obs[mask]
         sim_clean = sim[mask]
 
@@ -514,11 +564,24 @@ class Comparator:
             results["nash"] = nse
 
         if "kge" in metrics:
-            # Kling-Gupta Efficiency
-            if len(obs_clean) > 1:
+            # Kling-Gupta Efficiency — Kling 2012 variant (KGE').
+            # Variability term uses the CV ratio rather than σ_sim/σ_obs,
+            # so α and β stay independent (changing the mean no longer
+            # leaks into the variability term through σ).
+            mean_obs = np.mean(obs_clean)
+            mean_sim = np.mean(sim_clean)
+            std_obs = np.std(obs_clean)
+            if (
+                len(obs_clean) > 1
+                and mean_obs != 0
+                and mean_sim != 0
+                and std_obs > 0
+            ):
                 r = np.corrcoef(sim_clean, obs_clean)[0, 1]
-                alpha = np.std(sim_clean) / np.std(obs_clean) if np.std(obs_clean) > 0 else np.nan
-                beta = np.mean(sim_clean) / np.mean(obs_clean) if np.mean(obs_clean) > 0 else np.nan
+                cv_sim = np.std(sim_clean) / mean_sim
+                cv_obs = std_obs / mean_obs
+                alpha = cv_sim / cv_obs
+                beta = mean_sim / mean_obs
                 kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
                 results["kge"] = kge
             else:
@@ -542,6 +605,20 @@ class Comparator:
             # Mean Absolute Error
             mae = np.mean(np.abs(obs_clean - sim_clean))
             results["mae"] = mae
+
+        if "pearson" in metrics:
+            # Pearson correlation coefficient (signed). Exposes the sign
+            # that "r2" hides; useful as an anticorrelation diagnostic.
+            if len(obs_clean) > 1:
+                results["pearson"] = np.corrcoef(sim_clean, obs_clean)[0, 1]
+            else:
+                results["pearson"] = np.nan
+
+        if "mean_bias" in metrics:
+            # Signed mean bias in the data's native unit.
+            # Positive ⇒ sim overshoots obs on average.
+            # Distinct from "pbias" (which is dimensionless, in percent).
+            results["mean_bias"] = np.mean(sim_clean) - np.mean(obs_clean)
 
         if "r2" in metrics:
             # Coefficient of Determination
@@ -579,7 +656,7 @@ class Comparator:
             sum_o = np.sum(obs_clean)
             results["sum_ratio"] = np.sum(sim_clean) / sum_o if sum_o != 0 else np.nan
 
-        return results
+        return _round_to_spec(results)
 
 
 

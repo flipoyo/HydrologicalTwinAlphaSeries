@@ -16,6 +16,8 @@ from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from plotly.subplots import make_subplots
 
+from .metrics_spec import METRIC_SPEC, format_metric
+
 
 class Renderer:
 
@@ -539,38 +541,39 @@ class Renderer:
         fig = make_subplots(rows=rows, cols=1, shared_xaxes=True)
         annotations = []
 
-        # LaTeX label mapping for criteria keys
-        _crit_labels = {
-            "n_obs": "N_{obs}",
-            "avg_ratio": "\\overline{x_s}/\\overline{x_o}",
-            "pbias": "PBIAS",
-            "std_ratio": "\\left(\\frac{{\\mu_s}}{{\\mu_o}}\\right)",
-            "rmse": "RMSE",
-            "nash": "NASH",
-            "kge": "KGE",
-        }
-
         for n_obs, (df_sim_obs_mp, obs_name) in enumerate(sim_obs_data):
-            # Build annotation text from pre-computed criteria
+            # Build annotation text from pre-computed criteria.
+            # Labels and per-metric precision come from METRIC_SPEC, the
+            # single source of truth that also drives GIS-attribute
+            # rounding in DialogStatisticalCriteria. The annotation is
+            # plain text (not LaTeX/MathJax): the registry's labels mix
+            # Unicode characters (σ, μ, Σ, ²) that don't survive Plotly's
+            # MathJax pipeline, but render fine as plain text. "<br>"
+            # produces a line break in Plotly text annotations.
             crits = criteria_per_point[n_obs] if criteria_per_point else None
 
             if crits is not None and crit_start is not None and crit_end is not None:
-                text = "$ Period : " + crit_start + " to " + crit_end + "\\\\"
+                lines = [f"Period : {crit_start} to {crit_end}"]
                 for key, value in crits.items():
-                    label = _crit_labels.get(key, key)
-                    text += label + " : " + str(round(value, 2)) + "\\\\"
-                text += "$"
+                    label = METRIC_SPEC[key]["label"] if key in METRIC_SPEC else key
+                    lines.append(f"{label} : {format_metric(key, value)}")
+                text = "<br>".join(lines)
             else:
                 text = ""
 
             annotations.append(
                 dict(
                     text=text,
-                    x=1, y=1,
+                    x=0.995, y=0.995,
                     xref="paper", yref="paper",
+                    xanchor="right", yanchor="top",
                     showarrow=False,
                     align="left",
-                    font=dict(size=16),
+                    font=dict(size=12, family="Arial, sans-serif"),
+                    bgcolor="rgba(255,255,255,0.85)",
+                    bordercolor="rgba(0,0,0,0.3)",
+                    borderwidth=1,
+                    borderpad=6,
                 )
             )
 
