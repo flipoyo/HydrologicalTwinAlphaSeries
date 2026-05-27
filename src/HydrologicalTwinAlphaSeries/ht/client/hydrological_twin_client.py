@@ -14,6 +14,10 @@ This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
 
 from __future__ import annotations
 
+from ...services.public.automatic_detection_config import (
+    detect_from_out_caw,
+    detect_project_neighbors,
+)
 from ..developer import HydrologicalTwin
 from . import operations
 from .api_types import (
@@ -43,6 +47,22 @@ class HydrologicalTwinClient:
     orchestration. Add a new operation by (1) defining a ``*Result``
     dataclass in :mod:`api_types`, (2) implementing ``run_<name>`` in
     :mod:`operations`, and (3) adding a one-line facade method here.
+
+    Pre-lifecycle discovery (static, no twin required):
+
+    - :meth:`detect_from_out_caw` — scan a CaWaQS output directory and
+      return ``{compartments, s_year, e_year, regime, warnings}``. Raises
+      :class:`DetectionError` if the folder is not interpretable.
+    - :meth:`detect_project_neighbors` — given a QGIS project file path
+      (or ``None``), best-effort lookup of ``{geometry_config_path,
+      obs_directory, project_name}``. Each field may be ``None``
+      independently; the function never raises on missing neighbors.
+
+    These run *before* a client is constructed: they take filesystem
+    paths and return plain dicts the caller uses to fill the inputs to
+    :meth:`configure` / :meth:`load`. Same import surface, same return
+    shape, whether the caller is the QGIS dialog, a notebook, or a
+    future HTTP server.
 
     Lifecycle:
 
@@ -96,6 +116,15 @@ class HydrologicalTwinClient:
         client.configure(**configure_kwargs)
         client.load(**load_kwargs)
         return client
+
+    @staticmethod
+    def detect_from_out_caw(out_caw_directory: str) -> dict:
+        return detect_from_out_caw(out_caw_directory)
+
+    @staticmethod
+    def detect_project_neighbors(project_file_path) -> dict:
+        return detect_project_neighbors(project_file_path)
+
 
     def budget_barplot(self, **kwargs) -> BudgetBarplotResult:
         return operations.run_budget_barplot(self._twin, **kwargs)

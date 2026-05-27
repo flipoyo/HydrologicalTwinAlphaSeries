@@ -1,3 +1,8 @@
+from HydrologicalTwinAlphaSeries.services.public.automatic_detection_config import (
+    DetectionError,
+    detect_from_out_caw,
+    detect_project_neighbors,
+)
 from HydrologicalTwinAlphaSeries.services.public.budget import Budget
 from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
     assemble_multi_layer_geodataframe,
@@ -16,6 +21,7 @@ __all__ = [
     "Budget",
     "CacheMissError",
     "Comparator",
+    "DetectionError",
     "Extractor",
     "Operator",
     "Renderer",
@@ -23,4 +29,6 @@ __all__ = [
     "Temporal",
     "assemble_multi_layer_geodataframe",
     "assemble_single_layer_geodataframe",
+    "detect_from_out_caw",
+    "detect_project_neighbors",
 ]
