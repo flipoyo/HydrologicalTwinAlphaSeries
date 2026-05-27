@@ -16,7 +16,6 @@ import re
 from pathlib import Path
 from typing import Optional
 
-
 COMPARTMENT_FOLDERS = {
     "AQ": "Output_AQ",
     "HYD": "Output_HYD",
