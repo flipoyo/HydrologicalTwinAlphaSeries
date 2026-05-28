@@ -1,4 +1,5 @@
 
+import warnings
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
@@ -348,8 +349,48 @@ class Extractor:
         if cell_ids is None:
             raise ValueError("Either 'cell_ids' or 'spatial_operator' must be provided")
 
-        # Extract data for the specified cells
-        return data[cell_ids, :]
+        cell_ids_arr = np.asarray(cell_ids)
+        if cell_ids_arr.size and not np.issubdtype(cell_ids_arr.dtype, np.integer):
+            if np.issubdtype(cell_ids_arr.dtype, np.floating):
+                if not np.all(np.equal(np.mod(cell_ids_arr, 1), 0)):
+                    raise ValueError(
+                        "cell_ids contains non-integer float values; cannot index into data."
+                    )
+            cell_ids_arr = cell_ids_arr.astype(np.intp)
+
+        # Cell-id values are used as 0-based row positions into `data`.
+        # Validate that contract and surface a clear message when it breaks.
+        n_rows = data.shape[0]
+        if cell_ids_arr.size:
+            lo, hi = int(cell_ids_arr.min()), int(cell_ids_arr.max())
+            if lo < 0 or hi >= n_rows:
+                likely_one_based = lo == 1 and hi == n_rows
+                hint = (
+                    " This looks like a 1-based id range (min=1, max=n_rows) — "
+                    "if the mesh id column is 1-based, callers must subtract 1 "
+                    "before passing ids to apply_spatial_mask."
+                    if likely_one_based
+                    else ""
+                )
+                raise IndexError(
+                    f"cell_ids out of range for data with {n_rows} rows: "
+                    f"min={lo}, max={hi}. Cell-id values must be 0-based row "
+                    f"positions into the values array.{hint}"
+                )
+            # In-range but suspicious: smallest id is >= 1 and largest id is exactly
+            # n_rows - 1 + 1's offset would have tripped above, so we can only catch
+            # the "ids never reference row 0 even though they could have" hint.
+            if lo >= 1 and cell_ids_arr.size >= n_rows:
+                warnings.warn(
+                    "cell_ids cover {n} positions but never reference row 0 — "
+                    "this can indicate a 1-based id convention being silently "
+                    "off-by-one against the 0-based values array.".format(
+                        n=cell_ids_arr.size
+                    ),
+                    stacklevel=2,
+                )
+
+        return data[cell_ids_arr, :]
 
     def _get_cell_ids_from_operator(
         self,

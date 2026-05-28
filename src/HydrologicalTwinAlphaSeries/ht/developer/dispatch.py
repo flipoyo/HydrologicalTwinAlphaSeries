@@ -331,7 +331,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             param=request.param,
             syear=request.syear,
             eyear=request.eyear,
-            cell_ids=np.asarray(resolved_cell_ids),
+            cell_ids=np.asarray(resolved_cell_ids, dtype=np.intp),
             id_layer=request.id_layer,
             cutsdate=request.cutsdate,
             cutedate=request.cutedate,
