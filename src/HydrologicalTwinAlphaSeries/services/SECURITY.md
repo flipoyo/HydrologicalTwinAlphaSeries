@@ -43,9 +43,15 @@ can be re-instantiated and run. **Must be in `services/private/`.**
 
 - *Today:* `services/private/submodel_export.py::save_area_values_npy` —
   the `.npy` write of the per-cell value array for a masked WATBAL area,
-  invoked by `ht/client/operations.py::run_mask_watbal`. This is the one
-  concrete Tier-1 artefact that exists in the repo now; it is the
+  invoked by `ht/client/operations.py::run_mask_watbal`. This is the
   precursor of the full submodel-numpy + rebuilt-config writer.
+- *Today:* `services/private/submodel_export.py::save_area_geopackage` —
+  the transportable GeoPackage bundling masked-cells geometry, long-form
+  per-(cell, date, param) values, and run provenance for a masked WATBAL
+  area; also invoked by `ht/client/operations.py::run_mask_watbal` when
+  the `write_geopackage=True` opt-in flag is set. Same Tier-1 leak
+  surface as the `.npy` writer: user-supplied geometry combined with raw
+  per-cell numeric arrays on disk.
 
 ### Tier 2 — raw per-cell time series (CSV form)
 

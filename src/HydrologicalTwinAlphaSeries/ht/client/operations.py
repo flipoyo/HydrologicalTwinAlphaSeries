@@ -17,6 +17,7 @@ from typing import Sequence, Tuple
 import numpy as np
 
 from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
+    save_area_geopackage,
     save_area_values_npy,
 )
 
@@ -687,6 +688,7 @@ def run_mask_watbal(
     output_dir: str,
     temp_dir: str,
     area_name: str,
+    write_geopackage: bool = False,
 ) -> MaskWatbalResult:
     """Mask WATBAL cells inside a polygon and persist per-param time series.
 
@@ -700,9 +702,20 @@ def run_mask_watbal(
     :param output_dir: Directory for CSV artefacts.
     :param temp_dir: Directory for numpy binary artefacts.
     :param area_name: Display / filename token for the masked area.
-    :returns: Mesh-joined cells GDF + per-param artefact paths.
+    :param write_geopackage: When true, additionally bundle the masked
+        cells geometry, the long-form per-(cell, date, param) values, and a
+        one-row provenance table into ``<output_dir>/<area>_WATBAL_<syear>_<eyear>.gpkg``.
+        Silent overwrite. The per-param CSV + ``.npy`` artefacts are
+        unchanged whether the flag is true or false.
+    :returns: Mesh-joined cells GDF + per-param artefact paths (plus the
+        ``.gpkg`` path when ``write_geopackage`` is true).
     """
+    import json  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
     import pandas as pd  # noqa: PLC0415 — local import keeps top-of-module light
+
+    from HydrologicalTwinAlphaSeries import __version__ as _htas_ver  # noqa: PLC0415
 
     watbal_id = _resolve_compartment_id(twin, "WATBAL")
 
@@ -715,12 +728,18 @@ def run_mask_watbal(
 
     mesh_gdf = _mesh_gdf_for(twin, watbal_id)
     id_col = _cell_id_col_name(twin, watbal_id, mesh_gdf)
-    cells_gdf = mesh_gdf[mesh_gdf[id_col].isin(cells_response.cell_ids)].copy()
+    cells_gdf = (
+        mesh_gdf.set_index(id_col)
+        .loc[list(cells_response.cell_ids)]
+        .reset_index()
+        .rename(columns={id_col: "cell_id"})
+    )
     layer_name = f"{area_name}_WATBAL_cells"
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
     artefacts = []
+    retained_responses: dict = {}
     for param in params:
         response = twin.mask(
             kind="area_values",
@@ -745,6 +764,27 @@ def run_mask_watbal(
         save_area_values_npy(npy_path, response.data)
         artefacts.append(csv_path)
         artefacts.append(npy_path)
+        retained_responses[param] = response
+
+    if write_geopackage:
+        gpkg_path = os.path.join(
+            output_dir, f"{area_name}_WATBAL_{syear}_{eyear}.gpkg"
+        )
+        provenance = {
+            "source_run": getattr(twin, "out_caw_directory", "") or "",
+            "syear": syear,
+            "eyear": eyear,
+            "polygon_crs": polygon_crs or "",
+            "area_name": area_name,
+            "polygon_wkt": polygon.wkt,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "htas_ver": _htas_ver or "unknown",
+            "compartment": "WATBAL",
+            "params": json.dumps(list(params)),
+        }
+        # Tier-1 privileged write — see services/SECURITY.md.
+        save_area_geopackage(gpkg_path, cells_gdf, retained_responses, provenance)
+        artefacts.append(gpkg_path)
 
     return MaskWatbalResult(
         gdf=cells_gdf,
