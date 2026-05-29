@@ -101,17 +101,40 @@ def save_area_geopackage(
     cell_cols.append("geometry")
     cells_gdf[cell_cols].to_file(gpkg_path, driver="GPKG", layer="cells")
 
-    cell_ids = list(cells_gdf["cell_id"])
-    rows = []
+    # Vectorised long-form build (design.md D11). Equivalent to a
+    # ``param × cell × date`` triple loop emitting
+    # ``(cell_id, date, param, value, unit)`` rows in cell-major order, but
+    # without the per-row Python overhead — at 1500 cells × 25 yr × 3 params
+    # (~41 M rows) the loop was the dominant, UI-blocking cost.
+    cell_ids = np.asarray(cells_gdf["cell_id"])
+    frames = []
     for param, response in values_responses.items():
         unit = daily_values_unit_override or WATBAL_PARAM_UNITS.get(param, "")
-        data = np.asarray(response.data)
-        dates = np.asarray(response.dates)
-        for i, cid in enumerate(cell_ids):
-            for j, date in enumerate(dates):
-                rows.append((cid, date, param, float(data[i, j]), unit))
-    daily_values = pd.DataFrame(
-        rows, columns=["cell_id", "date", "param", "value", "unit"]
+        data = np.asarray(response.data, dtype=float)   # (n_cells, n_days)
+        dates = np.asarray(response.dates)         # (n_days,)
+        n_cells, n_days = data.shape
+        if n_cells != cell_ids.shape[0]:
+            raise ValueError(
+                f"cells_gdf has {cell_ids.shape[0]} cells but param {param!r} "
+                f"data has {n_cells} cells — cells_gdf and the per-param "
+                "ValuesResponse must be row-aligned."
+            )
+        frames.append(
+            pd.DataFrame(
+                {
+                    "cell_id": np.repeat(cell_ids, n_days),  # cell-major
+                    "date": np.tile(dates, n_cells),
+                    "param": param,
+                    # row-major ravel == cell-major, matching repeat/tile
+                    "value": data.ravel(),
+                    "unit": unit,
+                }
+            )
+        )
+    daily_values = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["cell_id", "date", "param", "value", "unit"])
     )
 
     provenance_df = pd.DataFrame([provenance])

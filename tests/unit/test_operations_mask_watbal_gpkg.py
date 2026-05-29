@@ -81,16 +81,19 @@ def test_run_mask_watbal_writes_gpkg_when_flag_true(tmp_path: Path, monkeypatch)
         temp_dir=str(temp_dir),
         area_name="basin_A",
         write_geopackage=True,
+        weighted=False,
     )
 
     gpkg_path = output_dir / "basin_A_WATBAL_2000_2000.gpkg"
     assert gpkg_path.exists()
-    assert str(gpkg_path) in result.artefacts
 
-    csv_paths = [p for p in result.artefacts if p.endswith(".csv")]
-    npy_paths = [p for p in result.artefacts if p.endswith(".npy")]
-    assert len(csv_paths) == 2
-    assert len(npy_paths) == 2
+    # Exclusive mode (design.md D10): the .gpkg is the SOLE WATBAL artefact —
+    # no per-param CSV / .npy in the result or on disk.
+    assert result.artefacts == [str(gpkg_path)]
+    assert not any(p.endswith(".csv") for p in result.artefacts)
+    assert not any(p.endswith(".npy") for p in result.artefacts)
+    assert list(output_dir.glob("*.csv")) == []
+    assert list(temp_dir.glob("*.npy")) == []
 
     with sqlite3.connect(str(gpkg_path)) as con:
         daily = pd.read_sql_query("SELECT * FROM daily_values", con)
@@ -118,6 +121,7 @@ def test_run_mask_watbal_no_gpkg_when_flag_false_or_omitted(tmp_path: Path, monk
         output_dir=str(output_dir),
         temp_dir=str(temp_dir),
         area_name="basin_A",
+        weighted=False,
     )
 
     gpkgs = list(output_dir.glob("*.gpkg"))
@@ -130,16 +134,18 @@ def test_run_mask_watbal_no_gpkg_when_flag_false_or_omitted(tmp_path: Path, monk
     assert len(npy_paths) == 2
 
 
-def test_run_mask_watbal_csv_npy_parity_with_and_without_gpkg(tmp_path: Path, monkeypatch):
+def test_run_mask_watbal_modes_are_mutually_exclusive(tmp_path: Path, monkeypatch):
+    """Exclusive mode (design.md D10): default-mode writes CSV+.npy and no
+    .gpkg; GeoPackage-mode writes only the .gpkg and no CSV/.npy. No run
+    produces both."""
     twin, polygon, mesh_gdf = _fake_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
 
-    run_a = tmp_path / "A"
-    run_b = tmp_path / "B"
-    (run_a / "OUTPUTS").mkdir(parents=True)
-    (run_a / "TEMP").mkdir(parents=True)
-    (run_b / "OUTPUTS").mkdir(parents=True)
-    (run_b / "TEMP").mkdir(parents=True)
+    run_a = tmp_path / "A"   # default mode
+    run_b = tmp_path / "B"   # GeoPackage mode
+    for run in (run_a, run_b):
+        (run / "OUTPUTS").mkdir(parents=True)
+        (run / "TEMP").mkdir(parents=True)
 
     operations.run_mask_watbal(
         twin,
@@ -152,6 +158,7 @@ def test_run_mask_watbal_csv_npy_parity_with_and_without_gpkg(tmp_path: Path, mo
         temp_dir=str(run_a / "TEMP"),
         area_name="basin_A",
         write_geopackage=False,
+        weighted=False,
     )
 
     operations.run_mask_watbal(
@@ -165,15 +172,23 @@ def test_run_mask_watbal_csv_npy_parity_with_and_without_gpkg(tmp_path: Path, mo
         temp_dir=str(run_b / "TEMP"),
         area_name="basin_A",
         write_geopackage=True,
+        weighted=False,
     )
 
     files_a = _collect_files(run_a / "OUTPUTS", run_a / "TEMP")
-    files_b = {
-        name: data
-        for name, data in _collect_files(run_b / "OUTPUTS", run_b / "TEMP").items()
-        if not name.endswith(".gpkg")
-    }
-    assert files_a == files_b
+    files_b = _collect_files(run_b / "OUTPUTS", run_b / "TEMP")
+
+    # Default mode: CSV + .npy, no .gpkg.
+    assert any(n.endswith(".csv") for n in files_a)
+    assert any(n.endswith(".npy") for n in files_a)
+    assert not any(n.endswith(".gpkg") for n in files_a)
+
+    # GeoPackage mode: exactly the .gpkg, nothing else.
+    assert [n for n in files_b if n.endswith(".gpkg")] == [
+        "basin_A_WATBAL_2000_2000.gpkg"
+    ]
+    assert not any(n.endswith(".csv") for n in files_b)
+    assert not any(n.endswith(".npy") for n in files_b)
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +300,7 @@ def test_run_mask_watbal_unweighted_has_no_polygon_total_paths(
         output_dir=str(output_dir),
         temp_dir=str(temp_dir),
         area_name="basin_A",
+        weighted=False,
     )
 
     assert result.polygon_total_paths is None
@@ -331,6 +347,7 @@ def test_run_mask_watbal_unweighted_gdf_has_no_weight_column(
         output_dir=str(tmp_path / "OUTPUTS"),
         temp_dir=str(tmp_path / "TEMP"),
         area_name="basin_A",
+        weighted=False,
     )
 
     assert "weight" not in result.gdf.columns
@@ -359,7 +376,11 @@ def test_run_mask_watbal_weighted_gpkg_bundles_weighted_artefacts(
 
     gpkg_path = output_dir / "basin_A_WATBAL_2000_2000.gpkg"
     assert gpkg_path.exists()
-    assert str(gpkg_path) in result.artefacts
+    # Exclusive mode: the .gpkg is the sole artefact even on the weighted path —
+    # the polygon totals live inside it (polygon_total_rain), not as a CSV.
+    assert result.artefacts == [str(gpkg_path)]
+    assert result.polygon_total_paths in (None, {})
+    assert list(output_dir.glob("*.csv")) == []
 
     with sqlite3.connect(str(gpkg_path)) as con:
         cells = pd.read_sql_query("SELECT * FROM cells", con)

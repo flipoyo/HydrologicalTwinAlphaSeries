@@ -77,6 +77,39 @@ def test_save_area_geopackage_writes_three_datasets(tmp_path: Path):
     assert prov_row["htas_ver"] == "000.alpha.test"
 
 
+def test_daily_values_matches_cell_major_reference_expansion(tmp_path: Path):
+    """Guard against a repeat/tile transposition in the vectorised
+    daily_values build (design.md D11): the written table must equal an
+    independent cell-major long-form expansion of the same data."""
+    cells_gdf, values_responses, provenance = _make_fixture(
+        n_cells=4, n_days=3, params=("rain", "runoff")
+    )
+    gpkg_path = str(tmp_path / "basin_test_WATBAL_2000_2000.gpkg")
+
+    save_area_geopackage(gpkg_path, cells_gdf, values_responses, provenance)
+
+    with sqlite3.connect(gpkg_path) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    # Independent reference: explicit triple loop, cell-major within each param.
+    cell_ids = list(cells_gdf["cell_id"])
+    expected_rows = []
+    for param, response in values_responses.items():
+        data = np.asarray(response.data, dtype=float)
+        dates = list(response.dates)
+        for i, cid in enumerate(cell_ids):
+            for j, date in enumerate(dates):
+                expected_rows.append((cid, date, param, float(data[i, j])))
+    expected = pd.DataFrame(
+        expected_rows, columns=["cell_id", "date", "param", "value"]
+    )
+
+    got = daily[["cell_id", "date", "param", "value"]].reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        got, expected, check_dtype=False, check_like=False
+    )
+
+
 def test_save_area_geopackage_silently_overwrites_existing_file(tmp_path: Path):
     cells_gdf, values_responses, provenance = _make_fixture()
     gpkg_path = str(tmp_path / "basin_test_WATBAL_2000_2000.gpkg")

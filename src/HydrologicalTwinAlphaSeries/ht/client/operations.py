@@ -711,11 +711,20 @@ def run_mask_watbal(
     :param output_dir: Directory for CSV artefacts.
     :param temp_dir: Directory for numpy binary artefacts.
     :param area_name: Display / filename token for the masked area.
-    :param write_geopackage: When true, additionally bundle the masked
-        cells geometry, the long-form per-(cell, date, param) values, and a
-        one-row provenance table into ``<output_dir>/<area>_WATBAL_<syear>_<eyear>.gpkg``.
-        Silent overwrite. The per-param CSV + ``.npy`` artefacts are
-        unchanged whether the flag is true or false.
+    :param write_geopackage: Selects the WATBAL output **mode** — the two
+        modes are mutually exclusive (design.md D10):
+
+        * ``True`` (GeoPackage mode): every param is still fetched (the
+          GeoPackage needs the data), but the per-param CSV, ``.npy`` and
+          per-param ``polygon_total`` CSV are NOT written. A single
+          ``<output_dir>/<area>_WATBAL_<syear>_<eyear>.gpkg`` — bundling the
+          masked cells geometry, the long-form per-``(cell, date, param)``
+          values, a one-row provenance table, and ``polygon_total_<param>``
+          tables when ``weighted=True`` — is the sole WATBAL artefact and the
+          only path in ``MaskWatbalResult.artefacts``. Silent overwrite.
+        * ``False`` (default mode): the per-param CSV + ``.npy`` (+
+          ``polygon_total`` CSVs when ``weighted=True``) are written exactly
+          as before this change, and no GeoPackage is produced.
     :param weighted: When true, opt into area-fraction weighting:
 
         * Cells are selected by per-cell intersection area (not by
@@ -785,19 +794,24 @@ def run_mask_watbal(
                 watbal_id=watbal_id,
             )
 
-        base = _artefact_basename("WATBAL", param, "MB", syear, eyear)
-        csv_path = os.path.join(output_dir, f"{base}.csv")
-        npy_path = os.path.join(temp_dir, f"{base}.npy")
-        df = pd.DataFrame(
-            response.data.T,
-            index=pd.Index(response.dates, name="date"),
-            columns=[f"cell_{i}" for i in range(response.data.shape[0])],
-        )
-        df.to_csv(csv_path)
-        # Tier-1 privileged write — see services/SECURITY.md.
-        save_area_values_npy(npy_path, response.data)
-        artefacts.append(csv_path)
-        artefacts.append(npy_path)
+        # Exclusive-mode gate (design.md D10): in GeoPackage mode the per-param
+        # CSV / .npy / polygon_total CSV are NOT written — the .gpkg is the sole
+        # WATBAL artefact. The fetch above still ran because the GeoPackage needs
+        # the data; only the disk writes below are suppressed.
+        if not write_geopackage:
+            base = _artefact_basename("WATBAL", param, "MB", syear, eyear)
+            csv_path = os.path.join(output_dir, f"{base}.csv")
+            npy_path = os.path.join(temp_dir, f"{base}.npy")
+            df = pd.DataFrame(
+                response.data.T,
+                index=pd.Index(response.dates, name="date"),
+                columns=[f"cell_{i}" for i in range(response.data.shape[0])],
+            )
+            df.to_csv(csv_path)
+            # Tier-1 privileged write — see services/SECURITY.md.
+            save_area_values_npy(npy_path, response.data)
+            artefacts.append(csv_path)
+            artefacts.append(npy_path)
         retained_responses[param] = response
 
         if weighted:
@@ -806,14 +820,18 @@ def run_mask_watbal(
                 {"polygon_total": polygon_total},
                 index=pd.Index(response.dates, name="date"),
             )
-            total_path = os.path.join(
-                output_dir,
-                f"{area_name}_{param}_polygon_total_{years_token}.csv",
-            )
-            total_df.to_csv(total_path)
-            artefacts.append(total_path)
-            polygon_total_paths[param] = total_path
+            # The polygon totals always feed the GeoPackage writer (as
+            # polygon_total_<param> tables); the standalone CSV is written only
+            # in default mode.
             polygon_total_dfs[param] = total_df.reset_index()
+            if not write_geopackage:
+                total_path = os.path.join(
+                    output_dir,
+                    f"{area_name}_{param}_polygon_total_{years_token}.csv",
+                )
+                total_df.to_csv(total_path)
+                artefacts.append(total_path)
+                polygon_total_paths[param] = total_path
 
     if cells_gdf is None:
         # No params requested: still build a cells GDF so the dialog can
