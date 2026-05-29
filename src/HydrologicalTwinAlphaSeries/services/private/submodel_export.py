@@ -21,7 +21,7 @@ Two writers live here today:
 from __future__ import annotations
 
 import sqlite3
-from typing import Mapping
+from typing import Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -53,15 +53,21 @@ def save_area_geopackage(
     cells_gdf: GeoDataFrame,
     values_responses: Mapping[str, object],
     provenance: dict,
+    polygon_totals: Optional[Mapping[str, "pd.DataFrame"]] = None,
+    daily_values_unit_override: Optional[str] = None,
 ) -> None:
     """Persist a transportable GeoPackage for a masked area.
 
-    The produced file contains three datasets:
+    The produced file contains:
 
     - a ``cells`` vector layer with columns ``cell_id`` and ``geometry``
-      (one row per masked cell);
+      (and, when the caller's ``cells_gdf`` already has a ``weight``
+      column, that column is preserved — used by the weighted-mask path);
     - a non-spatial ``daily_values`` table in long form with columns
       ``cell_id``, ``date``, ``param``, ``value``, ``unit``;
+    - one optional non-spatial table per requested param (named
+      ``polygon_total_<param>``) when ``polygon_totals`` is supplied —
+      typically the weighted-mask path;
     - a non-spatial ``provenance`` table holding exactly one row, the
       values of which come straight from the ``provenance`` dict.
 
@@ -72,22 +78,33 @@ def save_area_geopackage(
 
     :param gpkg_path: Destination ``.gpkg`` path.
     :param cells_gdf: GeoDataFrame with a ``cell_id`` column and geometry,
-        one row per masked cell.
+        one row per masked cell. When a ``weight`` column is present it
+        is written into the ``cells`` layer alongside the geometry.
     :param values_responses: Mapping ``{param: ValuesResponse}``. Each
         ``ValuesResponse`` must expose ``data`` of shape
         ``(n_cells, n_timesteps)``, ``dates`` of length ``n_timesteps``,
         and the row order of ``data`` must match the row order of
         ``cells_gdf``.
     :param provenance: One-row provenance dict (assembled by the caller).
+    :param polygon_totals: Optional ``{param: DataFrame}`` mapping; each
+        DataFrame is the daily ``date, polygon_total`` series for that
+        param. Written as ``polygon_total_<param>`` tables. ``None`` skips
+        the polygon-total layer entirely.
+    :param daily_values_unit_override: When set, used as the ``unit``
+        column value for every row in ``daily_values`` (used by the
+        weighted-mask path where values are ``m³/day`` rather than the
+        per-param native unit declared in ``WATBAL_PARAM_UNITS``).
     """
-    cells_gdf[["cell_id", "geometry"]].to_file(
-        gpkg_path, driver="GPKG", layer="cells"
-    )
+    cell_cols = ["cell_id"]
+    if "weight" in cells_gdf.columns:
+        cell_cols.append("weight")
+    cell_cols.append("geometry")
+    cells_gdf[cell_cols].to_file(gpkg_path, driver="GPKG", layer="cells")
 
     cell_ids = list(cells_gdf["cell_id"])
     rows = []
     for param, response in values_responses.items():
-        unit = WATBAL_PARAM_UNITS.get(param, "")
+        unit = daily_values_unit_override or WATBAL_PARAM_UNITS.get(param, "")
         data = np.asarray(response.data)
         dates = np.asarray(response.dates)
         for i, cid in enumerate(cell_ids):
@@ -103,6 +120,11 @@ def save_area_geopackage(
         daily_values.to_sql(
             "daily_values", con, if_exists="replace", index=False
         )
+        if polygon_totals:
+            for param, df in polygon_totals.items():
+                df.to_sql(
+                    f"polygon_total_{param}", con, if_exists="replace", index=False
+                )
         provenance_df.to_sql(
             "provenance", con, if_exists="replace", index=False
         )
