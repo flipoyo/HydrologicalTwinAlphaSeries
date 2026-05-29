@@ -94,6 +94,13 @@ def save_area_geopackage(
         weighted-mask path where values are ``m³/day`` rather than the
         per-param native unit declared in ``WATBAL_PARAM_UNITS``).
     """
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    # Ensure the "silent overwrite" contract: GeoPandas.to_file with driver=
+    # "GPKG" appends layers by default, leaving stale layers from prior runs
+    # in place. Removing the file first guarantees a clean bundle.
+    _Path(gpkg_path).unlink(missing_ok=True)
+
     cell_cols = ["cell_id"]
     if "weight" in cells_gdf.columns:
         cell_cols.append("weight")
