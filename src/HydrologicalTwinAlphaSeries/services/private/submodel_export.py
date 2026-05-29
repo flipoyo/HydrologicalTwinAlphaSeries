@@ -27,7 +27,6 @@ import numpy as np
 import pandas as pd
 from geopandas import GeoDataFrame
 
-
 WATBAL_PARAM_UNITS: dict[str, str] = {
     "rain": "mm/j",
     "etp": "mm/j",

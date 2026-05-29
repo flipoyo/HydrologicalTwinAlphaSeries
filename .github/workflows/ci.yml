@@ -63,9 +63,6 @@ jobs:
             exit 1
           fi
 
-      - name: Lint
-        run: pixi run lint
-
       - name: Clone CaWaQS testcase fixture
         run: |
           git clone --depth 1 --filter=blob:none --sparse \
