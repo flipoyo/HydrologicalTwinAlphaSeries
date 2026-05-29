@@ -54,6 +54,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
+    cells_in_polygon_weighted,
     reaches_inflow_outflow_signs,
     verify_crs_match,
 )
@@ -76,10 +77,17 @@ from .api_types import (
     RunoffRatioResponse,
     SpatialMapResponse,
     TransformRequest,
+    ValuesResponse,
 )
 
 if TYPE_CHECKING:
     from .hydrological_twin import HydrologicalTwin  # noqa: F401
+
+
+# Units accepted when ``weighted=True`` — area-fraction weighting is only
+# physically meaningful on volumetric flux data (different cell sizes
+# contribute different volumes from the same intensity).
+_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
 
 
 def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
@@ -314,6 +322,24 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         assert request.param is not None
         assert request.syear is not None
         assert request.eyear is not None
+
+        if request.weighted and request.target_unit not in _VOLUMETRIC_UNITS:
+            raise ValueError(
+                "mask(kind='area_values', weighted=True) requires a volumetric "
+                f"target_unit (one of {sorted(_VOLUMETRIC_UNITS)}); got "
+                f"target_unit={request.target_unit!r}. Area-fraction weighting "
+                "only has a physical meaning on volumetric data — cells of "
+                "different sizes contribute different volumes from the same "
+                "intensity."
+            )
+        if request.weighted and request.polygon is None:
+            raise ValueError(
+                "mask(kind='area_values', weighted=True) requires 'polygon'; "
+                "weighted selection by raw 'cell_ids' is not supported."
+            )
+
+        weights: Optional[np.ndarray] = None
+        clipped_geoms: Optional[List[Any]] = None
         if request.polygon is not None:
             mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
             verify_crs_match(
@@ -322,16 +348,63 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 context="mask(kind='area_values')",
             )
             id_col = twin._resolve_cell_id_col(request.id_compartment)
-            resolved_cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
+            if request.weighted:
+                triples = cells_in_polygon_weighted(
+                    mesh_gdf, request.polygon, id_col=id_col
+                )
+                resolved_cell_ids = [cid for cid, _, _ in triples]
+                weights = np.asarray([w for _, w, _ in triples], dtype=np.float64)
+                clipped_geoms = [g for _, _, g in triples]
+            else:
+                resolved_cell_ids = cells_in_polygon(
+                    mesh_gdf, request.polygon, id_col=id_col
+                )
         else:
             resolved_cell_ids = list(request.cell_ids or [])
+
+        if request.target_unit is not None:
+            full_response = twin.read_watbal_converted(
+                id_compartment=request.id_compartment,
+                outtype=request.outtype,
+                param=request.param,
+                syear=request.syear,
+                eyear=request.eyear,
+                cutsdate=request.cutsdate,
+                cutedate=request.cutedate,
+                id_layer=request.id_layer,
+                target_unit=request.target_unit,
+            )
+            cell_ids_arr = np.asarray(resolved_cell_ids, dtype=np.intp)
+            subset_data = full_response.data[cell_ids_arr]
+            if request.weighted and weights is not None:
+                subset_data = subset_data * weights[:, None]
+            meta = {
+                "id_compartment": request.id_compartment,
+                "outtype": request.outtype,
+                "param": request.param,
+                "syear": request.syear,
+                "eyear": request.eyear,
+                "id_layer": request.id_layer,
+                "n_cells": subset_data.shape[0],
+                "target_unit": request.target_unit,
+                "weighted": bool(request.weighted),
+                "cell_ids": list(resolved_cell_ids),
+            }
+            return ValuesResponse(
+                data=subset_data,
+                dates=full_response.dates,
+                meta=meta,
+                weights=weights,
+                clipped_geometries=clipped_geoms,
+            )
+
         return twin.extract_area(
             id_compartment=request.id_compartment,
             outtype=request.outtype,
             param=request.param,
             syear=request.syear,
             eyear=request.eyear,
-            cell_ids=np.asarray(resolved_cell_ids),
+            cell_ids=np.asarray(resolved_cell_ids, dtype=np.intp),
             id_layer=request.id_layer,
             cutsdate=request.cutsdate,
             cutedate=request.cutedate,

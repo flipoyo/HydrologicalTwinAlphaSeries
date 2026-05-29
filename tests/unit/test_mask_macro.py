@@ -239,6 +239,144 @@ def test_mask_area_values_with_polygon_crs_mismatch_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# kind="area_values" — target_unit + weighted=True extensions
+# ---------------------------------------------------------------------------
+
+
+def _make_full_mesh_values_response(n_cells: int, n_timesteps: int = 4) -> ValuesResponse:
+    """Row i carries the constant value (i+1) so callers can read off which cell each row maps to."""
+    data = np.ones((n_cells, n_timesteps)) * np.arange(1, n_cells + 1).reshape(-1, 1)
+    dates = np.arange("2010-08-01", "2010-08-05", dtype="datetime64[D]")
+    return ValuesResponse(data=data, dates=dates)
+
+
+def test_mask_area_values_target_unit_routes_through_read_watbal_converted(monkeypatch):
+    """target_unit set: dispatcher must call read_watbal_converted (not extract_area)."""
+    mesh = _grid_mesh()  # 9 cells, ids 0..8
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    captured = {}
+
+    def fake_read_watbal_converted(**kwargs):
+        captured.update(kwargs)
+        return _make_full_mesh_values_response(n_cells=9)
+
+    monkeypatch.setattr(twin, "read_watbal_converted", fake_read_watbal_converted)
+
+    def fail_extract_area(**_kw):
+        raise AssertionError("extract_area must not be called when target_unit is set")
+
+    monkeypatch.setattr(twin, "extract_area", fail_extract_area)
+
+    polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 0, 1, 3, 4
+
+    response = twin.mask(**_area_values_kwargs(polygon=polygon, target_unit="m3/j"))
+
+    assert captured["target_unit"] == "m3/j"
+    assert isinstance(response, ValuesResponse)
+    assert response.data.shape == (4, 4)
+    # Unweighted path subsets cells 0,1,3,4 → row values 1,2,4,5.
+    np.testing.assert_array_equal(response.data[:, 0], [1.0, 2.0, 4.0, 5.0])
+    # Unweighted: response.weights and clipped_geometries stay None.
+    assert response.weights is None
+    assert response.clipped_geometries is None
+    assert response.meta["target_unit"] == "m3/j"
+    assert response.meta["weighted"] is False
+
+
+def test_mask_area_values_weighted_returns_weights_and_clipped_geometries(monkeypatch):
+    """weighted=True: response carries per-cell weights + clipped geometries."""
+    mesh = _grid_mesh()  # 9 cells
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    monkeypatch.setattr(
+        twin,
+        "read_watbal_converted",
+        lambda **_kw: _make_full_mesh_values_response(n_cells=9),
+    )
+    # 2x2 covering cells 0,1,3,4 fully → all weights = 1.0.
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    response = twin.mask(
+        **_area_values_kwargs(polygon=polygon, weighted=True, target_unit="m3/j")
+    )
+
+    assert isinstance(response, ValuesResponse)
+    assert response.weights is not None
+    assert response.clipped_geometries is not None
+    assert len(response.weights) == response.data.shape[0]
+    assert len(response.clipped_geometries) == response.data.shape[0]
+    # Fully-inside cells: weight = 1.0 ⇒ data unchanged.
+    np.testing.assert_allclose(response.weights, 1.0)
+    # data row order matches mesh-order cells 0, 1, 3, 4 → values 1, 2, 4, 5.
+    np.testing.assert_array_equal(response.data[:, 0], [1.0, 2.0, 4.0, 5.0])
+    assert response.meta["weighted"] is True
+
+
+def test_mask_area_values_weighted_partial_overlap_scales_data(monkeypatch):
+    """weighted=True: data row of a 60%-inside cell equals base * 0.6."""
+    mesh = _grid_mesh(nx=2, ny=1)  # cells 0 and 1
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    monkeypatch.setattr(
+        twin,
+        "read_watbal_converted",
+        lambda **_kw: _make_full_mesh_values_response(n_cells=2),
+    )
+    # Cell 0 entirely inside (weight=1.0), cell 1 60% inside.
+    polygon = box(0.0, 0.0, 1.6, 1.0)
+
+    response = twin.mask(
+        **_area_values_kwargs(polygon=polygon, weighted=True, target_unit="m3/j")
+    )
+
+    np.testing.assert_allclose(response.weights, [1.0, 0.6])
+    np.testing.assert_allclose(response.data[:, 0], [1.0, 2.0 * 0.6])
+
+
+def test_mask_area_values_unweighted_leaves_response_fields_none(monkeypatch):
+    """weighted=False (default): weights + clipped_geometries are None even on the polygon path."""
+    mesh = _grid_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    expected = ValuesResponse(data=np.zeros((4, 5)), dates=np.arange(5))
+    monkeypatch.setattr(twin, "extract_area", lambda **_kw: expected)
+
+    polygon = box(0.1, 0.1, 1.9, 1.9)
+    response = twin.mask(**_area_values_kwargs(polygon=polygon))
+
+    assert response.weights is None
+    assert response.clipped_geometries is None
+
+
+def test_mask_area_values_weighted_without_target_unit_raises(monkeypatch):
+    mesh = _grid_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    with pytest.raises(ValueError, match="volumetric"):
+        twin.mask(**_area_values_kwargs(polygon=polygon, weighted=True))
+
+
+def test_mask_area_values_weighted_with_non_volumetric_unit_raises(monkeypatch):
+    mesh = _grid_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    with pytest.raises(ValueError, match="volumetric"):
+        twin.mask(
+            **_area_values_kwargs(polygon=polygon, weighted=True, target_unit="mm/j")
+        )
+
+
+def test_mask_area_values_weighted_without_polygon_raises(monkeypatch):
+    twin = _twin_in_loaded_state()
+
+    with pytest.raises(ValueError, match="weighted=True"):
+        twin.mask(
+            **_area_values_kwargs(
+                cell_ids=[1, 2, 3], weighted=True, target_unit="m3/j"
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
 # S5 — kind="boundary_hyd" + HydBoundaryResponse
 # ---------------------------------------------------------------------------
 

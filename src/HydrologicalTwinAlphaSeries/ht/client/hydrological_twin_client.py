@@ -144,8 +144,10 @@ class HydrologicalTwinClient:
     def statistical_criteria(self, **kwargs) -> StatisticalCriteriaResult:
         return operations.run_statistical_criteria(self._twin, **kwargs)
 
-    def mask_watbal(self, **kwargs) -> MaskWatbalResult:
-        return operations.run_mask_watbal(self._twin, **kwargs)
+    def mask_watbal(self, *, weighted: bool = True, **kwargs) -> MaskWatbalResult:
+        # ``weighted`` is broken out from kwargs so it appears in the public
+        # signature; see :func:`operations.run_mask_watbal` for semantics.
+        return operations.run_mask_watbal(self._twin, weighted=weighted, **kwargs)
 
     def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:
         return operations.run_mask_hyd_boundary(self._twin, **kwargs)

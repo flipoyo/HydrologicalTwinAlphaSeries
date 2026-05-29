@@ -295,8 +295,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./
   name: hydrologicaltwinalphaseries
-  version: 0a27
-  sha256: cf110824b7ed80a5de1ec17874736c16bb767f5c07016de049308de5eb751e6e
+  version: 0a28
+  sha256: 6832c43ac22ed1d6472993beb109eaae435dd200fafed8078220487900e0f989
   requires_dist:
   - geopandas>=1.1.2,<2
   - matplotlib>=3.10.8,<4

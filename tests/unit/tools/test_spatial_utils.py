@@ -10,6 +10,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
+    cells_in_polygon_weighted,
     reaches_inflow_outflow_signs,
     reaches_on_polygon_boundary,
 )
@@ -116,6 +117,160 @@ def test_cells_in_polygon_returns_python_ints_not_numpy():
     # Values from the column come back as numpy ints (from int64 column);
     # what matters is they compare equal to plain ints.
     assert result[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# cells_in_polygon_weighted — area-fraction weighted selection
+# ---------------------------------------------------------------------------
+
+
+def test_cells_in_polygon_weighted_cell_fully_inside_has_weight_one():
+    mesh = _grid_mesh(nx=3, ny=3)
+    polygon = box(0.0, 0.0, 3.0, 3.0)  # covers all 9 cells fully
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    assert len(result) == 9
+    for _, weight, geom in result:
+        assert weight == pytest.approx(1.0)
+        assert not geom.is_empty
+
+
+def test_cells_in_polygon_weighted_cell_fully_outside_excluded():
+    mesh = _grid_mesh(nx=3, ny=3)
+    polygon = box(100.0, 100.0, 200.0, 200.0)
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    assert result == []
+
+
+def test_cells_in_polygon_weighted_partial_overlap_gives_fractional_weight():
+    """Polygon overlapping a single cell by 60% of its area."""
+    mesh = _grid_mesh(nx=2, ny=1)  # cells 0 (x∈[0,1]) and 1 (x∈[1,2])
+    # Cover cell 0 entirely (area 1) and 60% of cell 1 (x∈[1,1.6], full y).
+    polygon = box(0.0, 0.0, 1.6, 1.0)
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    weights = {cell_id: w for cell_id, w, _ in result}
+    assert weights[0] == pytest.approx(1.0)
+    assert weights[1] == pytest.approx(0.6)
+
+
+def test_cells_in_polygon_weighted_keeps_border_cell_with_centroid_outside():
+    """A border cell whose centroid lies *outside* the polygon must still be
+    kept and weighted by its overlap fraction.
+
+    Regression: the prefilter once indexed cell centroids, which silently
+    collapsed the weighted helper back to centroid containment — dropping
+    exactly the partially-overlapping border cells the helper exists to
+    capture. The binary helper (centroid test) still omits the cell; the
+    weighted helper must not.
+    """
+    mesh = _grid_mesh(nx=2, ny=1)  # cell 0: x∈[0,1]; cell 1: x∈[1,2]
+    # Polygon ends at x=1.3: cell 1's centroid (x=1.5) is OUTSIDE, but 30%
+    # of cell 1's area is inside.
+    polygon = box(0.0, 0.0, 1.3, 1.0)
+
+    weighted = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+    weights = {cell_id: w for cell_id, w, _ in weighted}
+
+    assert weights[0] == pytest.approx(1.0)
+    assert weights[1] == pytest.approx(0.3)
+    # The binary (centroid) helper, by contrast, drops the border cell.
+    assert cells_in_polygon(mesh, polygon, id_col="cell_id") == [0]
+
+
+def test_cells_in_polygon_weighted_shared_edge_only_excluded_by_floor():
+    """A polygon that only shares an edge with the cell yields zero area, dropped by 1e-6 floor."""
+    mesh = _grid_mesh(nx=2, ny=1)  # cell 0: x∈[0,1]; cell 1: x∈[1,2]
+    # Sliver polygon touching cell 1 only on its left edge x=1.
+    polygon = box(0.5, 0.0, 1.0, 1.0)
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    # Only cell 0 has true overlap; cell 1 shares only the edge x=1 (area=0).
+    cell_ids = [cid for cid, _, _ in result]
+    assert cell_ids == [0]
+
+
+def test_cells_in_polygon_weighted_multipolygon_sums_across_components():
+    """A cell straddling two MultiPolygon components is counted once with summed fraction."""
+    mesh = _grid_mesh(nx=1, ny=1)  # one cell, x∈[0,1], y∈[0,1]
+    # Two disjoint components, each covering 25% of the cell.
+    multi = MultiPolygon(
+        [
+            box(0.0, 0.0, 0.5, 0.5),  # 0.25 area
+            box(0.5, 0.5, 1.0, 1.0),  # 0.25 area
+        ]
+    )
+
+    result = cells_in_polygon_weighted(mesh, multi, id_col="cell_id")
+
+    assert len(result) == 1
+    _, weight, _ = result[0]
+    assert weight == pytest.approx(0.5)
+
+
+def test_cells_in_polygon_weighted_polygon_with_hole_excludes_inside_hole_cell():
+    """A cell sitting inside a polygon hole has zero intersection area → dropped."""
+    mesh = _grid_mesh(nx=3, ny=3)
+    outer = [(0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
+    hole = [(1.0, 1.0), (2.0, 1.0), (2.0, 2.0), (1.0, 2.0), (1.0, 1.0)]
+    polygon = Polygon(outer, holes=[hole])
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    cell_ids = sorted(cid for cid, _, _ in result)
+    assert 4 not in cell_ids  # centre cell coincides with the hole
+    assert cell_ids == [0, 1, 2, 3, 5, 6, 7, 8]
+
+
+def test_cells_in_polygon_weighted_empty_mesh_returns_empty():
+    mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
+    polygon = box(0.0, 0.0, 1.0, 1.0)
+
+    assert cells_in_polygon_weighted(mesh, polygon, id_col="cell_id") == []
+
+
+def test_cells_in_polygon_weighted_clipped_geometry_matches_intersection():
+    """The third tuple element is the actual cell-polygon intersection geometry."""
+    mesh = _grid_mesh(nx=2, ny=1)
+    polygon = box(0.0, 0.0, 1.6, 1.0)
+
+    result = cells_in_polygon_weighted(mesh, polygon, id_col="cell_id")
+
+    geoms = {cid: g for cid, _, g in result}
+    # Cell 0 entirely inside → clip equals the cell.
+    assert geoms[0].area == pytest.approx(1.0)
+    # Cell 1 clipped to x∈[1, 1.6] → area 0.6, bbox right edge at x=1.6.
+    assert geoms[1].area == pytest.approx(0.6)
+    minx, _, maxx, _ = geoms[1].bounds
+    assert maxx == pytest.approx(1.6)
+    assert minx == pytest.approx(1.0)
+
+
+@pytest.mark.slow
+def test_cells_in_polygon_weighted_performance_parity_with_binary():
+    """On a 14k-cell mesh, the weighted helper runs within a small factor of the binary one."""
+    nx, ny = 140, 100
+    mesh = _grid_mesh(nx=nx, ny=ny)
+    half_polygon = box(0.0, 0.0, nx / 2.0, ny)
+
+    start = time.perf_counter()
+    binary = cells_in_polygon(mesh, half_polygon, id_col="cell_id")
+    t_binary = time.perf_counter() - start
+
+    start = time.perf_counter()
+    weighted = cells_in_polygon_weighted(mesh, half_polygon, id_col="cell_id")
+    t_weighted = time.perf_counter() - start
+
+    assert len(weighted) == len(binary)
+    # Both must complete well within the binary's 2s budget; allow a 5x
+    # constant factor for the per-cell intersection cost (computed only on
+    # STRtree survivors).
+    assert t_weighted < 5.0 * max(t_binary, 0.05)
 
 
 # ---------------------------------------------------------------------------

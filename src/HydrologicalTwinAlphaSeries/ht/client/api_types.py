@@ -9,7 +9,7 @@ api_types in ``..api_types`` so the client surface can evolve independently
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -135,15 +135,30 @@ class MaskWatbalResult:
 
     :param gdf: GeoDataFrame of the masked WATBAL cells, already joined to
         their mesh geometries. The caller can pass this straight to
-        ``convertGdfToVectorLayer``.
+        ``convertGdfToVectorLayer``. The geometry semantics depend on the
+        ``weighted`` flag that was passed to ``mask_watbal``:
+
+        * ``weighted=False`` (default): full cell footprints, no ``weight``
+          column — shape-identical to the pre-weighted-mask behaviour.
+        * ``weighted=True``: per-cell clipped intersection geometries
+          (``cell.intersection(polygon)``), with an additional numeric
+          ``weight`` column in ``(0, 1]``.
+
     :param layer_name: Display name for the cells layer (one per area).
     :param artefacts: On-disk artefact paths produced by the run, one CSV +
-        one .npy per requested param.
+        one .npy per requested param (plus the per-param polygon-total
+        CSVs when ``weighted=True``, plus the ``.gpkg`` when
+        ``write_geopackage=True``).
+    :param polygon_total_paths: Only populated when the call ran with
+        ``weighted=True``. Maps each requested param to the absolute path
+        of its one-column ``date, polygon_total`` CSV in ``m³/day``. Stays
+        ``None`` on the binary (unweighted) path.
     """
 
     gdf: Any
     layer_name: str
     artefacts: List[str] = field(default_factory=list)
+    polygon_total_paths: Optional[Dict[str, str]] = None
 
 
 @dataclass(frozen=True)
