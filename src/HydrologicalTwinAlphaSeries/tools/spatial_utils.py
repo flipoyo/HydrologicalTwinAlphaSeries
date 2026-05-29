@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -285,6 +285,9 @@ def cells_in_polygon(
     polygon's bounding box, keeping the helper fast on large meshes
     (tested up to ~14 000 cells).
 
+    For area-fraction weighted selection (per-cell weights + clipped
+    intersection geometries), see :func:`cells_in_polygon_weighted`.
+
     :param mesh_gdf: GeoDataFrame of mesh cells (polygon geometries)
     :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
     :param id_col: Column name (or integer position) to read cell ids from.
@@ -306,6 +309,83 @@ def cells_in_polygon(
     sorted_positions = sorted(matched_positions)
     col_name = _resolve_id_col(mesh_gdf, id_col)
     return [mesh_gdf.iloc[p][col_name] for p in sorted_positions]
+
+
+# Hardcoded floor (dimensionless area ratio): cells with weight below this
+# are considered to share only a boundary edge / vertex with the polygon
+# and are dropped as floating-point grit. A meaningful contribution of
+# 0.01% is weight = 1e-4, four orders of magnitude above this floor.
+_WEIGHTED_MIN_WEIGHT = 1e-6
+
+
+def cells_in_polygon_weighted(
+    mesh_gdf: gpd.GeoDataFrame,
+    polygon: Any,
+    id_col: Union[str, int],
+) -> List[Tuple[Any, float, Any]]:
+    """Return mesh cells with their area-fraction weight inside ``polygon``.
+
+    For each cell whose *footprint* survives the polygon STRtree prefilter
+    (i.e. any part of the cell overlaps the polygon — not a centroid test),
+    computes ``intersection = polygon.intersection(cell)`` once and derives
+    ``weight = clip(intersection.area / cell.area, 0.0, 1.0)``. Cells with
+    ``weight < 1e-6`` (floor that absorbs floating-point drift from
+    shared-edge / vertex-only touches) are dropped.
+
+    ``MultiPolygon`` inputs are handled by shapely's intersection directly,
+    so a cell straddling two components is counted once with the summed
+    fraction. Interior rings (holes) are treated as outside, matching
+    :func:`cells_in_polygon`.
+
+    A Shapely STRtree on cell footprints prefilters candidates by the
+    polygon's bounding box (unlike ``cells_in_polygon``, which indexes
+    centroids because it is a centroid test). Intersection geometry is
+    computed only on the small subset of survivors, so performance stays
+    comparable to the binary helper on large meshes.
+
+    The ``1e-6`` floor is intentionally not exposed as a parameter — it
+    represents pure floating-point noise, not a user-tunable knob.
+
+    :param mesh_gdf: GeoDataFrame of mesh cells (polygon geometries)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read cell ids from.
+    :return: List of ``(cell_id, weight, clipped_geometry)`` triples in
+        mesh-row order. ``weight`` is in ``(0, 1]`` after the floor cut and
+        clip; ``clipped_geometry`` is ``polygon.intersection(cell)``.
+    """
+    if mesh_gdf.empty:
+        return []
+
+    geometries = list(mesh_gdf.geometry.values)
+    # Prefilter on the cell *footprints*, not their centroids: a border cell
+    # is in scope if any part of it overlaps the polygon, even when its
+    # centroid falls outside. (The binary `cells_in_polygon` indexes
+    # centroids on purpose — it *is* a centroid test; the weighted helper
+    # must not, or it silently collapses back to centroid containment.)
+    tree = shapely.STRtree(geometries)
+
+    candidate_positions: set = set()
+    for component in _polygon_components(polygon):
+        for pos in tree.query(component, predicate="intersects"):
+            candidate_positions.add(int(pos))
+
+    col_name = _resolve_id_col(mesh_gdf, id_col)
+    results: List[Tuple[Any, float, Any]] = []
+    for pos in sorted(candidate_positions):
+        cell_geom = geometries[pos]
+        cell_area = cell_geom.area
+        if cell_area <= 0.0:
+            continue
+        intersection = polygon.intersection(cell_geom)
+        if intersection.is_empty:
+            continue
+        raw_weight = intersection.area / cell_area
+        weight = float(min(1.0, max(0.0, raw_weight)))
+        if weight < _WEIGHTED_MIN_WEIGHT:
+            continue
+        results.append((mesh_gdf.iloc[pos][col_name], weight, intersection))
+
+    return results
 
 
 def _reach_endpoints(geom: Any) -> tuple:

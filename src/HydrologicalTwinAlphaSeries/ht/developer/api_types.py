@@ -115,6 +115,16 @@ class FetchRequest:
 
 @dataclass
 class MaskRequest:
+    """Inputs for ``HydrologicalTwin.mask(kind=...)``.
+
+    ``weighted`` and ``target_unit`` are only consumed by
+    ``kind="area_values"`` today: when ``weighted=True``, the dispatcher
+    resolves cells via :func:`cells_in_polygon_weighted` and multiplies
+    per-cell time-series by their area-fraction weights; ``target_unit``
+    (e.g. ``"m3/j"``) routes the read through ``read_watbal_converted``
+    instead of raw ``read_values``. Other kinds ignore both fields.
+    """
+
     kind: str = "polygon_cells"
     id_compartment: Optional[int] = None
     outtype: Optional[str] = None
@@ -127,6 +137,8 @@ class MaskRequest:
     polygon: Any = None
     polygon_crs: Any = None
     cell_ids: Optional[List[int]] = None
+    weighted: bool = False
+    target_unit: Optional[str] = None
 
 
 @dataclass
@@ -216,10 +228,21 @@ class ExportRequest:
 
 @dataclass
 class ValuesResponse:
+    """Per-cell time-series response shared by ``fetch`` and ``mask`` reads.
+
+    ``weights`` and ``clipped_geometries`` are populated only on the
+    weighted polygon-mask path (``mask(kind="area_values", weighted=True)``)
+    — both fields are ``None`` on every other path so the binary-mask
+    response shape is unchanged from the parent ``add-mask-macro``
+    capability.
+    """
+
     data: np.ndarray
     dates: np.ndarray
     meta: Optional[Dict[str, Any]] = None
     csv_path: Optional[str] = None
+    weights: Optional[np.ndarray] = None
+    clipped_geometries: Optional[List[Any]] = None
 
 
 @dataclass
