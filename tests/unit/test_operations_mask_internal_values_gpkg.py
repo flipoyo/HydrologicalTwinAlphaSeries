@@ -322,14 +322,15 @@ def test_run_mask_internal_values_weighted_writes_polygon_total_csv(tmp_path: Pa
     assert result.polygon_total_paths is not None
     assert ("WATBAL", "rain") in result.polygon_total_paths
     rain_total_path = result.polygon_total_paths[("WATBAL", "rain")]
+    # Default unit is m3/j, so the CSV filename carries the _m3j token.
     assert rain_total_path.endswith(
-        "basin_A_WATBAL_rain_polygon_total_2000-2000.csv"
+        "basin_A_WATBAL_rain_polygon_total_2000-2000_m3j.csv"
     )
     assert Path(rain_total_path).exists()
 
     # Polygon-total equals the row-sum of the weighted per-cell CSV.
     total_df = pd.read_csv(rain_total_path, index_col="date")
-    cell_csv = next(p for p in result.artefacts if p.endswith("WATBAL_rain_MB_2000-2000.csv"))
+    cell_csv = next(p for p in result.artefacts if p.endswith("WATBAL_rain_MB_2000-2000_m3j.csv"))
     cell_df = pd.read_csv(cell_csv, index_col="date")
     np.testing.assert_allclose(
         total_df["polygon_total"].values, cell_df.sum(axis=1).values
@@ -450,3 +451,129 @@ def test_run_mask_internal_values_weighted_gpkg_bundles_weighted_artefacts(
     assert set(daily["unit"].unique()) == {"m3/j"}
     assert sorted(polygon_total.columns) == ["date", "polygon_total"]
     assert int(prov.iloc[0]["weighted"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# unit selector (caller-selectable m3/s | m3/j)
+# ---------------------------------------------------------------------------
+
+
+def _unit_capturing_twin_and_polygon():
+    """Fake twin whose area_values response echoes the ``target_unit`` it was
+    called with, so a test can assert the threaded ``unit`` reaches the
+    conversion call. The native ``m3/s`` path returns the raw array; ``m3/j``
+    mimics the backend's 86400 multiply so the two units differ on disk."""
+    cell_ids = [10, 20, 30]
+    mesh_gdf = gpd.GeoDataFrame(
+        {"id_cell": cell_ids},
+        geometry=[box(i, 0, i + 1, 1) for i in range(3)],
+        crs="EPSG:2154",
+    )
+    dates = np.array(["2000-01-01", "2000-01-02", "2000-01-03", "2000-01-04"])
+    raw = 2.5  # native m3/s per-cell value
+
+    def fake_mask(kind, **kwargs):
+        if kind == "polygon_cells":
+            return CellSelectionResponse(
+                cell_ids=list(cell_ids),
+                meta={"id_compartment": 1, "kind": "polygon_cells"},
+            )
+        if kind == "area_values":
+            target_unit = kwargs.get("target_unit")
+            # m3/s is native (no conversion); m3/j scales by 86400.
+            value = raw if target_unit == "m3/s" else raw * 86400.0
+            data = np.full((len(cell_ids), len(dates)), value)
+            return ValuesResponse(
+                data=data, dates=dates, meta={"target_unit": target_unit}
+            )
+        raise ValueError(f"unexpected mask kind: {kind!r}")
+
+    twin = SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
+    return twin, polygon, mesh_gdf, raw
+
+
+def test_unit_m3s_skips_86400_and_stamps_gpkg_unit(tmp_path: Path, monkeypatch):
+    """unit='m3/s' threads through to the conversion (raw native values, no
+    86400 multiply) and the GeoPackage daily_values.unit matches the choice."""
+    twin, polygon, mesh_gdf, raw = _unit_capturing_twin_and_polygon()
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+    output_dir = tmp_path / "OUTPUTS"
+    temp_dir = tmp_path / "TEMP"
+
+    # Default-mode CSV check: values equal the raw m3/s array.
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("WATBAL", "MB", "rain")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        temp_dir=str(temp_dir),
+        area_name="basin_A",
+        weighted=False,
+        unit="m3/s",
+    )
+    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
+    df = pd.read_csv(csv_path, index_col="date")
+    np.testing.assert_allclose(df.values, raw)
+
+    # GeoPackage-mode check: daily_values.unit stamped with the chosen unit.
+    gpkg_dir = tmp_path / "GPKG"
+    gpkg_dir.mkdir()
+    operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("WATBAL", "MB", "rain")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(gpkg_dir),
+        temp_dir=str(tmp_path / "GTEMP"),
+        area_name="basin_A",
+        weighted=False,
+        write_geopackage=True,
+        unit="m3/s",
+    )
+    gpkg_path = gpkg_dir / "basin_A_InternalValues_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+    assert set(daily["unit"].unique()) == {"m3/s"}
+
+
+def test_csv_filename_carries_unit_token_and_runs_do_not_collide(
+    tmp_path: Path, monkeypatch
+):
+    """An m3/s run and an m3/j run of the same spec write two non-colliding
+    CSVs, each carrying its unit token in the filename."""
+    twin, polygon, mesh_gdf, _raw = _unit_capturing_twin_and_polygon()
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+    output_dir = tmp_path / "OUTPUTS"
+    temp_dir = tmp_path / "TEMP"
+
+    common = dict(
+        twin=twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("WATBAL", "MB", "rain")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        temp_dir=str(temp_dir),
+        area_name="basin_A",
+        weighted=False,
+    )
+    res_s = operations.run_mask_internal_values(**common, unit="m3/s")
+    res_j = operations.run_mask_internal_values(**common, unit="m3/j")
+
+    csv_s = next(p for p in res_s.artefacts if p.endswith(".csv"))
+    csv_j = next(p for p in res_j.artefacts if p.endswith(".csv"))
+
+    assert csv_s.endswith("WATBAL_rain_MB_2000-2000_m3s.csv")
+    assert csv_j.endswith("WATBAL_rain_MB_2000-2000_m3j.csv")
+    # Distinct paths → no silent overwrite; both survive on disk.
+    assert csv_s != csv_j
+    assert Path(csv_s).exists()
+    assert Path(csv_j).exists()
+    assert len(list(output_dir.glob("WATBAL_rain_MB_2000-2000_*.csv"))) == 2

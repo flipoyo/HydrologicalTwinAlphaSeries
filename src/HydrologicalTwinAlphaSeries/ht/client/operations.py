@@ -679,6 +679,15 @@ def _artefact_basename(compartment: str, param: str, outtype: str, syear, eyear)
     return f"{compartment}_{param}_{years}"
 
 
+def _unit_token(unit: str) -> str:
+    """Filesystem-safe token for a unit string (``"m3/s"`` -> ``"m3s"``).
+
+    Used to make Internal Values CSV filenames unit-distinct so an ``m3/s`` run
+    and an ``m3/j`` run of the same spec do not overwrite each other.
+    """
+    return unit.replace("/", "")
+
+
 def run_mask_internal_values(
     twin,
     polygon,
@@ -691,6 +700,7 @@ def run_mask_internal_values(
     area_name: str,
     write_geopackage: bool = False,
     weighted: bool = True,
+    unit: str = "m3/j",
 ) -> MaskInternalValuesResult:
     """Mask compartment cells inside a polygon and persist per-spec time series.
 
@@ -701,10 +711,15 @@ def run_mask_internal_values(
     resolved **once per distinct compartment** and the result carries one cells
     GeoDataFrame per compartment (``MaskInternalValuesResult.entries``).
 
-    **Unit**: the per-spec CSVs are written in ``m³/day`` regardless of the
-    ``weighted`` flag, via ``target_unit="m3/j"`` through
-    ``twin.mask(kind="area_values", ...)``. This is valid for the volumetric
-    params wired so far (WATBAL water-balance terms and AQ recharge).
+    **Unit**: the output unit is caller-selectable via ``unit`` (``"m3/s"`` |
+    ``"m3/j"``), defaulting to ``"m3/j"`` (``m³/day``) so non-dialog callers
+    keep today's behaviour. The single ``unit`` value feeds **both** the
+    conversion (``target_unit=unit`` through ``twin.mask(kind="area_values",
+    ...)``) and the stamped GeoPackage label (``daily_values_unit_override``),
+    so the per-cell numbers and their unit label cannot drift apart. For
+    ``"m3/s"`` the backend short-circuits the 86400 conversion (it is the
+    native CaWaQS unit). This is valid for the volumetric params wired so far
+    (WATBAL water-balance terms and AQ recharge).
 
     :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
     :param polygon: Shapely polygon (or MultiPolygon) defining the area.
@@ -740,14 +755,19 @@ def run_mask_internal_values(
           centroid containment), via :func:`cells_in_polygon_weighted`.
         * Per-cell time-series are multiplied by their area-fraction
           weight (``polygon.intersection(cell).area / cell.area``).
-        * The per-spec CSV carries the weighted contributions (``m³/day``).
+        * The per-spec CSV carries the weighted contributions (in ``unit``).
         * One extra polygon-total CSV per spec is written:
-          ``<output_dir>/<area_name>_<compartment>_<param>_polygon_total_<years>.csv``
-          (two columns: ``date, polygon_total`` in ``m³/day``).
+          ``<output_dir>/<area_name>_<compartment>_<param>_polygon_total_<years>_<unit_token>.csv``
+          (two columns: ``date, polygon_total`` in ``unit``).
         * Each per-compartment ``gdf`` carries clipped intersection
           geometries plus a ``weight`` column instead of full cell footprints.
 
         Default ``False`` preserves today's binary behaviour.
+    :param unit: Output unit token for every spec in the call — ``"m3/s"`` or
+        ``"m3/j"`` (``m³/day``). Defaults to ``"m3/j"`` so non-dialog callers
+        keep today's output. Feeds both the per-cell conversion and the
+        stamped GeoPackage label, and is encoded into the per-spec /
+        polygon-total CSV filenames so unit-distinct runs do not collide.
     :returns: A :class:`MaskInternalValuesResult` with one
         :class:`CompartmentCellsEntry` per distinct compartment, the flat
         ``artefacts`` list, and (when ``weighted=True``) the per-spec
@@ -796,7 +816,7 @@ def run_mask_internal_values(
             eyear=eyear,
             polygon=polygon,
             polygon_crs=polygon_crs,
-            target_unit="m3/j",
+            target_unit=unit,
             weighted=weighted,
         )
 
@@ -817,7 +837,10 @@ def run_mask_internal_values(
         # artefact. The fetch above still ran because the GeoPackage needs the
         # data; only the disk writes below are suppressed.
         if not write_geopackage:
-            base = _artefact_basename(comp, param, outtype, syear, eyear)
+            # The unit token keeps unit-distinct runs of the same spec from
+            # overwriting each other; CSV and .npy share the basename so the
+            # pair stays matched.
+            base = f"{_artefact_basename(comp, param, outtype, syear, eyear)}_{_unit_token(unit)}"
             csv_path = os.path.join(output_dir, f"{base}.csv")
             npy_path = os.path.join(temp_dir, f"{base}.npy")
             df = pd.DataFrame(
@@ -845,7 +868,7 @@ def run_mask_internal_values(
             if not write_geopackage:
                 total_path = os.path.join(
                     output_dir,
-                    f"{area_name}_{comp}_{param}_polygon_total_{years_token}.csv",
+                    f"{area_name}_{comp}_{param}_polygon_total_{years_token}_{_unit_token(unit)}.csv",
                 )
                 total_df.to_csv(total_path)
                 artefacts.append(total_path)
@@ -913,7 +936,7 @@ def run_mask_internal_values(
             gpkg_path,
             compartment_blocks,
             provenance_rows,
-            daily_values_unit_override="m3/j",
+            daily_values_unit_override=unit,
         )
         artefacts.append(gpkg_path)
 

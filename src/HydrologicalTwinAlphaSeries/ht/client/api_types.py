@@ -176,8 +176,10 @@ class MaskInternalValuesResult:
         ``.gpkg`` when ``write_geopackage=True``).
     :param polygon_total_paths: Only populated when the call ran with
         ``weighted=True``. Maps each requested ``(compartment, param)`` spec to
-        the absolute path of its one-column ``date, polygon_total`` CSV in
-        ``m³/day``. Stays ``None`` on the binary (unweighted) path.
+        the absolute path of its one-column ``date, polygon_total`` CSV, in the
+        caller-selected ``unit`` (``m3/s`` | ``m3/j``, default ``m3/j``); the
+        unit is encoded in the CSV filename token. Stays ``None`` on the binary
+        (unweighted) path.
     """
 
     entries: List[CompartmentCellsEntry] = field(default_factory=list)
