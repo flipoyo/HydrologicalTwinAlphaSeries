@@ -89,10 +89,10 @@ def test_run_mask_internal_values_writes_gpkg_when_flag_true(tmp_path: Path, mon
         weighted=False,
     )
 
-    gpkg_path = output_dir / "basin_A_WATBAL_2000_2000.gpkg"
+    gpkg_path = output_dir / "basin_A_InternalValues_2000_2000.gpkg"
     assert gpkg_path.exists()
 
-    # Exclusive mode (design.md D10): the .gpkg is the SOLE WATBAL artefact —
+    # Exclusive mode (design.md D10): the .gpkg is the SOLE artefact —
     # no per-param CSV / .npy in the result or on disk.
     assert result.artefacts == [str(gpkg_path)]
     assert not any(p.endswith(".csv") for p in result.artefacts)
@@ -105,6 +105,7 @@ def test_run_mask_internal_values_writes_gpkg_when_flag_true(tmp_path: Path, mon
         prov = pd.read_sql_query("SELECT * FROM provenance", con)
     assert len(daily) == 3 * 4 * 2
     assert set(daily["param"].unique()) == {"rain", "runoff"}
+    assert set(daily["compartment"].unique()) == {"WATBAL"}
     assert prov.iloc[0]["compartment"] == "WATBAL"
     assert prov.iloc[0]["area_name"] == "basin_A"
     assert prov.iloc[0]["source_run"] == "/tmp/fake_out_caw"
@@ -190,38 +191,58 @@ def test_run_mask_internal_values_modes_are_mutually_exclusive(tmp_path: Path, m
 
     # GeoPackage mode: exactly the .gpkg, nothing else.
     assert [n for n in files_b if n.endswith(".gpkg")] == [
-        "basin_A_WATBAL_2000_2000.gpkg"
+        "basin_A_InternalValues_2000_2000.gpkg"
     ]
     assert not any(n.endswith(".csv") for n in files_b)
     assert not any(n.endswith(".npy") for n in files_b)
 
 
-def test_run_mask_internal_values_gpkg_rejects_non_watbal_spec(tmp_path: Path, monkeypatch):
-    """Mixed-compartment GeoPackage request is rejected (design.md D4)."""
-    import pytest
-
+def test_run_mask_internal_values_gpkg_bundles_watbal_and_aq(tmp_path: Path, monkeypatch):
+    """A mixed WATBAL + AQ GeoPackage request now produces one multi-layer
+    Internal Values bundle: a cells_<compartment> layer per mesh, a
+    compartment-keyed daily_values, and one provenance row per compartment."""
     twin, polygon, mesh_gdf = _fake_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
     output_dir = tmp_path / "OUTPUTS"
     temp_dir = tmp_path / "TEMP"
 
-    with pytest.raises(ValueError, match="WATBAL-only"):
-        operations.run_mask_internal_values(
-            twin,
-            polygon=polygon,
-            polygon_crs="EPSG:2154",
-            specs=[("WATBAL", "MB", "rain"), ("AQ", "MB", "recharge")],
-            syear=2000,
-            eyear=2000,
-            output_dir=str(output_dir),
-            temp_dir=str(temp_dir),
-            area_name="basin_A",
-            write_geopackage=True,
-            weighted=False,
-        )
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("WATBAL", "MB", "rain"), ("AQ", "MB", "recharge")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        temp_dir=str(temp_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+        weighted=False,
+    )
 
-    # No partial GeoPackage written.
-    assert not output_dir.exists() or list(output_dir.glob("*.gpkg")) == []
+    gpkg_path = output_dir / "basin_A_InternalValues_2000_2000.gpkg"
+    assert gpkg_path.exists()
+    assert result.artefacts == [str(gpkg_path)]
+
+    cells_watbal = gpd.read_file(str(gpkg_path), layer="cells_WATBAL")
+    cells_aq = gpd.read_file(str(gpkg_path), layer="cells_AQ")
+    assert len(cells_watbal) == 3
+    assert len(cells_aq) == 3
+
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+        prov = pd.read_sql_query("SELECT * FROM provenance", con)
+
+    assert set(daily["compartment"].unique()) == {"WATBAL", "AQ"}
+    # Every (compartment, cell_id) resolves to a geometry in the matching mesh.
+    watbal_ids = set(cells_watbal["cell_id"])
+    aq_ids = set(cells_aq["cell_id"])
+    for _, row in daily.iterrows():
+        target = watbal_ids if row["compartment"] == "WATBAL" else aq_ids
+        assert row["cell_id"] in target
+
+    assert len(prov) == 2
+    assert set(prov["compartment"]) == {"WATBAL", "AQ"}
 
 
 # ---------------------------------------------------------------------------
@@ -408,18 +429,20 @@ def test_run_mask_internal_values_weighted_gpkg_bundles_weighted_artefacts(
         write_geopackage=True,
     )
 
-    gpkg_path = output_dir / "basin_A_WATBAL_2000_2000.gpkg"
+    gpkg_path = output_dir / "basin_A_InternalValues_2000_2000.gpkg"
     assert gpkg_path.exists()
     # Exclusive mode: the .gpkg is the sole artefact even on the weighted path —
-    # the polygon totals live inside it (polygon_total_rain), not as a CSV.
+    # the polygon totals live inside it (polygon_total_WATBAL_rain), not a CSV.
     assert result.artefacts == [str(gpkg_path)]
     assert result.polygon_total_paths in (None, {})
     assert list(output_dir.glob("*.csv")) == []
 
     with sqlite3.connect(str(gpkg_path)) as con:
-        cells = pd.read_sql_query("SELECT * FROM cells", con)
+        cells = pd.read_sql_query("SELECT * FROM cells_WATBAL", con)
         daily = pd.read_sql_query("SELECT * FROM daily_values", con)
-        polygon_total = pd.read_sql_query("SELECT * FROM polygon_total_rain", con)
+        polygon_total = pd.read_sql_query(
+            "SELECT * FROM polygon_total_WATBAL_rain", con
+        )
         prov = pd.read_sql_query("SELECT * FROM provenance", con)
 
     assert "weight" in cells.columns

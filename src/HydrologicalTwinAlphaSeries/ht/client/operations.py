@@ -716,20 +716,20 @@ def run_mask_internal_values(
     :param output_dir: Directory for CSV artefacts.
     :param temp_dir: Directory for numpy binary artefacts.
     :param area_name: Display / filename token for the masked area.
-    :param write_geopackage: Selects an exclusive output **mode**, and in this
-        milestone remains **WATBAL-only** (design.md D4/D10):
+    :param write_geopackage: Selects an exclusive output **mode**:
 
         * ``True`` (GeoPackage mode): every spec is still fetched (the
           GeoPackage needs the data), but the per-spec CSV, ``.npy`` and
           per-spec ``polygon_total`` CSV are NOT written. A single
-          ``<output_dir>/<area>_WATBAL_<syear>_<eyear>.gpkg`` — bundling the
-          masked cells geometry, the long-form per-``(cell, date, param)``
-          values, a one-row provenance table, and ``polygon_total_<param>``
-          tables when ``weighted=True`` — is the sole artefact and the only
-          path in ``MaskInternalValuesResult.artefacts``. Silent overwrite.
-          A non-WATBAL spec combined with ``write_geopackage=True`` raises
-          :class:`ValueError` (the multi-compartment GeoPackage schema is a
-          separate change).
+          ``<output_dir>/<area>_InternalValues_<syear>_<eyear>.gpkg`` —
+          one transportable Internal Values bundle spanning every requested
+          compartment: a ``cells_<compartment>`` vector layer per mesh, a
+          long-form ``daily_values`` table carrying a ``compartment``
+          discriminator (joined to its mesh on ``(compartment, cell_id)``),
+          one ``provenance`` row per compartment, and
+          ``polygon_total_<compartment>_<param>`` tables when
+          ``weighted=True`` — is the sole artefact and the only path in
+          ``MaskInternalValuesResult.artefacts``. Silent overwrite.
         * ``False`` (default mode): the per-spec CSV + ``.npy`` (+
           ``polygon_total`` CSVs when ``weighted=True``) are written for every
           compartment in ``specs``, and no GeoPackage is produced.
@@ -761,15 +761,6 @@ def run_mask_internal_values(
     from HydrologicalTwinAlphaSeries import __version__ as _htas_ver  # noqa: PLC0415
 
     specs = [tuple(s) for s in specs]
-
-    # GeoPackage stays WATBAL-only this milestone (design.md D4): fail loud
-    # rather than emit a partial / ambiguous multi-mesh .gpkg.
-    if write_geopackage and any(comp != "WATBAL" for comp, _, _ in specs):
-        raise ValueError(
-            "GeoPackage export is WATBAL-only in this release. "
-            "Uncheck the non-WATBAL params (e.g. Recharge) or untick "
-            "GeoPackage export."
-        )
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
@@ -880,32 +871,48 @@ def run_mask_internal_values(
             )
 
     if write_geopackage:
-        # WATBAL-only by the guard above; a single compartment is present.
-        ctx = comp_resolved["WATBAL"]
-        watbal_params = [param for comp, _, param in specs if comp == "WATBAL"]
+        # One multi-layer Internal Values bundle spanning every requested
+        # compartment: a cells_<compartment> layer per mesh, a
+        # compartment-keyed daily_values table, and one provenance row per
+        # compartment. The per-compartment data is already assembled in
+        # comp_resolved; here we shape it for the generalised writer.
         gpkg_path = os.path.join(
-            output_dir, f"{area_name}_WATBAL_{syear}_{eyear}.gpkg"
+            output_dir, f"{area_name}_InternalValues_{syear}_{eyear}.gpkg"
         )
-        provenance = {
+        generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        run_fields = {
             "source_run": getattr(twin, "out_caw_directory", "") or "",
             "syear": syear,
             "eyear": eyear,
             "polygon_crs": polygon_crs or "",
             "area_name": area_name,
             "polygon_wkt": polygon.wkt,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "generated_at": generated_at,
             "htas_ver": _htas_ver or "unknown",
-            "compartment": "WATBAL",
-            "params": json.dumps(watbal_params),
-            "weighted": bool(weighted),
         }
+        compartment_blocks = {}
+        provenance_rows = []
+        for comp in compartments:
+            ctx = comp_resolved[comp]
+            comp_params = [p for c, _, p in specs if c == comp]
+            compartment_blocks[comp] = (
+                ctx["cells_gdf"],
+                ctx["retained_responses"],
+                ctx["polygon_total_dfs"] if weighted else None,
+            )
+            provenance_rows.append(
+                {
+                    **run_fields,
+                    "compartment": comp,
+                    "params": json.dumps(comp_params),
+                    "weighted": bool(weighted),
+                }
+            )
         # Tier-1 privileged write — see services/SECURITY.md.
         save_area_geopackage(
             gpkg_path,
-            ctx["cells_gdf"],
-            ctx["retained_responses"],
-            provenance,
-            polygon_totals=ctx["polygon_total_dfs"] if weighted else None,
+            compartment_blocks,
+            provenance_rows,
             daily_values_unit_override="m3/j",
         )
         artefacts.append(gpkg_path)
