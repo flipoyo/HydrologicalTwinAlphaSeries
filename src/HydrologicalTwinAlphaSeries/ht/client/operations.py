@@ -24,11 +24,12 @@ from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
+    CompartmentCellsEntry,
     CriteriaPointResult,
     HydrologicalRegimeResult,
     MaskAqBoundaryResult,
     MaskHydBoundaryResult,
-    MaskWatbalResult,
+    MaskInternalValuesResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
     StatisticalCriteriaResult,
@@ -678,11 +679,11 @@ def _artefact_basename(compartment: str, param: str, outtype: str, syear, eyear)
     return f"{compartment}_{param}_{years}"
 
 
-def run_mask_watbal(
+def run_mask_internal_values(
     twin,
     polygon,
     polygon_crs,
-    params: Sequence[str],
+    specs: Sequence[Tuple[str, str, str]],
     syear,
     eyear,
     output_dir: str,
@@ -690,61 +691,67 @@ def run_mask_watbal(
     area_name: str,
     write_geopackage: bool = False,
     weighted: bool = True,
-) -> MaskWatbalResult:
-    """Mask WATBAL cells inside a polygon and persist per-param time series.
+) -> MaskInternalValuesResult:
+    """Mask compartment cells inside a polygon and persist per-spec time series.
 
-    **BREAKING (from the prior behaviour)**: the per-param CSVs are now
-    written in ``m³/day`` regardless of the ``weighted`` flag. The
-    historical artefact was in ``m³/s`` (raw CaWaQS units) because the
-    earlier code bypassed ``read_watbal_converted``. Downstream consumers
-    that hard-coded ``m³/s`` must update their unit assumption; the
-    trivial migration is to multiply the new values by ``86400`` to
-    recover the old magnitude.
+    Generalises the former WATBAL-only ``run_mask_watbal``: instead of a flat
+    WATBAL ``params`` list it takes a sequence of ``(compartment, outtype,
+    param)`` triples (``specs``). The same masked polygon selects a *different*
+    cell set from each compartment's mesh, so the mesh GDF + cell-id column are
+    resolved **once per distinct compartment** and the result carries one cells
+    GeoDataFrame per compartment (``MaskInternalValuesResult.entries``).
+
+    **Unit**: the per-spec CSVs are written in ``m³/day`` regardless of the
+    ``weighted`` flag, via ``target_unit="m3/j"`` through
+    ``twin.mask(kind="area_values", ...)``. This is valid for the volumetric
+    params wired so far (WATBAL water-balance terms and AQ recharge).
 
     :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
     :param polygon: Shapely polygon (or MultiPolygon) defining the area.
     :param polygon_crs: CRS string for ``polygon`` (e.g. ``"EPSG:2154"``).
-    :param params: WATBAL backend params (``"rain"``, ``"etp"``, ``"runoff"``,
-        ``"inf"``, ``"etr"``).
+    :param specs: Sequence of ``(compartment, outtype, param)`` triples,
+        e.g. ``("WATBAL", "MB", "rain")`` or ``("AQ", "MB", "recharge")``.
     :param syear: Simulation start year.
     :param eyear: Simulation end year.
     :param output_dir: Directory for CSV artefacts.
     :param temp_dir: Directory for numpy binary artefacts.
     :param area_name: Display / filename token for the masked area.
-    :param write_geopackage: Selects the WATBAL output **mode** — the two
-        modes are mutually exclusive (design.md D10):
+    :param write_geopackage: Selects an exclusive output **mode**, and in this
+        milestone remains **WATBAL-only** (design.md D4/D10):
 
-        * ``True`` (GeoPackage mode): every param is still fetched (the
-          GeoPackage needs the data), but the per-param CSV, ``.npy`` and
-          per-param ``polygon_total`` CSV are NOT written. A single
+        * ``True`` (GeoPackage mode): every spec is still fetched (the
+          GeoPackage needs the data), but the per-spec CSV, ``.npy`` and
+          per-spec ``polygon_total`` CSV are NOT written. A single
           ``<output_dir>/<area>_WATBAL_<syear>_<eyear>.gpkg`` — bundling the
           masked cells geometry, the long-form per-``(cell, date, param)``
           values, a one-row provenance table, and ``polygon_total_<param>``
-          tables when ``weighted=True`` — is the sole WATBAL artefact and the
-          only path in ``MaskWatbalResult.artefacts``. Silent overwrite.
-        * ``False`` (default mode): the per-param CSV + ``.npy`` (+
-          ``polygon_total`` CSVs when ``weighted=True``) are written exactly
-          as before this change, and no GeoPackage is produced.
-    :param weighted: When true, opt into area-fraction weighting:
+          tables when ``weighted=True`` — is the sole artefact and the only
+          path in ``MaskInternalValuesResult.artefacts``. Silent overwrite.
+          A non-WATBAL spec combined with ``write_geopackage=True`` raises
+          :class:`ValueError` (the multi-compartment GeoPackage schema is a
+          separate change).
+        * ``False`` (default mode): the per-spec CSV + ``.npy`` (+
+          ``polygon_total`` CSVs when ``weighted=True``) are written for every
+          compartment in ``specs``, and no GeoPackage is produced.
+    :param weighted: When true, opt into area-fraction weighting (uniform
+        across every spec in the call):
 
         * Cells are selected by per-cell intersection area (not by
-          centroid containment), via
-          :func:`cells_in_polygon_weighted`.
+          centroid containment), via :func:`cells_in_polygon_weighted`.
         * Per-cell time-series are multiplied by their area-fraction
           weight (``polygon.intersection(cell).area / cell.area``).
-        * The per-param CSV carries the weighted contributions
-          (``m³/day``), not the raw per-cell values.
-        * One extra polygon-total CSV per param is written:
-          ``<output_dir>/<area_name>_<param>_polygon_total_<years>.csv``
+        * The per-spec CSV carries the weighted contributions (``m³/day``).
+        * One extra polygon-total CSV per spec is written:
+          ``<output_dir>/<area_name>_<compartment>_<param>_polygon_total_<years>.csv``
           (two columns: ``date, polygon_total`` in ``m³/day``).
-        * The returned ``gdf`` carries clipped intersection geometries
-          plus a ``weight`` column instead of full cell footprints.
+        * Each per-compartment ``gdf`` carries clipped intersection
+          geometries plus a ``weight`` column instead of full cell footprints.
 
-        Default ``False`` preserves today's binary behaviour (modulo the
-        ``m³/day`` unit fix described above).
-    :returns: Mesh-joined cells GDF + per-param artefact paths (plus the
-        ``.gpkg`` path when ``write_geopackage`` is true, plus the
-        per-param polygon-total CSV paths when ``weighted=True``).
+        Default ``False`` preserves today's binary behaviour.
+    :returns: A :class:`MaskInternalValuesResult` with one
+        :class:`CompartmentCellsEntry` per distinct compartment, the flat
+        ``artefacts`` list, and (when ``weighted=True``) the per-spec
+        ``polygon_total_paths`` mapping keyed by ``(compartment, param)``.
     """
     import json  # noqa: PLC0415
     from datetime import datetime, timezone  # noqa: PLC0415
@@ -753,26 +760,46 @@ def run_mask_watbal(
 
     from HydrologicalTwinAlphaSeries import __version__ as _htas_ver  # noqa: PLC0415
 
-    watbal_id = _resolve_compartment_id(twin, "WATBAL")
+    specs = [tuple(s) for s in specs]
 
-    mesh_gdf = _mesh_gdf_for(twin, watbal_id)
-    id_col = _cell_id_col_name(twin, watbal_id, mesh_gdf)
-    layer_name = f"{area_name}_WATBAL_cells"
+    # GeoPackage stays WATBAL-only this milestone (design.md D4): fail loud
+    # rather than emit a partial / ambiguous multi-mesh .gpkg.
+    if write_geopackage and any(comp != "WATBAL" for comp, _, _ in specs):
+        raise ValueError(
+            "GeoPackage export is WATBAL-only in this release. "
+            "Uncheck the non-WATBAL params (e.g. Recharge) or untick "
+            "GeoPackage export."
+        )
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
     artefacts: list = []
-    retained_responses: dict = {}
     polygon_total_paths: dict = {}
-    polygon_total_dfs: dict = {}
-    cells_gdf = None
     years_token = f"{syear}-{eyear}"
 
-    for param in params:
+    # Distinct compartments in first-seen order; resolve each mesh once.
+    compartments = list(dict.fromkeys(comp for comp, _, _ in specs))
+    comp_resolved = {}
+    for comp in compartments:
+        comp_id = _resolve_compartment_id(twin, comp)
+        mesh_gdf = _mesh_gdf_for(twin, comp_id)
+        id_col = _cell_id_col_name(twin, comp_id, mesh_gdf)
+        comp_resolved[comp] = {
+            "id": comp_id,
+            "mesh_gdf": mesh_gdf,
+            "id_col": id_col,
+            "cells_gdf": None,
+            "retained_responses": {},   # param -> response (GeoPackage only)
+            "polygon_total_dfs": {},     # param -> df  (GeoPackage only)
+        }
+
+    for comp, outtype, param in specs:
+        ctx = comp_resolved[comp]
+        comp_id = ctx["id"]
         response = twin.mask(
             kind="area_values",
-            id_compartment=watbal_id,
-            outtype="MB",
+            id_compartment=comp_id,
+            outtype=outtype,
             param=param,
             syear=syear,
             eyear=eyear,
@@ -782,24 +809,24 @@ def run_mask_watbal(
             weighted=weighted,
         )
 
-        if cells_gdf is None:
-            cells_gdf = _build_cells_gdf(
-                mesh_gdf=mesh_gdf,
-                id_col=id_col,
+        if ctx["cells_gdf"] is None:
+            ctx["cells_gdf"] = _build_cells_gdf(
+                mesh_gdf=ctx["mesh_gdf"],
+                id_col=ctx["id_col"],
                 response=response,
                 polygon=polygon,
                 polygon_crs=polygon_crs,
                 weighted=weighted,
                 twin=twin,
-                watbal_id=watbal_id,
+                id_compartment=comp_id,
             )
 
-        # Exclusive-mode gate (design.md D10): in GeoPackage mode the per-param
+        # Exclusive-mode gate (design.md D10): in GeoPackage mode the per-spec
         # CSV / .npy / polygon_total CSV are NOT written — the .gpkg is the sole
-        # WATBAL artefact. The fetch above still ran because the GeoPackage needs
-        # the data; only the disk writes below are suppressed.
+        # artefact. The fetch above still ran because the GeoPackage needs the
+        # data; only the disk writes below are suppressed.
         if not write_geopackage:
-            base = _artefact_basename("WATBAL", param, "MB", syear, eyear)
+            base = _artefact_basename(comp, param, outtype, syear, eyear)
             csv_path = os.path.join(output_dir, f"{base}.csv")
             npy_path = os.path.join(temp_dir, f"{base}.npy")
             df = pd.DataFrame(
@@ -812,7 +839,7 @@ def run_mask_watbal(
             save_area_values_npy(npy_path, response.data)
             artefacts.append(csv_path)
             artefacts.append(npy_path)
-        retained_responses[param] = response
+        ctx["retained_responses"][param] = response
 
         if weighted:
             polygon_total = response.data.sum(axis=0)
@@ -823,34 +850,39 @@ def run_mask_watbal(
             # The polygon totals always feed the GeoPackage writer (as
             # polygon_total_<param> tables); the standalone CSV is written only
             # in default mode.
-            polygon_total_dfs[param] = total_df.reset_index()
+            ctx["polygon_total_dfs"][param] = total_df.reset_index()
             if not write_geopackage:
                 total_path = os.path.join(
                     output_dir,
-                    f"{area_name}_{param}_polygon_total_{years_token}.csv",
+                    f"{area_name}_{comp}_{param}_polygon_total_{years_token}.csv",
                 )
                 total_df.to_csv(total_path)
                 artefacts.append(total_path)
-                polygon_total_paths[param] = total_path
+                polygon_total_paths[(comp, param)] = total_path
 
-    if cells_gdf is None:
-        # No params requested: still build a cells GDF so the dialog can
-        # render the polygon footprint. Falls back to the centroid-in
-        # selection because there are no per-cell responses to align with.
-        cells_response = twin.mask(
-            kind="polygon_cells",
-            id_compartment=watbal_id,
-            polygon=polygon,
-            polygon_crs=polygon_crs,
-        )
-        cells_gdf = (
-            mesh_gdf.set_index(id_col)
-            .loc[list(cells_response.cell_ids)]
-            .reset_index()
-            .rename(columns={id_col: "cell_id"})
-        )
+    for comp in compartments:
+        ctx = comp_resolved[comp]
+        if ctx["cells_gdf"] is None:
+            # No specs requested for this compartment (only possible when
+            # specs is empty): build a footprint-only cells GDF via the
+            # centroid-in selection so the dialog can still render it.
+            cells_response = twin.mask(
+                kind="polygon_cells",
+                id_compartment=ctx["id"],
+                polygon=polygon,
+                polygon_crs=polygon_crs,
+            )
+            ctx["cells_gdf"] = (
+                ctx["mesh_gdf"].set_index(ctx["id_col"])
+                .loc[list(cells_response.cell_ids)]
+                .reset_index()
+                .rename(columns={ctx["id_col"]: "cell_id"})
+            )
 
     if write_geopackage:
+        # WATBAL-only by the guard above; a single compartment is present.
+        ctx = comp_resolved["WATBAL"]
+        watbal_params = [param for comp, _, param in specs if comp == "WATBAL"]
         gpkg_path = os.path.join(
             output_dir, f"{area_name}_WATBAL_{syear}_{eyear}.gpkg"
         )
@@ -864,23 +896,31 @@ def run_mask_watbal(
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "htas_ver": _htas_ver or "unknown",
             "compartment": "WATBAL",
-            "params": json.dumps(list(params)),
+            "params": json.dumps(watbal_params),
             "weighted": bool(weighted),
         }
         # Tier-1 privileged write — see services/SECURITY.md.
         save_area_geopackage(
             gpkg_path,
-            cells_gdf,
-            retained_responses,
+            ctx["cells_gdf"],
+            ctx["retained_responses"],
             provenance,
-            polygon_totals=polygon_total_dfs if weighted else None,
+            polygon_totals=ctx["polygon_total_dfs"] if weighted else None,
             daily_values_unit_override="m3/j",
         )
         artefacts.append(gpkg_path)
 
-    return MaskWatbalResult(
-        gdf=cells_gdf,
-        layer_name=layer_name,
+    entries = [
+        CompartmentCellsEntry(
+            compartment=comp,
+            gdf=comp_resolved[comp]["cells_gdf"],
+            layer_name=f"{area_name}_{comp}_cells",
+        )
+        for comp in compartments
+    ]
+
+    return MaskInternalValuesResult(
+        entries=entries,
         artefacts=artefacts,
         polygon_total_paths=polygon_total_paths if weighted else None,
     )
@@ -894,9 +934,10 @@ def _build_cells_gdf(
     polygon_crs,
     weighted: bool,
     twin,
-    watbal_id,
+    id_compartment,
 ):
-    """Assemble the cells GeoDataFrame for ``run_mask_watbal``.
+    """Assemble the cells GeoDataFrame for one compartment in
+    ``run_mask_internal_values``.
 
     - ``weighted=False`` → full cell footprints joined from ``mesh_gdf`` on
       the per-param response's cell_ids (or, equivalently, a polygon_cells
@@ -929,7 +970,7 @@ def _build_cells_gdf(
 
     cells_response = twin.mask(
         kind="polygon_cells",
-        id_compartment=watbal_id,
+        id_compartment=id_compartment,
         polygon=polygon,
         polygon_crs=polygon_crs,
     )

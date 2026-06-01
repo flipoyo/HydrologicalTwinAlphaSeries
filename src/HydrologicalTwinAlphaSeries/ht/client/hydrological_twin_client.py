@@ -26,7 +26,7 @@ from .api_types import (
     HydrologicalRegimeResult,
     MaskAqBoundaryResult,
     MaskHydBoundaryResult,
-    MaskWatbalResult,
+    MaskInternalValuesResult,
     SpatialMapAqResult,
     SpatialMapWatbalResult,
     StatisticalCriteriaResult,
@@ -87,8 +87,9 @@ class HydrologicalTwinClient:
       interactive HTML mode
     - :meth:`statistical_criteria` — per-observation-point performance
       metrics (KGE, NSE, RMSE, ...) plus globals/by-layer for AQ
-    - :meth:`mask_watbal` — per-param WATBAL cell masking with persisted
-      artefacts and a mesh-joined gdf
+    - :meth:`mask_internal_values` — per-spec compartment cell masking
+      (WATBAL params + AQ recharge) with persisted artefacts and one
+      mesh-joined gdf per compartment
     - :meth:`mask_hyd_boundary` — HYD reaches on a polygon boundary plus
       inside-reaches plus boundary fluxes
     - :meth:`mask_aq_boundary` — AQ cells inside a polygon plus boundary
@@ -144,10 +145,15 @@ class HydrologicalTwinClient:
     def statistical_criteria(self, **kwargs) -> StatisticalCriteriaResult:
         return operations.run_statistical_criteria(self._twin, **kwargs)
 
-    def mask_watbal(self, *, weighted: bool = True, **kwargs) -> MaskWatbalResult:
+    def mask_internal_values(
+        self, *, weighted: bool = True, **kwargs
+    ) -> MaskInternalValuesResult:
         # ``weighted`` is broken out from kwargs so it appears in the public
-        # signature; see :func:`operations.run_mask_watbal` for semantics.
-        return operations.run_mask_watbal(self._twin, weighted=weighted, **kwargs)
+        # signature; see :func:`operations.run_mask_internal_values` for the
+        # ``specs`` shape and semantics.
+        return operations.run_mask_internal_values(
+            self._twin, weighted=weighted, **kwargs
+        )
 
     def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:
         return operations.run_mask_hyd_boundary(self._twin, **kwargs)

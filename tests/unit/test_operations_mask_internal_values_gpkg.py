@@ -1,4 +1,4 @@
-"""Orchestration tests for ``run_mask_watbal`` with/without GeoPackage export."""
+"""Orchestration tests for ``run_mask_internal_values`` with/without GeoPackage export."""
 
 from __future__ import annotations
 
@@ -16,6 +16,11 @@ from HydrologicalTwinAlphaSeries.ht import (
     ValuesResponse,
 )
 from HydrologicalTwinAlphaSeries.ht.client import operations
+
+
+def _watbal_entry(result):
+    """Return the single WATBAL per-compartment entry from a result."""
+    return next(e for e in result.entries if e.compartment == "WATBAL")
 
 
 def _fake_twin_and_polygon():
@@ -64,17 +69,17 @@ def _collect_files(*dirs: Path) -> dict[str, bytes]:
     return out
 
 
-def test_run_mask_watbal_writes_gpkg_when_flag_true(tmp_path: Path, monkeypatch):
+def test_run_mask_internal_values_writes_gpkg_when_flag_true(tmp_path: Path, monkeypatch):
     twin, polygon, mesh_gdf = _fake_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
     output_dir = tmp_path / "OUTPUTS"
     temp_dir = tmp_path / "TEMP"
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain", "runoff"],
+        specs=[("WATBAL", "MB", "rain"), ("WATBAL", "MB", "runoff")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -105,17 +110,17 @@ def test_run_mask_watbal_writes_gpkg_when_flag_true(tmp_path: Path, monkeypatch)
     assert prov.iloc[0]["source_run"] == "/tmp/fake_out_caw"
 
 
-def test_run_mask_watbal_no_gpkg_when_flag_false_or_omitted(tmp_path: Path, monkeypatch):
+def test_run_mask_internal_values_no_gpkg_when_flag_false_or_omitted(tmp_path: Path, monkeypatch):
     twin, polygon, mesh_gdf = _fake_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
     output_dir = tmp_path / "OUTPUTS"
     temp_dir = tmp_path / "TEMP"
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain", "runoff"],
+        specs=[("WATBAL", "MB", "rain"), ("WATBAL", "MB", "runoff")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -134,7 +139,7 @@ def test_run_mask_watbal_no_gpkg_when_flag_false_or_omitted(tmp_path: Path, monk
     assert len(npy_paths) == 2
 
 
-def test_run_mask_watbal_modes_are_mutually_exclusive(tmp_path: Path, monkeypatch):
+def test_run_mask_internal_values_modes_are_mutually_exclusive(tmp_path: Path, monkeypatch):
     """Exclusive mode (design.md D10): default-mode writes CSV+.npy and no
     .gpkg; GeoPackage-mode writes only the .gpkg and no CSV/.npy. No run
     produces both."""
@@ -147,11 +152,11 @@ def test_run_mask_watbal_modes_are_mutually_exclusive(tmp_path: Path, monkeypatc
         (run / "OUTPUTS").mkdir(parents=True)
         (run / "TEMP").mkdir(parents=True)
 
-    operations.run_mask_watbal(
+    operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(run_a / "OUTPUTS"),
@@ -161,11 +166,11 @@ def test_run_mask_watbal_modes_are_mutually_exclusive(tmp_path: Path, monkeypatc
         weighted=False,
     )
 
-    operations.run_mask_watbal(
+    operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(run_b / "OUTPUTS"),
@@ -189,6 +194,34 @@ def test_run_mask_watbal_modes_are_mutually_exclusive(tmp_path: Path, monkeypatc
     ]
     assert not any(n.endswith(".csv") for n in files_b)
     assert not any(n.endswith(".npy") for n in files_b)
+
+
+def test_run_mask_internal_values_gpkg_rejects_non_watbal_spec(tmp_path: Path, monkeypatch):
+    """Mixed-compartment GeoPackage request is rejected (design.md D4)."""
+    import pytest
+
+    twin, polygon, mesh_gdf = _fake_twin_and_polygon()
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+    output_dir = tmp_path / "OUTPUTS"
+    temp_dir = tmp_path / "TEMP"
+
+    with pytest.raises(ValueError, match="WATBAL-only"):
+        operations.run_mask_internal_values(
+            twin,
+            polygon=polygon,
+            polygon_crs="EPSG:2154",
+            specs=[("WATBAL", "MB", "rain"), ("AQ", "MB", "recharge")],
+            syear=2000,
+            eyear=2000,
+            output_dir=str(output_dir),
+            temp_dir=str(temp_dir),
+            area_name="basin_A",
+            write_geopackage=True,
+            weighted=False,
+        )
+
+    # No partial GeoPackage written.
+    assert not output_dir.exists() or list(output_dir.glob("*.gpkg")) == []
 
 
 # ---------------------------------------------------------------------------
@@ -245,17 +278,17 @@ def _weighted_twin_and_polygon():
     return twin, polygon, mesh_gdf
 
 
-def test_run_mask_watbal_weighted_writes_polygon_total_csv(tmp_path: Path, monkeypatch):
+def test_run_mask_internal_values_weighted_writes_polygon_total_csv(tmp_path: Path, monkeypatch):
     twin, polygon, mesh_gdf = _weighted_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
     output_dir = tmp_path / "OUTPUTS"
     temp_dir = tmp_path / "TEMP"
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -264,12 +297,12 @@ def test_run_mask_watbal_weighted_writes_polygon_total_csv(tmp_path: Path, monke
         weighted=True,
     )
 
-    # polygon_total_paths populated when weighted=True.
+    # polygon_total_paths populated when weighted=True, keyed per (comp, param).
     assert result.polygon_total_paths is not None
-    assert "rain" in result.polygon_total_paths
-    rain_total_path = result.polygon_total_paths["rain"]
+    assert ("WATBAL", "rain") in result.polygon_total_paths
+    rain_total_path = result.polygon_total_paths[("WATBAL", "rain")]
     assert rain_total_path.endswith(
-        "basin_A_rain_polygon_total_2000-2000.csv"
+        "basin_A_WATBAL_rain_polygon_total_2000-2000.csv"
     )
     assert Path(rain_total_path).exists()
 
@@ -282,7 +315,7 @@ def test_run_mask_watbal_weighted_writes_polygon_total_csv(tmp_path: Path, monke
     )
 
 
-def test_run_mask_watbal_unweighted_has_no_polygon_total_paths(
+def test_run_mask_internal_values_unweighted_has_no_polygon_total_paths(
     tmp_path: Path, monkeypatch
 ):
     twin, polygon, mesh_gdf = _weighted_twin_and_polygon()
@@ -290,11 +323,11 @@ def test_run_mask_watbal_unweighted_has_no_polygon_total_paths(
     output_dir = tmp_path / "OUTPUTS"
     temp_dir = tmp_path / "TEMP"
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -307,17 +340,17 @@ def test_run_mask_watbal_unweighted_has_no_polygon_total_paths(
     assert not any("polygon_total" in p for p in result.artefacts)
 
 
-def test_run_mask_watbal_weighted_gdf_carries_weight_column(
+def test_run_mask_internal_values_weighted_gdf_carries_weight_column(
     tmp_path: Path, monkeypatch
 ):
     twin, polygon, mesh_gdf = _weighted_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(tmp_path / "OUTPUTS"),
@@ -326,22 +359,23 @@ def test_run_mask_watbal_weighted_gdf_carries_weight_column(
         weighted=True,
     )
 
-    assert "weight" in result.gdf.columns
-    assert list(result.gdf["cell_id"]) == [10, 20]
-    np.testing.assert_allclose(result.gdf["weight"].values, [1.0, 0.5])
+    gdf = _watbal_entry(result).gdf
+    assert "weight" in gdf.columns
+    assert list(gdf["cell_id"]) == [10, 20]
+    np.testing.assert_allclose(gdf["weight"].values, [1.0, 0.5])
 
 
-def test_run_mask_watbal_unweighted_gdf_has_no_weight_column(
+def test_run_mask_internal_values_unweighted_gdf_has_no_weight_column(
     tmp_path: Path, monkeypatch
 ):
     twin, polygon, mesh_gdf = _weighted_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(tmp_path / "OUTPUTS"),
@@ -350,21 +384,21 @@ def test_run_mask_watbal_unweighted_gdf_has_no_weight_column(
         weighted=False,
     )
 
-    assert "weight" not in result.gdf.columns
+    assert "weight" not in _watbal_entry(result).gdf.columns
 
 
-def test_run_mask_watbal_weighted_gpkg_bundles_weighted_artefacts(
+def test_run_mask_internal_values_weighted_gpkg_bundles_weighted_artefacts(
     tmp_path: Path, monkeypatch
 ):
     twin, polygon, mesh_gdf = _weighted_twin_and_polygon()
     _patch_twin_helpers(monkeypatch, mesh_gdf)
     output_dir = tmp_path / "OUTPUTS"
 
-    result = operations.run_mask_watbal(
+    result = operations.run_mask_internal_values(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        params=["rain"],
+        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
