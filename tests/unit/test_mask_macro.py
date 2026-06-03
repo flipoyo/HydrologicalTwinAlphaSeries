@@ -145,24 +145,27 @@ def _twin_with_mock_compartment(monkeypatch, mesh_gdf, cell_id_col="cell_id"):
 
 
 def _grid_mesh(nx: int = 3, ny: int = 3, *, crs="EPSG:3857") -> gpd.GeoDataFrame:
+    # 1-based cell ids to model the real ELEBU / DHRC mesh: the GIS id column
+    # starts at 1, and id N maps to positional row N-1 of the values array.
+    # (A 0-based fixture here would hide the very off-by-one this suite guards.)
     geometries = []
     ids = []
     for j in range(ny):
         for i in range(nx):
             geometries.append(box(i, j, i + 1, j + 1))
-            ids.append(j * nx + i)
+            ids.append(j * nx + i + 1)
     return gpd.GeoDataFrame({"cell_id": ids}, geometry=geometries, crs=crs)
 
 
 def test_mask_polygon_cells_returns_cell_selection_response(monkeypatch):
     mesh = _grid_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
-    polygon = box(0.1, 0.1, 1.9, 1.9)  # covers cells 0,1,3,4
+    polygon = box(0.1, 0.1, 1.9, 1.9)  # covers cells 1,2,4,5
 
     response = twin.mask(kind="polygon_cells", id_compartment=1, polygon=polygon)
 
     assert isinstance(response, CellSelectionResponse)
-    assert sorted(response.cell_ids) == [0, 1, 3, 4]
+    assert sorted(response.cell_ids) == [1, 2, 4, 5]
     assert response.meta["id_compartment"] == 1
     assert response.meta["kind"] == "polygon_cells"
 
@@ -212,7 +215,7 @@ def test_mask_polygon_cells_no_polygon_crs_skips_validation(monkeypatch):
 def test_mask_area_values_with_polygon_resolves_cells_then_delegates(monkeypatch):
     mesh = _grid_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
-    polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 0,1,3,4
+    polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 1,2,4,5
     captured = {}
     expected_response = ValuesResponse(data=np.zeros((4, 365)), dates=np.arange(365))
 
@@ -225,7 +228,7 @@ def test_mask_area_values_with_polygon_resolves_cells_then_delegates(monkeypatch
     response = twin.mask(**_area_values_kwargs(polygon=polygon))
 
     assert response is expected_response
-    np.testing.assert_array_equal(sorted(captured["cell_ids"].tolist()), [0, 1, 3, 4])
+    np.testing.assert_array_equal(sorted(captured["cell_ids"].tolist()), [1, 2, 4, 5])
 
 
 def test_mask_area_values_with_polygon_crs_mismatch_raises(monkeypatch):
@@ -252,7 +255,7 @@ def _make_full_mesh_values_response(n_cells: int, n_timesteps: int = 4) -> Value
 
 def test_mask_area_values_target_unit_routes_through_read_watbal_converted(monkeypatch):
     """target_unit set: dispatcher must call read_watbal_converted (not extract_area)."""
-    mesh = _grid_mesh()  # 9 cells, ids 0..8
+    mesh = _grid_mesh()  # 9 cells, ids 1..9
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     captured = {}
 
@@ -267,14 +270,14 @@ def test_mask_area_values_target_unit_routes_through_read_watbal_converted(monke
 
     monkeypatch.setattr(twin, "extract_area", fail_extract_area)
 
-    polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 0, 1, 3, 4
+    polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 1, 2, 4, 5 (positions 0,1,3,4)
 
     response = twin.mask(**_area_values_kwargs(polygon=polygon, target_unit="m3/j"))
 
     assert captured["target_unit"] == "m3/j"
     assert isinstance(response, ValuesResponse)
     assert response.data.shape == (4, 4)
-    # Unweighted path subsets cells 0,1,3,4 → row values 1,2,4,5.
+    # 1-based ids 1,2,4,5 map (id-1) to positional rows 0,1,3,4 → values 1,2,4,5.
     np.testing.assert_array_equal(response.data[:, 0], [1.0, 2.0, 4.0, 5.0])
     # Unweighted: response.weights and clipped_geometries stay None.
     assert response.weights is None
@@ -292,7 +295,7 @@ def test_mask_area_values_weighted_returns_weights_and_clipped_geometries(monkey
         "read_watbal_converted",
         lambda **_kw: _make_full_mesh_values_response(n_cells=9),
     )
-    # 2x2 covering cells 0,1,3,4 fully → all weights = 1.0.
+    # 2x2 covering cells 1,2,4,5 fully → all weights = 1.0.
     polygon = box(0.0, 0.0, 2.0, 2.0)
 
     response = twin.mask(
@@ -306,21 +309,21 @@ def test_mask_area_values_weighted_returns_weights_and_clipped_geometries(monkey
     assert len(response.clipped_geometries) == response.data.shape[0]
     # Fully-inside cells: weight = 1.0 ⇒ data unchanged.
     np.testing.assert_allclose(response.weights, 1.0)
-    # data row order matches mesh-order cells 0, 1, 3, 4 → values 1, 2, 4, 5.
+    # ids 1,2,4,5 → positional rows 0,1,3,4 → values 1, 2, 4, 5.
     np.testing.assert_array_equal(response.data[:, 0], [1.0, 2.0, 4.0, 5.0])
     assert response.meta["weighted"] is True
 
 
 def test_mask_area_values_weighted_partial_overlap_scales_data(monkeypatch):
     """weighted=True: data row of a 60%-inside cell equals base * 0.6."""
-    mesh = _grid_mesh(nx=2, ny=1)  # cells 0 and 1
+    mesh = _grid_mesh(nx=2, ny=1)  # cells 1 and 2 (positions 0 and 1)
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     monkeypatch.setattr(
         twin,
         "read_watbal_converted",
         lambda **_kw: _make_full_mesh_values_response(n_cells=2),
     )
-    # Cell 0 entirely inside (weight=1.0), cell 1 60% inside.
+    # Cell 1 entirely inside (weight=1.0), cell 2 60% inside.
     polygon = box(0.0, 0.0, 1.6, 1.0)
 
     response = twin.mask(
@@ -490,12 +493,12 @@ def test_mask_boundary_aq_returns_aq_boundary_response(monkeypatch):
     """3x1 strip; polygon covers only middle cell — its 2 outside neighbours give 2 boundary edges."""
     mesh = _grid_mesh(nx=3, ny=1)
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
-    polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only cell 1's centroid
+    polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only the middle cell's centroid (id 2)
 
     response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
 
     assert isinstance(response, AqBoundaryResponse)
-    assert sorted(response.cell_ids) == [1, 1]
+    assert sorted(response.cell_ids) == [2, 2]
     assert len(response.edge_geometries) == 2
     assert all(edge.geom_type == "LineString" for edge in response.edge_geometries)
     assert response.meta["id_compartment"] == 2

@@ -374,8 +374,14 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 id_layer=request.id_layer,
                 target_unit=request.target_unit,
             )
-            cell_ids_arr = np.asarray(resolved_cell_ids, dtype=np.intp)
-            subset_data = full_response.data[cell_ids_arr]
+            # The mesh GIS id column (ELEBU / DHRC) is contiguous and 1-based
+            # — id N lives at positional row N-1 of the binary-ordered values
+            # array. ``resolved_cell_ids`` keeps the 1-based ids as labels
+            # (meta + GeoPackage join); only the positional lookup is shifted.
+            # This mirrors ``data[id - 1]`` already used in budget.py:189/280
+            # and handlers.py:145/213.
+            row_positions = np.asarray(resolved_cell_ids, dtype=np.intp) - 1
+            subset_data = full_response.data[row_positions]
             if request.weighted and weights is not None:
                 subset_data = subset_data * weights[:, None]
             meta = {
@@ -398,6 +404,14 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 clipped_geometries=clipped_geoms,
             )
 
+        # NOTE: this branch (target_unit is None) is NOT reached by the mask
+        # dialog, which always sends a unit token. It still carries the same
+        # 1-based-id / 0-based-row mismatch as the converted branch above:
+        # ``extract_area`` forwards ``cell_ids`` straight to
+        # ``apply_spatial_mask`` (0-based positional lookup) AND reuses them as
+        # CSV/meta labels, so it can't be fixed by a flat -1 here without
+        # corrupting the labels — it needs a separate labels arg. Left as-is
+        # for now since it's out of scope for the internal-values fix.
         return twin.extract_area(
             id_compartment=request.id_compartment,
             outtype=request.outtype,
