@@ -102,8 +102,8 @@ obs_config = {
 # neighbour; the convention preserves the original feature-branch labelling
 # (cf. branch_migration/frontend_50.patch L2174-2181).
 AQ_FACE_DIRECTIONS = {
-    "east":  "flux_x_one",
-    "west":  "flux_x_two",
+    "east":  "flux_x_two",
+    "west":  "flux_x_one",
     "south": "flux_y_one",
     "north": "flux_y_two",
 }
