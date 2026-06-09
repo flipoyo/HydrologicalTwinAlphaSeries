@@ -714,8 +714,8 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
     # AQ_FACE_DIRECTIONS = {east: flux_x_one, west: flux_x_two,
     #                       south: flux_y_one, north: flux_y_two}
     param_to_value = {
-        "flux_x_one": 1.0,  # east
-        "flux_x_two": 2.0,  # west
+        "flux_x_two": 1.0,  # east
+        "flux_x_one": 2.0,  # west
         "flux_y_one": 3.0,  # south
         "flux_y_two": 4.0,  # north
     }
