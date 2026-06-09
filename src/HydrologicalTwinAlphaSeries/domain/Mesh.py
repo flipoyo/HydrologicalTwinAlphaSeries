@@ -50,6 +50,7 @@ class Mesh:
         self.config = config
         self.out_caw_directory = out_caw_directory
         self.mesh = self.GetMesh()
+        self._assign_global_ids()
         self.ncells = self.getNCells()
 
     def __repr__(self):
@@ -105,6 +106,29 @@ class Mesh:
             for cell in layer.layer:              # CaWaQS cell order
                 ids.append(cell.id)
         return ids
+
+    def _assign_global_ids(self):
+        """Populate every cell's ``id_abs`` with its absolute CaWaQS id.
+
+        ``id_abs`` is the 1-based row index of the cell in the CaWaQS binary
+        simulation matrix (CaWaQS ``ID_ABS``, unique across all layers). The
+        cell already carries this value in ``cell.id``: for AQ it is loaded
+        straight from the mesh GIS ``Id_ABS`` column, and for HYD it is mapped
+        from the GIS id through ``HYD_corresp_file.txt`` in ``buildLayer``.
+        Every historical matrix lookup already indexes ``data[cell.id - 1]``
+        (see ``budget.py`` / ``dispatch.py``), i.e. the matrix is keyed by the
+        absolute id, NOT by gdf-iteration order.
+
+        So ``id_abs`` is simply an explicit alias of ``cell.id``. We do **not**
+        derive it from ``getCellIdVector()`` position: the mesh is built by
+        iterating the GIS gdf, whose row order need not match the CaWaQS
+        ``ID_ABS`` order (real projects ship meshes that are not ``Id_ABS``-
+        sorted — e.g. the first gdf row can be ``Id_ABS == 435``). Keying off
+        position would mis-map every row on such a mesh.
+        """
+        for layer in self.mesh.values():
+            for cell in layer.layer:
+                cell.id_abs = cell.id
 
     class Layer:
         """

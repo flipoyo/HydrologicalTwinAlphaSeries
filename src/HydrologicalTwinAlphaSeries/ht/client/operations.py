@@ -807,6 +807,10 @@ def run_mask_internal_values(
     for comp, outtype, param in specs:
         ctx = comp_resolved[comp]
         comp_id = ctx["id"]
+        # AQ recharge enters at the cross-layer outcropping free surface, so AQ
+        # specs resolve cells against the outcropping mesh (global ``id_abs``);
+        # WATBAL keeps the single-layer path → byte-identical (design D2).
+        resolution = "outcropping" if comp == "AQ" else "single_layer"
         response = twin.mask(
             kind="area_values",
             id_compartment=comp_id,
@@ -818,6 +822,7 @@ def run_mask_internal_values(
             polygon_crs=polygon_crs,
             target_unit=unit,
             weighted=weighted,
+            resolution=resolution,
         )
 
         if ctx["cells_gdf"] is None:
@@ -830,6 +835,7 @@ def run_mask_internal_values(
                 weighted=weighted,
                 twin=twin,
                 id_compartment=comp_id,
+                resolution=resolution,
             )
 
         # Exclusive-mode gate (design.md D10): in GeoPackage mode the per-spec
@@ -965,17 +971,24 @@ def _build_cells_gdf(
     weighted: bool,
     twin,
     id_compartment,
+    resolution: str = "single_layer",
 ):
     """Assemble the cells GeoDataFrame for one compartment in
     ``run_mask_internal_values``.
 
-    - ``weighted=False`` → full cell footprints joined from ``mesh_gdf`` on
-      the per-param response's cell_ids (or, equivalently, a polygon_cells
-      mask call); no ``weight`` column.
+    - ``weighted=False`` → full cell footprints joined on the per-param
+      response's cell_ids; no ``weight`` column.
     - ``weighted=True`` → clipped intersection geometries pulled directly
       from ``response.clipped_geometries``, with a per-row ``weight``
       column. Row order matches the per-cell response data — the dialog
       can join cells_gdf to response.data by row position.
+
+    ``resolution="outcropping"`` (AQ recharge) builds the unweighted gdf from
+    the cross-layer outcropping mesh keyed on the global ``id_abs`` carried in
+    ``response.meta["cell_ids"]``, so the cells gdf reflects the same
+    cross-layer selection (and global ids) as the area-values data. The
+    weighted path is resolution-agnostic — its geometries and ids already come
+    straight from the (outcropping-resolved) response.
     """
     import geopandas as gpd  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
@@ -997,6 +1010,19 @@ def _build_cells_gdf(
             }
         )
         return gpd.GeoDataFrame(df, geometry=list(clipped), crs=mesh_gdf.crs)
+
+    if resolution == "outcropping":
+        # Selection already happened against the outcropping mesh (global
+        # id_abs in response.meta["cell_ids"]); join footprints from that same
+        # outcropping gdf so the cells gdf matches the cross-layer data.
+        outcropping_gdf = twin._build_outcropping_mesh_gdf(id_compartment)
+        meta_cell_ids = list((response.meta or {}).get("cell_ids", []))
+        return (
+            outcropping_gdf.set_index("id_abs")
+            .loc[meta_cell_ids]
+            .reset_index()
+            .rename(columns={"id_abs": "cell_id"})
+        )
 
     cells_response = twin.mask(
         kind="polygon_cells",

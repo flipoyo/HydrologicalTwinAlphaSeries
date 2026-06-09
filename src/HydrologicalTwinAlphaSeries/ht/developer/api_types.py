@@ -139,6 +139,14 @@ class MaskRequest:
     cell_ids: Optional[List[int]] = None
     weighted: bool = False
     target_unit: Optional[str] = None
+    # Cell-resolution selector for ``kind="area_values"`` polygon masks.
+    # ``"single_layer"`` (default) resolves cells against the single-layer mesh
+    # (``_resolve_mesh_gdf(..., id_layer)``) keyed on the per-layer GIS id —
+    # WATBAL behaviour, byte-identical. ``"outcropping"`` resolves against the
+    # cross-layer aquifer outcropping mesh keyed on the global ``id_abs`` — the
+    # correct AQ-recharge free surface spanning whichever layer is exposed.
+    # A plain string keeps the typed mask surface serializable for the server.
+    resolution: str = "single_layer"
 
 
 @dataclass
@@ -404,6 +412,9 @@ class CompartmentInfo:
     cell_ids: np.ndarray
     out_caw_path: str
     regime: str
+    # 1-based global cell index (``Cell.id_abs``) in getCellIdVector order —
+    # the simulation-matrix row order. Distinct from ``cell_ids`` (per-layer).
+    id_abs: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -415,6 +426,8 @@ class LayerInfo:
     cell_geometries: list
     layer_gis_name: str
     crs: Any = None
+    # 1-based global cell index (``Cell.id_abs``) for each cell in this layer.
+    id_abs: Optional[np.ndarray] = None
 
 
 @dataclass

@@ -373,7 +373,12 @@ def _build_aq_spatial_gdf(
         data=response.data, dates=response.dates,
         agg=agg, frequency=frequency,
         pluriannual=pluriannual, year_end_month=8,
-        cell_ids=comp_info.cell_ids,
+        # Label the aggregated columns by MATRIX ROW order, not gdf order: the
+        # full matrix row ``i`` is the cell whose absolute id (``id_abs``) is
+        # ``i + 1``. The mesh gdf need not be ``Id_ABS``-sorted, so labelling by
+        # ``getCellIdVector()`` / gdf order would mis-map columns. The
+        # multi-layer assembly's ``.loc[id_abs]`` then selects the right rows.
+        cell_ids=np.arange(1, response.data.shape[0] + 1),
     )
 
     crs = layers[0].crs if layers else None
@@ -389,12 +394,18 @@ def _build_aq_spatial_gdf(
     return gdf
 
 
-def _build_aquifer_outcropping(
+def _aq_outcropping_cells(
     twin: "HydrologicalTwin",
     id_compartment: int,
     save_directory: str = None,
-) -> np.ndarray:
-    """Build aquifer outcropping cell ID array. Wraps Spatial.buildAqOutcropping."""
+) -> list:
+    """Return the cross-layer aquifer outcropping ``Cell`` list.
+
+    Thin wrapper over ``Spatial.buildAqOutcropping`` (all of layer 0 plus
+    deeper-layer cells whose centroid no shallower cell covers). When
+    ``save_directory`` is given, the ``id_abs`` list is also persisted to
+    ``OUTPCROOPCELLSLIST.dat``.
+    """
     comp = twin.get_compartment(id_compartment)
 
     class _ExdStub:
@@ -404,12 +415,53 @@ def _build_aquifer_outcropping(
     save = save_directory is not None
     exd_stub = _ExdStub(save_directory) if save else _ExdStub("")
 
-    cells = Spatial().buildAqOutcropping(
+    return Spatial().buildAqOutcropping(
         exd=exd_stub,
         aq_compartment=comp,
         save=save,
     )
-    return np.array([cell.id for cell in cells])
+
+
+def _build_aquifer_outcropping(
+    twin: "HydrologicalTwin",
+    id_compartment: int,
+    save_directory: str = None,
+) -> np.ndarray:
+    """Build aquifer outcropping cell ID array. Wraps Spatial.buildAqOutcropping."""
+    cells = _aq_outcropping_cells(twin, id_compartment, save_directory)
+    # Return the global, unique ``id_abs`` (not the per-layer ``cell.id``) so
+    # the spatial-map ``gdf["ID_ABS"].isin(...)`` filter matches each cell
+    # uniquely across layers. ``buildAqOutcropping`` already persists id_abs.
+    return np.array([cell.id_abs for cell in cells])
+
+
+def _build_outcropping_mesh_gdf(
+    twin: "HydrologicalTwin",
+    id_compartment: int,
+) -> gpd.GeoDataFrame:
+    """Return a cross-layer outcropping mesh GeoDataFrame for AQ masking.
+
+    Each row is one outcropping cell (all of layer 0 plus deeper-layer cells
+    whose centroid no shallower cell covers), carrying its global ``id_abs``,
+    per-cell ``area``, and footprint ``geometry``. ``cells_in_polygon`` /
+    ``cells_in_polygon_weighted`` run against this gdf with ``id_col="id_abs"``
+    so polygon selection yields **global** ids directly — correct for a cell
+    outcropping in any layer, not just layer 0.
+
+    The CRS is taken from the compartment's layer-0 mesh (all layers share it).
+    """
+    cells = _aq_outcropping_cells(twin, id_compartment, save_directory=None)
+    comp = twin.get_compartment(id_compartment)
+    crs = comp.mesh.mesh[0].crs if comp.mesh.mesh else None
+    return gpd.GeoDataFrame(
+        {
+            "id_abs": [cell.id_abs for cell in cells],
+            "area": [cell.area for cell in cells],
+            "geometry": [cell.geometry for cell in cells],
+        },
+        crs=crs,
+        geometry="geometry",
+    )
 
 
 def compute_budget_variable(

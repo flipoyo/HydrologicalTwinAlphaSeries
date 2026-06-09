@@ -341,13 +341,21 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         weights: Optional[np.ndarray] = None
         clipped_geoms: Optional[List[Any]] = None
         if request.polygon is not None:
-            mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            # Resolution selector (design D2): AQ internal-values specs request
+            # the cross-layer outcropping mesh keyed on the global ``id_abs``;
+            # everything else (WATBAL) keeps the single-layer path keyed on the
+            # per-layer GIS id, which is byte-identical to prior behaviour.
+            if request.resolution == "outcropping":
+                mesh_gdf = twin._build_outcropping_mesh_gdf(request.id_compartment)
+                id_col = "id_abs"
+            else:
+                mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                id_col = twin._resolve_cell_id_col(request.id_compartment)
             verify_crs_match(
                 mesh_gdf.crs,
                 request.polygon_crs,
                 context="mask(kind='area_values')",
             )
-            id_col = twin._resolve_cell_id_col(request.id_compartment)
             if request.weighted:
                 triples = cells_in_polygon_weighted(
                     mesh_gdf, request.polygon, id_col=id_col
@@ -374,12 +382,14 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 id_layer=request.id_layer,
                 target_unit=request.target_unit,
             )
-            # The mesh GIS id column (ELEBU / DHRC) is contiguous and 1-based
-            # — id N lives at positional row N-1 of the binary-ordered values
-            # array. ``resolved_cell_ids`` keeps the 1-based ids as labels
-            # (meta + GeoPackage join); only the positional lookup is shifted.
-            # This mirrors ``data[id - 1]`` already used in budget.py:189/280
-            # and handlers.py:145/213.
+            # ``resolved_cell_ids`` are 1-based GLOBAL matrix indices: per-layer
+            # GIS ids for WATBAL (where layer-0 ``id_abs == cell.id``, so the
+            # arithmetic is byte-identical to before) and global ``id_abs`` for
+            # the AQ outcropping resolver. Either way, id N lives at positional
+            # row N-1 of the binary-ordered (getCellIdVector-order) values
+            # array — correct for a cell in any layer, not just layer 0. The
+            # 1-based ids stay as labels (meta + GeoPackage join); only the
+            # positional lookup is shifted by -1.
             row_positions = np.asarray(resolved_cell_ids, dtype=np.intp) - 1
             subset_data = full_response.data[row_positions]
             if request.weighted and weights is not None:

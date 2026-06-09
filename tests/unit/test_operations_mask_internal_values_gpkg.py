@@ -41,12 +41,21 @@ def _fake_twin_and_polygon():
         if kind == "area_values":
             param = kwargs["param"]
             data = np.full((len(cell_ids), len(dates)), float(hash(param) % 1000))
-            return ValuesResponse(data=data, dates=dates)
+            # meta["cell_ids"] carries the (global, for AQ outcropping) ids the
+            # unweighted cells-gdf join now reads back.
+            return ValuesResponse(
+                data=data, dates=dates, meta={"cell_ids": list(cell_ids)}
+            )
         raise ValueError(f"unexpected mask kind: {kind!r}")
+
+    # The AQ outcropping resolver returns a cross-layer gdf keyed on id_abs;
+    # here it mirrors the single mesh (cell_ids double as global id_abs).
+    outcropping_gdf = mesh_gdf.rename(columns={"id_cell": "id_abs"})
 
     twin = SimpleNamespace(
         mask=fake_mask,
         out_caw_directory="/tmp/fake_out_caw",
+        _build_outcropping_mesh_gdf=lambda *_a, **_k: outcropping_gdf,
     )
     polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
     return twin, polygon, mesh_gdf
