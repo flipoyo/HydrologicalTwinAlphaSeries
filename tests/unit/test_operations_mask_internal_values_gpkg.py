@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from shapely.geometry import Polygon, box
+from shapely.geometry import LineString, Polygon, box
 
 from HydrologicalTwinAlphaSeries.ht import (
     CellSelectionResponse,
@@ -460,6 +460,133 @@ def test_run_mask_internal_values_weighted_gpkg_bundles_weighted_artefacts(
     assert set(daily["unit"].unique()) == {"m3/j"}
     assert sorted(polygon_total.columns) == ["date", "polygon_total"]
     assert int(prov.iloc[0]["weighted"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# HYD internal values — reaches resolution + per-spec length / volumetric units
+# ---------------------------------------------------------------------------
+
+
+def _hyd_twin_and_polygon():
+    """Fake twin emulating the HYD reaches path: area_values returns a response
+    already carrying the dispatcher's reaches output (row-aligned cell_ids meta,
+    weights, and boundary-clipped reach geometries)."""
+    reach_ids = [101, 202]
+    # Two reaches; the polygon clips them to these segments.
+    clipped = [LineString([(0, 0), (1, 0)]), LineString([(1, 0), (1.5, 0)])]
+    mesh_gdf = gpd.GeoDataFrame(
+        {"reach_id": reach_ids},
+        geometry=[LineString([(0, 0), (2, 0)]), LineString([(1, 0), (3, 0)])],
+        crs="EPSG:2154",
+    )
+    dates = np.array(["2000-01-01", "2000-01-02", "2000-01-03", "2000-01-04"])
+
+    def fake_mask(kind, **kwargs):
+        if kind == "area_values":
+            param = kwargs["param"]
+            target_unit = kwargs.get("target_unit")
+            # Mirror the dispatch volumetric guard so a length spec wrongly
+            # routed with weighted=True would blow up here, exactly as the
+            # real backend does.
+            if kwargs.get("weighted") and target_unit not in ("m3/s", "m3/j"):
+                raise ValueError(
+                    "mask(kind='area_values', weighted=True) requires a "
+                    f"volumetric target_unit; got target_unit={target_unit!r}."
+                )
+            data = np.full((len(reach_ids), len(dates)), float(hash(param) % 1000))
+            return ValuesResponse(
+                data=data,
+                dates=dates,
+                meta={
+                    "cell_ids": list(reach_ids),
+                    "target_unit": target_unit,
+                    "resolution": kwargs.get("resolution"),
+                },
+                weights=np.array([0.5, 0.25]),
+                clipped_geometries=list(clipped),
+            )
+        raise ValueError(f"unexpected mask kind: {kind!r}")
+
+    twin = SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
+    return twin, polygon, mesh_gdf
+
+
+def test_run_mask_internal_values_hyd_reaches_per_spec_units(tmp_path: Path, monkeypatch):
+    """A HYD spec list mixing a volumetric Flow (m3/s) and a length Water Height
+    (m) returns a HYD entry whose cells gdf is built from the reach geometries,
+    and stamps each spec's own unit into the GeoPackage daily_values."""
+    twin, polygon, mesh_gdf = _hyd_twin_and_polygon()
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+    output_dir = tmp_path / "OUTPUTS"
+    temp_dir = tmp_path / "TEMP"
+
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[
+            ("HYD", "Q", "discharge", "m3/s"),
+            ("HYD", "H", "water_height", "m"),
+        ],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        temp_dir=str(temp_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+        weighted=False,
+    )
+
+    gpkg_path = output_dir / "basin_A_InternalValues_2000_2000.gpkg"
+    assert gpkg_path.exists()
+
+    hyd_entry = next(e for e in result.entries if e.compartment == "HYD")
+    # The cells gdf comes from the clipped reach geometries, not a centroid
+    # re-selection: two reaches, line geometries, reach ids preserved.
+    assert list(hyd_entry.gdf["cell_id"]) == [101, 202]
+    assert hyd_entry.gdf.geometry.geom_type.unique().tolist() == ["LineString"]
+
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+    # Each spec keeps its own unit token in daily_values.
+    units_by_param = daily.groupby("param")["unit"].unique()
+    assert units_by_param["discharge"].tolist() == ["m3/s"]
+    assert units_by_param["water_height"].tolist() == ["m"]
+
+
+def test_run_mask_internal_values_weighted_true_does_not_push_length_spec_into_guard(
+    tmp_path: Path, monkeypatch
+):
+    """Regression: a dialog-wide weighted=True must NOT reach a length spec —
+    Water Height (m) can never be area-weighted. The per-spec weighting is
+    forced off for length units, so the volumetric guard never fires even when
+    the same call also weights a volumetric discharge spec."""
+    twin, polygon, mesh_gdf = _hyd_twin_and_polygon()
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+
+    # weighted=True at the call level; the length spec must still go through.
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[
+            ("HYD", "Q", "discharge", "m3/s"),     # volumetric → may be weighted
+            ("HYD", "H", "water_height", "m"),     # length → must be unweighted
+        ],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(tmp_path / "OUTPUTS"),
+        temp_dir=str(tmp_path / "TEMP"),
+        area_name="basin_A",
+        write_geopackage=True,
+        weighted=True,
+    )
+
+    # No ValueError raised → the length spec was forced unweighted. Both specs
+    # still land in the HYD entry.
+    hyd_entry = next(e for e in result.entries if e.compartment == "HYD")
+    assert list(hyd_entry.gdf["cell_id"]) == [101, 202]
 
 
 # ---------------------------------------------------------------------------

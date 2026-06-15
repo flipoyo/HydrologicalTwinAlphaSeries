@@ -380,6 +380,89 @@ def test_mask_area_values_weighted_without_polygon_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# length unit family — water_height/water_level skip the ×86400 conversion
+# (task 7.2: param/unit family-compatibility errors are surfaced clearly)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_area_values_length_unit_skips_86400_and_scales(monkeypatch):
+    """A length param (water_height) with target_unit='cm' reads raw values
+    (read_values, NO ×86400 read_watbal_converted path) and scales by the cm
+    factor 100."""
+    mesh = _grid_mesh(nx=2, ny=1)  # cells 1, 2 → positional rows 0, 1
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+
+    def fail_converted(**_kw):
+        raise AssertionError(
+            "read_watbal_converted (×86400) must not run for a length unit"
+        )
+
+    monkeypatch.setattr(twin, "read_watbal_converted", fail_converted)
+    monkeypatch.setattr(
+        twin, "read_values", lambda **_kw: _make_full_mesh_values_response(n_cells=2)
+    )
+
+    polygon = box(0.0, 0.0, 2.0, 1.0)  # both cells fully inside
+    response = twin.mask(
+        **_area_values_kwargs(
+            param="water_height", outtype="H", polygon=polygon, target_unit="cm"
+        )
+    )
+
+    # Raw rows are 1.0 (cell 1) and 2.0 (cell 2); cm scales them by 100.
+    np.testing.assert_allclose(response.data[:, 0], [100.0, 200.0])
+    assert response.meta["target_unit"] == "cm"
+
+
+def test_mask_area_values_metre_unit_is_passthrough(monkeypatch):
+    """target_unit='m' is the identity length factor: raw values, unscaled."""
+    mesh = _grid_mesh(nx=2, ny=1)
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    monkeypatch.setattr(
+        twin, "read_values", lambda **_kw: _make_full_mesh_values_response(n_cells=2)
+    )
+
+    polygon = box(0.0, 0.0, 2.0, 1.0)
+    response = twin.mask(
+        **_area_values_kwargs(
+            param="water_height", outtype="H", polygon=polygon, target_unit="m"
+        )
+    )
+
+    np.testing.assert_allclose(response.data[:, 0], [1.0, 2.0])
+
+
+def test_mask_area_values_volumetric_param_with_length_unit_raises(monkeypatch):
+    """A volumetric param (rain) paired with a length token (m) is rejected
+    with a typed error naming both the param and the unit."""
+    mesh = _grid_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    with pytest.raises(TypeError) as exc:
+        twin.mask(**_area_values_kwargs(polygon=polygon, target_unit="m"))
+    assert "rain" in str(exc.value)
+    assert "m" in str(exc.value)
+
+
+def test_mask_area_values_length_param_with_volumetric_unit_raises(monkeypatch):
+    """A length param (water_height) paired with a volumetric token (m3/j) is
+    rejected with a typed error naming both the param and the unit."""
+    mesh = _grid_mesh()
+    twin = _twin_with_mock_compartment(monkeypatch, mesh)
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    with pytest.raises(TypeError) as exc:
+        twin.mask(
+            **_area_values_kwargs(
+                param="water_height", outtype="H", polygon=polygon, target_unit="m3/j"
+            )
+        )
+    assert "water_height" in str(exc.value)
+    assert "m3/j" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # S5 — kind="boundary_hyd" + HydBoundaryResponse
 # ---------------------------------------------------------------------------
 

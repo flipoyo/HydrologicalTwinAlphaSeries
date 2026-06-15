@@ -16,6 +16,7 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
+from HydrologicalTwinAlphaSeries.config.constants import _LENGTH_UNITS
 from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
     save_area_geopackage,
     save_area_values_npy,
@@ -820,6 +821,13 @@ def run_mask_internal_values(
         # specs resolve cells against the outcropping mesh (global ``id_abs``);
         # WATBAL keeps the single-layer path → byte-identical (design D2).
         resolution = "outcropping" if comp == "AQ" else "reaches" if comp == "HYD" else "single_layer"
+        # Area-fraction weighting only has a physical meaning on volumetric
+        # data; a length unit (Water Height in m/cm) can never be weighted, and
+        # the reaches path computes its own length-fraction weights internally
+        # regardless of this flag. Force the per-spec weighting off for length
+        # units so a single dialog-wide "weighted" tick does not push m/cm into
+        # the volumetric guard in dispatch.
+        spec_weighted = weighted and unit not in _LENGTH_UNITS
         response = twin.mask(
             kind="area_values",
             id_compartment=comp_id,
@@ -830,7 +838,7 @@ def run_mask_internal_values(
             polygon=polygon,
             polygon_crs=polygon_crs,
             target_unit=unit,
-            weighted=weighted,
+            weighted=spec_weighted,
             resolution=resolution,
         )
 
@@ -841,7 +849,7 @@ def run_mask_internal_values(
                 response=response,
                 polygon=polygon,
                 polygon_crs=polygon_crs,
-                weighted=weighted,
+                weighted=spec_weighted,
                 twin=twin,
                 id_compartment=comp_id,
                 resolution=resolution,
