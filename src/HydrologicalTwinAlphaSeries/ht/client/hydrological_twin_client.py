@@ -146,13 +146,15 @@ class HydrologicalTwinClient:
         return operations.run_statistical_criteria(self._twin, **kwargs)
 
     def mask_internal_values(
-        self, *, weighted: bool = True, unit: str = "m3/j", **kwargs
+        self, *, weighted: bool = True, **kwargs
     ) -> MaskInternalValuesResult:
-        # ``weighted`` and ``unit`` are broken out from kwargs so they appear in
-        # the public signature; see :func:`operations.run_mask_internal_values`
-        # for the ``specs`` shape, the ``unit`` token table, and semantics.
+        # ``weighted`` is broken out from kwargs so it appears in the public
+        # signature; the output unit is now carried per-spec as the 4th element
+        # of each ``(compartment, outtype, param, unit)`` tuple in ``specs``.
+        # See :func:`operations.run_mask_internal_values` for the ``specs``
+        # shape, the unit token table, and semantics.
         return operations.run_mask_internal_values(
-            self._twin, weighted=weighted, unit=unit, **kwargs
+            self._twin, weighted=weighted, **kwargs
         )
 
     def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:

@@ -22,7 +22,7 @@ Two writers live here today:
 from __future__ import annotations
 
 import sqlite3
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -70,7 +70,7 @@ def save_area_geopackage(
     gpkg_path: str,
     compartment_blocks: Mapping[str, CompartmentBlock],
     provenance_rows: Sequence[dict],
-    daily_values_unit_override: Optional[str] = None,
+    daily_values_unit_override: Optional[Union[str, Mapping[str, str]]] = None,
 ) -> None:
     """Persist a transportable multi-compartment GeoPackage for a masked area.
 
@@ -117,10 +117,13 @@ def save_area_geopackage(
           polygon-total tables for that compartment.
     :param provenance_rows: One provenance dict per compartment (assembled
         by the caller). Written as the ``provenance`` table, one row each.
-    :param daily_values_unit_override: When set, used as the ``unit``
-        column value for every row in ``daily_values`` (used by the
-        weighted-mask path where values are ``m³/day`` rather than the
-        per-param native unit declared in ``INTERNAL_VALUES_PARAM_UNITS``).
+    :param daily_values_unit_override: Selects the ``unit`` column value for
+        ``daily_values`` rows. A plain ``str`` is applied to every row
+        (legacy single-unit runs). A ``Mapping[param, unit]`` supplies a
+        per-param unit so a single bundle can mix units (e.g. HYD Flow in
+        ``m3/s`` and Water Height in ``m``); a param absent from the mapping
+        falls back to its native unit in ``INTERNAL_VALUES_PARAM_UNITS``.
+        ``None`` uses the native lookup for every param.
     """
     from pathlib import Path as _Path  # noqa: PLC0415
 
@@ -157,10 +160,17 @@ def save_area_geopackage(
         # compartment's own cells_gdf.
         cell_ids = np.asarray(cells_gdf["cell_id"])
         for param, response in values_responses.items():
-            unit = (
-                daily_values_unit_override
-                or INTERNAL_VALUES_PARAM_UNITS.get(param, "")
-            )
+            if isinstance(daily_values_unit_override, Mapping):
+                # Per-param override (one unit per spec); fall back to the
+                # native lookup for any param not present in the mapping.
+                unit = daily_values_unit_override.get(
+                    param
+                ) or INTERNAL_VALUES_PARAM_UNITS.get(param, "")
+            else:
+                unit = (
+                    daily_values_unit_override
+                    or INTERNAL_VALUES_PARAM_UNITS.get(param, "")
+                )
             data = np.asarray(response.data, dtype=float)   # (n_cells, n_days)
             dates = np.asarray(response.dates)         # (n_days,)
             n_cells, n_days = data.shape

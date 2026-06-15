@@ -88,7 +88,7 @@ def test_run_mask_internal_values_writes_gpkg_when_flag_true(tmp_path: Path, mon
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain"), ("WATBAL", "MB", "runoff")],
+        specs=[("WATBAL", "MB", "rain", "m3/j"), ("WATBAL", "MB", "runoff", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -130,7 +130,7 @@ def test_run_mask_internal_values_no_gpkg_when_flag_false_or_omitted(tmp_path: P
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain"), ("WATBAL", "MB", "runoff")],
+        specs=[("WATBAL", "MB", "rain", "m3/j"), ("WATBAL", "MB", "runoff", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -166,7 +166,7 @@ def test_run_mask_internal_values_modes_are_mutually_exclusive(tmp_path: Path, m
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(run_a / "OUTPUTS"),
@@ -180,7 +180,7 @@ def test_run_mask_internal_values_modes_are_mutually_exclusive(tmp_path: Path, m
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(run_b / "OUTPUTS"),
@@ -219,7 +219,7 @@ def test_run_mask_internal_values_gpkg_bundles_watbal_and_aq(tmp_path: Path, mon
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain"), ("AQ", "MB", "recharge")],
+        specs=[("WATBAL", "MB", "rain", "m3/j"), ("AQ", "MB", "recharge", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -318,7 +318,7 @@ def test_run_mask_internal_values_weighted_writes_polygon_total_csv(tmp_path: Pa
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -358,7 +358,7 @@ def test_run_mask_internal_values_unweighted_has_no_polygon_total_paths(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -381,7 +381,7 @@ def test_run_mask_internal_values_weighted_gdf_carries_weight_column(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(tmp_path / "OUTPUTS"),
@@ -406,7 +406,7 @@ def test_run_mask_internal_values_unweighted_gdf_has_no_weight_column(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(tmp_path / "OUTPUTS"),
@@ -429,7 +429,7 @@ def test_run_mask_internal_values_weighted_gpkg_bundles_weighted_artefacts(
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/j")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -515,14 +515,13 @@ def test_unit_m3s_skips_86400_and_stamps_gpkg_unit(tmp_path: Path, monkeypatch):
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/s")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
         temp_dir=str(temp_dir),
         area_name="basin_A",
         weighted=False,
-        unit="m3/s",
     )
     csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
     df = pd.read_csv(csv_path, index_col="date")
@@ -535,7 +534,7 @@ def test_unit_m3s_skips_86400_and_stamps_gpkg_unit(tmp_path: Path, monkeypatch):
         twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
+        specs=[("WATBAL", "MB", "rain", "m3/s")],
         syear=2000,
         eyear=2000,
         output_dir=str(gpkg_dir),
@@ -543,7 +542,6 @@ def test_unit_m3s_skips_86400_and_stamps_gpkg_unit(tmp_path: Path, monkeypatch):
         area_name="basin_A",
         weighted=False,
         write_geopackage=True,
-        unit="m3/s",
     )
     gpkg_path = gpkg_dir / "basin_A_InternalValues_2000_2000.gpkg"
     with sqlite3.connect(str(gpkg_path)) as con:
@@ -565,7 +563,6 @@ def test_csv_filename_carries_unit_token_and_runs_do_not_collide(
         twin=twin,
         polygon=polygon,
         polygon_crs="EPSG:2154",
-        specs=[("WATBAL", "MB", "rain")],
         syear=2000,
         eyear=2000,
         output_dir=str(output_dir),
@@ -573,8 +570,13 @@ def test_csv_filename_carries_unit_token_and_runs_do_not_collide(
         area_name="basin_A",
         weighted=False,
     )
-    res_s = operations.run_mask_internal_values(**common, unit="m3/s")
-    res_j = operations.run_mask_internal_values(**common, unit="m3/j")
+    # The output unit now rides on the spec tuple's 4th element.
+    res_s = operations.run_mask_internal_values(
+        **common, specs=[("WATBAL", "MB", "rain", "m3/s")]
+    )
+    res_j = operations.run_mask_internal_values(
+        **common, specs=[("WATBAL", "MB", "rain", "m3/j")]
+    )
 
     csv_s = next(p for p in res_s.artefacts if p.endswith(".csv"))
     csv_j = next(p for p in res_j.artefacts if p.endswith(".csv"))

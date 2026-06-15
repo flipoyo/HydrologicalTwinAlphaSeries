@@ -692,7 +692,7 @@ def run_mask_internal_values(
     twin,
     polygon,
     polygon_crs,
-    specs: Sequence[Tuple[str, str, str, str]],
+    specs: Sequence[Tuple[str, str, str, str]],  # (compartment, outtype, param, unit)
     syear,
     eyear,
     output_dir: str,
@@ -710,21 +710,32 @@ def run_mask_internal_values(
     resolved **once per distinct compartment** and the result carries one cells
     GeoDataFrame per compartment (``MaskInternalValuesResult.entries``).
 
-    **Unit**: the output unit is caller-selectable via ``unit`` (``"m3/s"`` |
-    ``"m3/j"``), defaulting to ``"m3/j"`` (``m³/day``) so non-dialog callers
-    keep today's behaviour. The single ``unit`` value feeds **both** the
-    conversion (``target_unit=unit`` through ``twin.mask(kind="area_values",
-    ...)``) and the stamped GeoPackage label (``daily_values_unit_override``),
-    so the per-cell numbers and their unit label cannot drift apart. For
-    ``"m3/s"`` the backend short-circuits the 86400 conversion (it is the
-    native CaWaQS unit). This is valid for the volumetric params wired so far
-    (WATBAL water-balance terms and AQ recharge).
+    **Unit (per spec)**: each spec carries its **own** output unit as the
+    4th tuple element, so one call may emit different units for different
+    params (e.g. HYD Flow in ``"m3/s"`` and HYD Water Height in ``"m"``).
+    That per-spec unit is the single source of truth for that spec: it feeds
+    the conversion (``target_unit`` through ``twin.mask(kind="area_values",
+    ...)``), the CSV / polygon-total filename token, and the stamped
+    GeoPackage label (the per-param ``daily_values_unit_override`` mapping),
+    so a spec's numbers and its unit label cannot drift apart.
+
+    Two unit **families** are supported (selected by the backend from the
+    unit token): *volumetric* — ``"m3/s"`` (CaWaQS-native; 86400 conversion
+    short-circuited) and ``"m3/j"`` (``m³/day``; raw ×86400), valid for
+    WATBAL water-balance terms, AQ recharge and HYD Flow; and *length* —
+    ``"m"`` (raw pass-through) and ``"cm"`` (×100), for HYD Water Height.
+    Pairing a param with a unit from the wrong family raises a typed error.
 
     :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
     :param polygon: Shapely polygon (or MultiPolygon) defining the area.
     :param polygon_crs: CRS string for ``polygon`` (e.g. ``"EPSG:2154"``).
-    :param specs: Sequence of ``(compartment, outtype, param)`` triples,
-        e.g. ``("WATBAL", "MB", "rain")`` or ``("AQ", "MB", "recharge")``.
+    :param specs: Sequence of ``(compartment, outtype, param, unit)`` tuples,
+        e.g. ``("WATBAL", "MB", "rain", "m3/j")``,
+        ``("AQ", "MB", "recharge", "m3/j")``,
+        ``("HYD", "Q", "discharge", "m3/s")`` or
+        ``("HYD", "H", "water_height", "m")``. The compartment MAY be
+        ``WATBAL``, ``AQ`` or ``HYD``; the 4th element is that spec's output
+        unit (see **Unit (per spec)** above).
     :param syear: Simulation start year.
     :param eyear: Simulation end year.
     :param output_dir: Directory for CSV artefacts.
@@ -762,11 +773,6 @@ def run_mask_internal_values(
           geometries plus a ``weight`` column instead of full cell footprints.
 
         Default ``False`` preserves today's binary behaviour.
-    :param unit: Output unit token for every spec in the call — ``"m3/s"`` or
-        ``"m3/j"`` (``m³/day``). Defaults to ``"m3/j"`` so non-dialog callers
-        keep today's output. Feeds both the per-cell conversion and the
-        stamped GeoPackage label, and is encoded into the per-spec /
-        polygon-total CSV filenames so unit-distinct runs do not collide.
     :returns: A :class:`MaskInternalValuesResult` with one
         :class:`CompartmentCellsEntry` per distinct compartment, the flat
         ``artefacts`` list, and (when ``weighted=True``) the per-spec
@@ -786,9 +792,13 @@ def run_mask_internal_values(
     artefacts: list = []
     polygon_total_paths: dict = {}
     years_token = f"{syear}-{eyear}"
+    # Per-param unit from each spec's 4th element — the single source of truth
+    # for that param's GeoPackage ``daily_values`` unit label (matches the
+    # per-spec ``target_unit`` used for its numeric conversion).
+    spec_units = {param: unit for _, _, param, unit in specs}
 
     # Distinct compartments in first-seen order; resolve each mesh once.
-    compartments = list(dict.fromkeys(comp for comp, _, _ in specs))
+    compartments = list(dict.fromkeys(comp for comp, *_ in specs))
     comp_resolved = {}
     for comp in compartments:
         comp_id = _resolve_compartment_id(twin, comp)
@@ -922,7 +932,7 @@ def run_mask_internal_values(
         provenance_rows = []
         for comp in compartments:
             ctx = comp_resolved[comp]
-            comp_params = [p for c, _, p in specs if c == comp]
+            comp_params = [p for c, _, p, _ in specs if c == comp]
             compartment_blocks[comp] = (
                 ctx["cells_gdf"],
                 ctx["retained_responses"],
@@ -941,7 +951,7 @@ def run_mask_internal_values(
             gpkg_path,
             compartment_blocks,
             provenance_rows,
-            daily_values_unit_override=unit,
+            daily_values_unit_override=spec_units,
         )
         artefacts.append(gpkg_path)
 
