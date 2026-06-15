@@ -1,87 +1,47 @@
-# TODO for HTAS user-guide test case
+# TODO — HTAS cleanup
 
-## Goal
+Clean up to keep the architecture consistent: avoid repetition and dead code,
+and keep a solid division of roles across the layers (client → dispatch →
+handlers → accessors).
 
-Provide one **minimal, shareable, non-proprietary test case** that can be used to:
+## Spotted risks
 
-- exercise the front API end to end,
-- keep the `HTAS_user_guide.tex` examples concrete,
-- validate integration from a downstream consumer such as `docs/hydrological_twin`.
+### 1. `weighted` is a redundant request field — derive it from the unit
+`mask(kind="area_values")` carries a `weighted` flag *and* a `target_unit`, but
+weighting is only ever meaningful on volumetric units. Two fields = two sources
+of truth that can contradict each other.
+- **Fix:** drop `weighted` from the request; derive numeric weighting at its one
+  point of use as `target_unit in _VOLUMETRIC_UNITS`.
+- **Then delete** the guard at `dispatch.py:326-333` that *raises* on
+  `weighted=True` + non-volumetric unit — redundant once weighting is unit-derived.
 
-## Test case that should be provided
+### 2. Separate geometry-clipping from numeric weighting
+Today the single `weighted` flag drives both (a) the selection/geometry — clipped
+intersection geoms vs. full footprints — and (b) the numeric multiplication
+`subset_data * weights`. These are independent concerns.
+- **Fix:** always run `cells_in_polygon_weighted` so the gdf *always* carries
+  clipped geometries (we always want them visually); apply the numeric `* weights`
+  step only on the volumetric path (see #1). On the non-volumetric path the gdf
+  `weight` column is empty / all-1, but the clipped geometry stays.
 
-The test case should contain a **single small project** with the smallest data footprint that still covers the main public workflow:
+### 3. Rename `convert_watbal_units` to a volumetric-flux-scoped name
+`services/public/vec_operator.py:165-196`. The name implies "any compartment",
+but the conversion divides `mm/j` by cell area — only valid for **volumetric
+flux**, not for quantities with no cell area (e.g. HYD reaches, water height).
+Recharge already rides this path correctly.
+- **Fix:** rename to something flux-scoped and document the volumetric assumption.
 
-1. **Configuration inputs**
-   - one `ConfigGeometry` source (JSON or equivalent dict source),
-   - one `ConfigProject` source,
-   - one compartment identifier,
-   - at least one layer name and one cell-id column definition.
+### 4. Dead dispatch arm: `area_values` with `target_unit is None`
+`dispatch.py:417-435`. The `extract_area` branch is never reached by the dialog
+(the dialog always sends a unit token). `extract_area` itself is clean — the
+smell is the unreached dispatch arm, which also still carries the 1-based-id /
+0-based-row mismatch.
+- **Fix:** drop the dead arm (or guard it explicitly as developer-only).
 
-2. **Geometry inputs**
-   - one small mesh/geometry file usable by the public `load()` path,
-   - enough attributes to resolve cell ids and layer names,
-   - CRS information preserved.
-
-3. **Simulation inputs**
-   - a tiny CaWaQS output directory,
-   - one short simulation period (for example 1 to 2 hydrological years),
-   - at least the variables needed to demonstrate:
-     - `fetch(kind="simulation_matrix")`,
-     - `transform(kind="budget")`,
-     - `transform(kind="hydrological_regime")`.
-
-4. **Observation inputs**
-   - at least one observation point,
-   - enough data to demonstrate:
-     - `fetch(kind="observations")`,
-     - `fetch(kind="sim_obs_bundle")`,
-     - `transform(kind="criteria")`.
-
-5. **Expected artefacts**
-   - one expected pickle export path,
-   - one expected rendered figure path,
-   - one short note describing which examples in the guide are backed by this dataset.
-
-## Recommended minimum coverage
-
-The provided test case should allow the following public sequence to run without using internal classes:
-
-1. `configure`
-2. `load`
-3. `describe`
-4. `fetch(simulation_matrix)`
-5. `fetch(observations)`
-6. `fetch(sim_obs_bundle)`
-7. `transform(temporal_aggregation)`
-8. `transform(criteria)`
-9. `transform(budget)` or `transform(hydrological_regime)`
-10. `render`
-11. `export`
-
-## Best solution for storing the test case
-
-### Recommended option: dedicated Git submodule
-
-Use a **dedicated repository added as a Git submodule** if the test case contains binary outputs, GIS files, or data that will also be reused by downstream documentation or integration repositories.
-
-Why this is the best default choice:
-
-- it keeps this repository lightweight,
-- it avoids mixing code history with dataset history,
-- it makes version pinning explicit for documentation builds,
-- it allows the same frozen dataset to be reused in HTAS and in the downstream `docs/hydrological_twin` location.
-
-### Suggested layout
-
-- keep `docs/HTAS_user_guide.tex` in this repository while authoring,
-- move or mirror it later into the downstream `docs/hydrological_twin` location,
-- mount the dataset as a submodule such as:
-  - `docs/hydrological_twin/test_case`, or
-  - another clearly named sibling path used by the downstream documentation build.
-
-## When a submodule is not necessary
-
-If the final test case is extremely small and text-only (for example JSON plus a few CSV files, no large binaries, no GIS assets), then committing it directly may be acceptable.
-
-However, if the goal is to document a realistic HTAS workflow with reusable example data, the **submodule approach remains the safer long-term solution**.
+### 5. `_build_cells_gdf` mixes orchestration with pure assembly
+`ht/client/operations.py:975-980` (FIXME already in place). The function mixes
+*selection* (`twin.mask` / `_build_outcropping_mesh_gdf` — orchestration, belongs
+in `run_mask_internal_values`) with pure GeoDataFrame *assembly* (gpd join +
+weight column — a services-layer op, no twin / no dispatch).
+- **Fix:** keep the `twin.*` selection inline in `run_mask_internal_values`;
+  extract the pure geopandas assembly into `services/`.
