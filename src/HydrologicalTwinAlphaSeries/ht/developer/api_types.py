@@ -238,11 +238,12 @@ class ExportRequest:
 class ValuesResponse:
     """Per-cell time-series response shared by ``fetch`` and ``mask`` reads.
 
-    ``weights`` and ``clipped_geometries`` are populated only on the
-    weighted polygon-mask path (``mask(kind="area_values", weighted=True)``)
-    — both fields are ``None`` on every other path so the binary-mask
-    response shape is unchanged from the parent ``add-mask-macro``
-    capability.
+    ``weights`` and ``clipped_geometries`` are populated on the weighted
+    polygon-mask path (``mask(kind="area_values", weighted=True)``) and on the
+    HYD ``resolution="reaches"`` path (where reaches are always boundary-clipped
+    and carry a length-fraction weight, even when ``weighted=False``). On every
+    other path both fields are ``None`` so the binary-mask response shape is
+    unchanged from the parent ``add-mask-macro`` capability.
     """
 
     data: np.ndarray

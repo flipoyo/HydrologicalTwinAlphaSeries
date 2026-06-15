@@ -407,7 +407,7 @@ def _reach_endpoints(geom: Any) -> tuple:
     return shapely.Point(coords[0]), shapely.Point(coords[-1])
 
 
-def reaches_inflow_outflow_signs(
+def reaches_in_polygon_carachterisation(
     network_gdf: gpd.GeoDataFrame,
     polygon: Any,
     id_col: Union[str, int],
@@ -428,7 +428,7 @@ def reaches_inflow_outflow_signs(
 
     For each boundary reach, ``geom.intersection(polygon.boundary)`` gives
     the crossing geometry (typically a Point; MultiPoint for re-entrant
-    polygons). The XOR-only :func:`reaches_on_polygon_boundary` is now a
+    polygons). The XOR-only :func:`reaches_in_polygon_carachterisation["boundary_ids"]` is now a
     thin wrapper over this richer helper.
 
     Returns a dict with keys ``inflow_ids``, ``outflow_ids``, ``internal_ids``,
@@ -444,6 +444,9 @@ def reaches_inflow_outflow_signs(
         "crossing_geometries": [],
         "crossing_ids":        [],
         "signs":               {},
+        "weights":             {},
+        "clipped_geometries":  {},
+        "internal_and_boundary_ids": [],
     }
     if network_gdf.empty:
         return empty
@@ -457,6 +460,12 @@ def reaches_inflow_outflow_signs(
     crossing_geometries: List[Any] = []
     crossing_ids: List[Any] = []
     signs: Dict[Any, int] = {}
+    weights: Dict[Any, float] = {}
+    # Per-reach geometry clipped to the polygon — for a fully-internal reach
+    # this is the whole reach; for a boundary reach it is the inside segment.
+    # We always clip (nicer to display, and it is the same intersection used
+    # for the length-fraction weight below).
+    clipped_geometries: Dict[Any, Any] = {}
 
     geometries = list(network_gdf.geometry.values)
     ids = list(network_gdf[col_name].values)
@@ -466,6 +475,20 @@ def reaches_inflow_outflow_signs(
         f_in = polygon.contains(fnode)
         t_in = polygon.contains(tnode)
 
+        if not (f_in or t_in):
+            continue  # both outside → reach not in the masked area
+
+        # The inside portion of the reach: polygon ∩ reach. Computed once and
+        # reused for the clipped geometry AND the length-fraction weight
+        # (= inside length / total length), mirroring the area-fraction logic
+        # in cells_in_polygon_weighted.
+        inside_part = polygon.intersection(geom)
+        total_length = geom.length
+        weights[cell_id] = (
+            inside_part.length / total_length if total_length > 0 else 0.0
+        )
+        clipped_geometries[cell_id] = inside_part
+
         if f_in and t_in:
             internal_ids.append(cell_id)
         elif (not f_in) and t_in:
@@ -473,43 +496,27 @@ def reaches_inflow_outflow_signs(
             crossing_geometries.append(geom.intersection(poly_boundary))
             crossing_ids.append(cell_id)
             signs[cell_id] = +1
-        elif f_in and (not t_in):
+        else:  # f_in and not t_in
             outflow_ids.append(cell_id)
             crossing_geometries.append(geom.intersection(poly_boundary))
             crossing_ids.append(cell_id)
             signs[cell_id] = -1
-        # both outside → skip
+
+    boundary_ids = sorted(inflow_ids + outflow_ids)
+    internal_and_boundary_ids = sorted(internal_ids + boundary_ids)
 
     return {
         "inflow_ids":          inflow_ids,
         "outflow_ids":         outflow_ids,
         "internal_ids":        internal_ids,
-        "boundary_ids":        inflow_ids + outflow_ids,
+        "boundary_ids":        boundary_ids,
         "crossing_geometries": crossing_geometries,
         "crossing_ids":        crossing_ids,
         "signs":               signs,
+        "weights":             weights,
+        "clipped_geometries":  clipped_geometries,
+        "internal_and_boundary_ids": internal_and_boundary_ids,
     }
-
-
-def reaches_on_polygon_boundary(
-    network_gdf: gpd.GeoDataFrame,
-    polygon: Any,
-    id_col: Union[str, int],
-) -> List[Any]:
-    """Return reach ids whose two endpoints straddle the polygon (sorted).
-
-    Thin wrapper over :func:`reaches_inflow_outflow_signs`: returns the
-    union of inflow + outflow ids, sorted ascending. ``polygon.contains``
-    treats interior rings as outside — a reach with one endpoint inside a
-    hole still qualifies as a boundary reach.
-
-    :param network_gdf: GeoDataFrame of HYD reaches (LineString / MultiLineString)
-    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
-    :param id_col: Column name (or integer position) to read reach ids from.
-    :return: List of reach ids whose endpoints straddle the polygon (sorted).
-    """
-    classification = reaches_inflow_outflow_signs(network_gdf, polygon, id_col=id_col)
-    return sorted(classification["boundary_ids"])
 
 
 def aq_cells_on_polygon_boundary(

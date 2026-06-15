@@ -55,7 +55,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     cells_in_polygon_weighted,
-    reaches_inflow_outflow_signs,
+    reaches_in_polygon_carachterisation,
     verify_crs_match,
 )
 
@@ -353,6 +353,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             if request.resolution == "outcropping":
                 mesh_gdf = twin._build_outcropping_mesh_gdf(request.id_compartment)
                 id_col = "id_abs"
+            # Resolution selector for HYD internal values has to follow thereaches mesh 
             else:
                 mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
                 id_col = twin._resolve_cell_id_col(request.id_compartment)
@@ -361,7 +362,24 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 request.polygon_crs,
                 context="mask(kind='area_values')",
             )
-            if request.weighted and request.target_unit in _VOLUMETRIC_UNITS:
+            if request.resolution == "reaches":
+                # HYD reaches: select internal + boundary-crossing reaches. Call
+                # the characterisation once, then materialise ids / weights /
+                # clipped geometries in the SAME order so the three stay
+                # row-aligned for the downstream cells-gdf assembly.
+                reach_info = reaches_in_polygon_carachterisation(
+                    mesh_gdf, request.polygon, id_col
+                )
+                resolved_cell_ids = reach_info["internal_and_boundary_ids"]
+                weights = np.asarray(
+                    [reach_info["weights"][cid] for cid in resolved_cell_ids],
+                    dtype=np.float64,
+                )
+                clipped_geoms = [
+                    reach_info["clipped_geometries"][cid]
+                    for cid in resolved_cell_ids
+                ]
+            elif request.weighted and request.target_unit in _VOLUMETRIC_UNITS:
                 triples = cells_in_polygon_weighted(
                     mesh_gdf, request.polygon, id_col=id_col
                 )
@@ -369,7 +387,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 weights = np.asarray([w for _, w, _ in triples], dtype=np.float64)
                 clipped_geoms = [g for _, _, g in triples]
             else:
-                resolved_cell_ids = cells_in_polygon(
+                    resolved_cell_ids = cells_in_polygon(
                     mesh_gdf, request.polygon, id_col=id_col
                 )
         else:
@@ -485,7 +503,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             context="mask(kind='boundary_hyd')",
         )
         id_col = twin._resolve_cell_id_col(request.id_compartment)
-        classification = reaches_inflow_outflow_signs(
+        classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
         boundary_ids = sorted(classification["boundary_ids"])
@@ -524,7 +542,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             context="mask(kind='boundary_hyd_flux')",
         )
         id_col = twin._resolve_cell_id_col(request.id_compartment)
-        classification = reaches_inflow_outflow_signs(
+        classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
         boundary_ids = sorted(classification["boundary_ids"])

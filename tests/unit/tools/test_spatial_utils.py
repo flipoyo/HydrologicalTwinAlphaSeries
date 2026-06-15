@@ -11,8 +11,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     cells_in_polygon_weighted,
-    reaches_inflow_outflow_signs,
-    reaches_on_polygon_boundary,
+    reaches_in_polygon_carachterisation,
 )
 
 
@@ -295,7 +294,7 @@ def test_reaches_on_polygon_boundary_returns_straddling_reach():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == [42]
 
@@ -308,7 +307,7 @@ def test_reaches_on_polygon_boundary_excludes_wholly_inside_reach():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == []
 
@@ -321,7 +320,7 @@ def test_reaches_on_polygon_boundary_excludes_wholly_outside_reach():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == []
 
@@ -335,7 +334,7 @@ def test_reaches_on_polygon_boundary_excludes_passing_through_reach():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == []
 
@@ -352,7 +351,7 @@ def test_reaches_on_polygon_boundary_includes_reach_straddling_a_hole():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == [5]
 
@@ -368,7 +367,7 @@ def test_reaches_on_polygon_boundary_handles_multilinestring():
     )
     network = _network({77: multi})
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == [77]
 
@@ -383,7 +382,7 @@ def test_reaches_on_polygon_boundary_multipolygon_each_component_contributes():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, multi, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, multi, id_col="reach_id")["boundary_ids"]
 
     assert sorted(result) == [1, 2]
 
@@ -392,14 +391,14 @@ def test_reaches_on_polygon_boundary_empty_network_returns_empty():
     polygon = box(0.0, 0.0, 10.0, 10.0)
     network = gpd.GeoDataFrame({"reach_id": []}, geometry=[], crs="EPSG:3857")
 
-    assert reaches_on_polygon_boundary(network, polygon, id_col="reach_id") == []
+    assert reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"] == []
 
 
 def test_reaches_on_polygon_boundary_id_col_as_integer_position():
     polygon = box(0.0, 0.0, 10.0, 10.0)
     network = _network({42: LineString([(5.0, 5.0), (15.0, 5.0)])})
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col=0)
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col=0)["boundary_ids"]
 
     assert result == [42]
 
@@ -526,11 +525,11 @@ def test_aq_cells_on_polygon_boundary_id_col_as_integer_position():
 
 
 # ---------------------------------------------------------------------------
-# reaches_inflow_outflow_signs — directional classification
+# reaches_in_polygon_carachterisation — directional classification
 # ---------------------------------------------------------------------------
 
 
-def test_reaches_inflow_outflow_signs_classifies_inflow_and_outflow():
+def test_reaches_in_polygon_carachterisation_classifies_inflow_and_outflow():
     polygon = box(0.0, 0.0, 10.0, 10.0)
     network = _network(
         {
@@ -541,7 +540,7 @@ def test_reaches_inflow_outflow_signs_classifies_inflow_and_outflow():
         }
     )
 
-    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")
 
     assert result["inflow_ids"] == [1]
     assert result["outflow_ids"] == [2]
@@ -553,11 +552,11 @@ def test_reaches_inflow_outflow_signs_classifies_inflow_and_outflow():
     assert all(g.geom_type in ("Point", "MultiPoint") for g in result["crossing_geometries"])
 
 
-def test_reaches_inflow_outflow_signs_empty_network():
+def test_reaches_in_polygon_carachterisation_empty_network():
     polygon = box(0.0, 0.0, 10.0, 10.0)
     network = gpd.GeoDataFrame({"reach_id": []}, geometry=[], crs="EPSG:3857")
 
-    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")
 
     assert result["inflow_ids"] == []
     assert result["outflow_ids"] == []
@@ -565,7 +564,7 @@ def test_reaches_inflow_outflow_signs_empty_network():
     assert result["signs"] == {}
 
 
-def test_reaches_inflow_outflow_signs_handles_multilinestring():
+def test_reaches_in_polygon_carachterisation_handles_multilinestring():
     polygon = box(0.0, 0.0, 10.0, 10.0)
     multi = MultiLineString(
         [
@@ -575,7 +574,7 @@ def test_reaches_inflow_outflow_signs_handles_multilinestring():
     )
     network = _network({77: multi})
 
-    result = reaches_inflow_outflow_signs(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")
 
     assert result["inflow_ids"] == [77]
     assert result["signs"][77] == +1
@@ -592,7 +591,7 @@ def test_reaches_on_polygon_boundary_now_delegates_to_signs_helper():
         }
     )
 
-    result = reaches_on_polygon_boundary(network, polygon, id_col="reach_id")
+    result = reaches_in_polygon_carachterisation(network, polygon, id_col="reach_id")["boundary_ids"]
 
     assert result == [1, 2]
 

@@ -819,7 +819,7 @@ def run_mask_internal_values(
         # AQ recharge enters at the cross-layer outcropping free surface, so AQ
         # specs resolve cells against the outcropping mesh (global ``id_abs``);
         # WATBAL keeps the single-layer path → byte-identical (design D2).
-        resolution = "outcropping" if comp == "AQ" else "single_layer"
+        resolution = "outcropping" if comp == "AQ" else "reaches" if comp == "HYD" else "single_layer"
         response = twin.mask(
             kind="area_values",
             id_compartment=comp_id,
@@ -1009,6 +1009,27 @@ def _build_cells_gdf(
     if weighted:
         # Dispatcher meta carries 'cell_ids' on the target_unit path; weights
         # and clipped_geometries are populated by the weighted branch.
+        meta_cell_ids = list((response.meta or {}).get("cell_ids", []))
+        weights = response.weights if response.weights is not None else []
+        clipped = (
+            response.clipped_geometries
+            if response.clipped_geometries is not None
+            else []
+        )
+        df = pd.DataFrame(
+            {
+                "cell_id": meta_cell_ids,
+                "weight": list(weights),
+            }
+        )
+        return gpd.GeoDataFrame(df, geometry=list(clipped), crs=mesh_gdf.crs)
+
+    if resolution == "reaches":
+        # HYD reaches (unweighted): the dispatcher already selected the
+        # internal + boundary reaches and produced row-aligned weights and
+        # boundary-clipped geometries. Reuse them directly so the cells gdf
+        # matches the area-values rows (the centroid ``polygon_cells`` fallback
+        # below would re-select a different set and break alignment).
         meta_cell_ids = list((response.meta or {}).get("cell_ids", []))
         weights = response.weights if response.weights is not None else []
         clipped = (
