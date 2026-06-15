@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, module_caw
+from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_boundary_faces,
@@ -83,11 +83,6 @@ from .api_types import (
 if TYPE_CHECKING:
     from .hydrological_twin import HydrologicalTwin  # noqa: F401
 
-
-# Units accepted when ``weighted=True`` — area-fraction weighting is only
-# physically meaningful on volumetric flux data (different cell sizes
-# contribute different volumes from the same intensity).
-_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
 
 
 def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
@@ -323,6 +318,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         assert request.syear is not None
         assert request.eyear is not None
 
+        # can be removed long term if we enforce target_unit presence in the dialog and/or disallow weighted
         if request.weighted and request.target_unit not in _VOLUMETRIC_UNITS:
             raise ValueError(
                 "mask(kind='area_values', weighted=True) requires a volumetric "
@@ -337,14 +333,23 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='area_values', weighted=True) requires 'polygon'; "
                 "weighted selection by raw 'cell_ids' is not supported."
             )
+        
+        if request.param in _PARAM_NON_VOLUMETRIC_UNITS and request.target_unit in _VOLUMETRIC_UNITS:
+            raise TypeError(
+                f"mask(kind='area_values', param={request.param!r}, target_unit={request.target_unit!r}) is not valid: "
+                f"param {request.param!r} is non-volumetric and cannot be converted to volumetric units like {request.target_unit!r}."
+            )
+
+        if request.target_unit in _LENGTH_UNITS and request.param not in _PARAM_NON_VOLUMETRIC_UNITS:
+            raise TypeError(
+                f"mask(kind='area_values', param={request.param!r}, target_unit={request.target_unit!r}) is not valid: "
+                f"target_unit {request.target_unit!r} is a length unit but param {request.param!r} is not recognized as non-volumetric. "
+            )
 
         weights: Optional[np.ndarray] = None
         clipped_geoms: Optional[List[Any]] = None
         if request.polygon is not None:
-            # Resolution selector (design D2): AQ internal-values specs request
-            # the cross-layer outcropping mesh keyed on the global ``id_abs``;
-            # everything else (WATBAL) keeps the single-layer path keyed on the
-            # per-layer GIS id, which is byte-identical to prior behaviour.
+            # Resolution selector for AQ internal-values specs request the cross-layer outcropping mesh keyed on the global ``id_abs``;
             if request.resolution == "outcropping":
                 mesh_gdf = twin._build_outcropping_mesh_gdf(request.id_compartment)
                 id_col = "id_abs"
@@ -356,7 +361,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 request.polygon_crs,
                 context="mask(kind='area_values')",
             )
-            if request.weighted:
+            if request.weighted and request.target_unit in _VOLUMETRIC_UNITS:
                 triples = cells_in_polygon_weighted(
                     mesh_gdf, request.polygon, id_col=id_col
                 )
@@ -371,17 +376,33 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             resolved_cell_ids = list(request.cell_ids or [])
 
         if request.target_unit is not None:
-            full_response = twin.read_watbal_converted(
-                id_compartment=request.id_compartment,
-                outtype=request.outtype,
-                param=request.param,
-                syear=request.syear,
-                eyear=request.eyear,
-                cutsdate=request.cutsdate,
-                cutedate=request.cutedate,
-                id_layer=request.id_layer,
-                target_unit=request.target_unit,
-            )
+            if request.target_unit in _VOLUMETRIC_UNITS:
+                full_response = twin.read_watbal_converted(
+                    id_compartment=request.id_compartment,
+                    outtype=request.outtype,
+                    param=request.param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                    id_layer=request.id_layer,
+                    target_unit=request.target_unit,
+                )
+            elif request.target_unit in _LENGTH_UNITS:
+                full_response = twin.read_values(
+                    id_compartment=request.id_compartment,
+                    outtype=request.outtype,
+                    param=request.param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                    id_layer=request.id_layer,
+                )
+                factor = _LENGTH_UNIT_FACTORS[request.target_unit]
+                full_response.data = full_response.data * factor
+            else: 
+                raise ValueError(f"Unsupported target unit: {request.target_unit}, temporarily change the unit chosen. Dev: update the unit in the constant.py")
             # ``resolved_cell_ids`` are 1-based GLOBAL matrix indices: per-layer
             # GIS ids for WATBAL (where layer-0 ``id_abs == cell.id``, so the
             # arithmetic is byte-identical to before) and global ``id_abs`` for

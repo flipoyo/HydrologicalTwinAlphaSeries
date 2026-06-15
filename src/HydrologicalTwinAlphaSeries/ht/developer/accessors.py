@@ -52,7 +52,6 @@ import pandas as pd
 from HydrologicalTwinAlphaSeries.config.constants import obs_config, paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Operator
-
 from .api_types import (
     CompartmentInfo,
     FetchRequest,

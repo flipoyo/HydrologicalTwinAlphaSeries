@@ -692,7 +692,7 @@ def run_mask_internal_values(
     twin,
     polygon,
     polygon_crs,
-    specs: Sequence[Tuple[str, str, str]],
+    specs: Sequence[Tuple[str, str, str, str]],
     syear,
     eyear,
     output_dir: str,
@@ -700,7 +700,6 @@ def run_mask_internal_values(
     area_name: str,
     write_geopackage: bool = False,
     weighted: bool = True,
-    unit: str = "m3/j",
 ) -> MaskInternalValuesResult:
     """Mask compartment cells inside a polygon and persist per-spec time series.
 
@@ -804,7 +803,7 @@ def run_mask_internal_values(
             "polygon_total_dfs": {},     # param -> df  (GeoPackage only)
         }
 
-    for comp, outtype, param in specs:
+    for comp, outtype, param, unit in specs:
         ctx = comp_resolved[comp]
         comp_id = ctx["id"]
         # AQ recharge enters at the cross-layer outcropping free surface, so AQ
@@ -961,7 +960,6 @@ def run_mask_internal_values(
         polygon_total_paths=polygon_total_paths if weighted else None,
     )
 
-
 def _build_cells_gdf(
     mesh_gdf,
     id_col,
@@ -973,6 +971,11 @@ def _build_cells_gdf(
     id_compartment,
     resolution: str = "single_layer",
 ):
+    # FIXME (misplaced): this mixes selection (twin.mask /
+    # _build_outcropping_mesh_gdf — orchestration, stays here) with pure
+    # GeoDataFrame assembly (gpd join + weight col — a services-layer op).
+    # TODO: split — keep the twin.* selection inline in run_mask_internal_values
+    # and extract the pure geopandas assembly into services/ (no twin, no dispatch).
     """Assemble the cells GeoDataFrame for one compartment in
     ``run_mask_internal_values``.
 
