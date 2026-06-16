@@ -16,6 +16,9 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
+from HydrologicalTwinAlphaSeries.services.private.raw_data_export import (
+    assemble_daily_sim_obs_table,
+)
 from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
     save_area_geopackage,
     save_area_values_npy,
@@ -400,11 +403,13 @@ def run_compare_sim_obs(
     aggr=None,
     regime: str = "Transient",
 ) -> CompareSimObsResult:
-    """Render a sim-vs-obs comparison plot, either as PDF or interactive HTML.
+    """Render a sim-vs-obs comparison as PDF, interactive HTML, or CSV data.
 
     :param twin: A configured-and-loaded :class:`HydrologicalTwin`.
-    :param mode: ``"pdf"`` (static, multi-page PDF) or ``"interactive"``
-        (single HTML written via Plotly).
+    :param mode: ``"pdf"`` (static, multi-page PDF), ``"interactive"``
+        (single HTML written via Plotly), or ``"csv"`` (a daily sim/obs
+        :class:`pandas.DataFrame` returned on the result for the frontend to
+        persist — the backend writes no file in this mode).
     :param compartment_name: ``"AQ"`` or ``"HYD"``.
     :param outtype: HT outtype code (``"H"`` or ``"Q"``).
     :param param: HT param code (``"piezhead"`` or ``"discharge"``).
@@ -420,8 +425,10 @@ def run_compare_sim_obs(
         output filename.
     :returns: Paths to the artefacts produced.
     """
-    if mode not in ("pdf", "interactive"):
-        raise ValueError(f"mode must be 'pdf' or 'interactive', got {mode!r}")
+    if mode not in ("pdf", "interactive", "csv"):
+        raise ValueError(
+            f"mode must be 'pdf', 'interactive' or 'csv', got {mode!r}"
+        )
 
     id_compartment = _resolve_compartment_id(twin, compartment_name)
     syear = twin.metadata["start_year"]
@@ -465,7 +472,8 @@ def run_compare_sim_obs(
             directory, f"{name_file}_{critstart}_{critend}.html"
         )
 
-    render_result = twin.render(
+    if mode == "interactive":
+        render_result = twin.render(
         kind="sim_obs_interactive",
         id_compartment=id_compartment,
         outtype=outtype,
@@ -483,13 +491,40 @@ def run_compare_sim_obs(
         crit_end=critend,
         aggr=aggr,
     )
-    artefacts = list(render_result.artefacts)
-    html_path = next((p for p in artefacts if p.lower().endswith(".html")), out_file_path)
-    return CompareSimObsResult(
-        mode="interactive",
-        html_path=html_path,
-        output_directory=directory,
-    )
+        artefacts = list(render_result.artefacts)
+        html_path = next((p for p in artefacts if p.lower().endswith(".html")), out_file_path)
+        return CompareSimObsResult(
+            mode="interactive",
+            html_path=html_path,
+            output_directory=directory,
+        )
+    
+    if mode == "csv":
+        # CSV is built the server-ready way: reuse the sim_obs_bundle fetch
+        # (no new render branch, no backend file write), assemble a daily
+        # table as data, and let the frontend persist it. No criteria needed.
+        bundle_response = twin.fetch(
+            kind="sim_obs_bundle",
+            id_compartment=id_compartment,
+            outtype=outtype,
+            param=param,
+            syear=syear,
+            eyear=eyear,
+            plotstart=plotstart,
+            plotend=plotend,
+            id_layer=id_layer,
+            agg=aggr,
+            compute_criteria=False,
+            obs_unit=obs_unit,
+        )
+        df = assemble_daily_sim_obs_table(bundle_response)
+        return CompareSimObsResult(
+            mode="csv",
+            csv_data=df,
+            output_directory=directory,
+        )
+
+
 
 
 DEFAULT_CRITERIA_METRICS = (

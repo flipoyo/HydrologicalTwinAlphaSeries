@@ -900,24 +900,6 @@ def render(twin: "HydrologicalTwin", request: RenderRequest) -> RenderResult:
             crit_end=request.crit_end,
             aggr=request.aggr,
         )
-    elif resolved_kind == "sim_obs_interactive":
-        artefacts = twin._render_sim_obs_interactive(
-            id_compartment=request.id_compartment,
-            outtype=request.outtype,
-            param=request.param,
-            simsdate=request.simsdate,
-            simedate=request.simedate,
-            plotstart=request.plotstart,
-            plotend=request.plotend,
-            obs_unit=request.obs_unit,
-            ylabel=request.ylabel,
-            df_other_variable=request.df_other_variable,
-            other_variable_config=request.other_variable_config,
-            out_file_path=request.out_file_path,
-            crit_start=request.crit_start,
-            crit_end=request.crit_end,
-            aggr=request.aggr,
-        )
     elif resolved_kind == "aq_flux_diagram":
         artefacts = twin.render_aq_flux_diagram(
             tables=request.tables,

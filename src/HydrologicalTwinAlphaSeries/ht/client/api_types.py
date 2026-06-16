@@ -115,17 +115,23 @@ class StatisticalCriteriaResult:
 class CompareSimObsResult:
     """Result of :meth:`HydrologicalTwinClient.compare_sim_obs`.
 
-    :param mode: ``"pdf"`` or ``"interactive"``.
+    :param mode: ``"pdf"``, ``"interactive"`` or ``"csv"``.
     :param pdf_path: Path to the PDF written in ``"pdf"`` mode, else ``None``.
     :param html_path: Path to the HTML written in ``"interactive"`` mode, else
         ``None``.
+    :param csv_data: The assembled daily sim/obs table returned in ``"csv"``
+        mode, else ``None``. In ``csv`` mode the backend writes no file — the
+        frontend persists this DataFrame to disk. Typed loosely as ``Any`` so
+        this user-facing module stays free of a hard ``pandas`` import.
     :param output_directory: Directory the artefacts were written to (matches
-        the ``directory`` / containing folder of ``out_file_path``).
+        the ``directory`` / containing folder of ``out_file_path``). In
+        ``csv`` mode this is the directory the frontend should write into.
     """
 
     mode: str
     pdf_path: Optional[str] = None
     html_path: Optional[str] = None
+    csv_data: Optional[Any] = None
     output_directory: str = ""
 
 

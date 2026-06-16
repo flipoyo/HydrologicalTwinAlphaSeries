@@ -1089,7 +1089,6 @@ class HydrologicalTwin(HTPersistenceMixin):
             output_name=output_name, colors=colors,
         )
 
-
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  FRONTEND INTEGRATION FACADE                                ║
     # ║  High-level integrated methods consumed by cawaqsviz.       ║
