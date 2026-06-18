@@ -83,6 +83,26 @@ If a method satisfies both clauses, put it in `services/private/` and
 import it by its concrete module path (`services/private/__init__.py` is
 intentionally empty, so every privileged import is greppable).
 
+### Intent-based placement (the two-clause test is sufficient, not necessary)
+
+The two-clause rule is sufficient — satisfy both clauses and the method is
+private — but it is not the *only* reason a method belongs in `private/`. A
+method MAY also belong there by the **data-leak intent** of this charter:
+when it assembles a Tier-2 raw per-point/per-cell series destined for a
+user-exported CSV, it is squarely in the leak-prone family even if it
+consumes no user-supplied geometry (clause (i) fails).
+
+The literal geometry clause MUST NOT be used to reclassify such a method as
+public. A function placed here on intent should say so in its docstring, so
+a future reader applying the two-clause test literally does not "helpfully"
+move it back to `public/`.
+
+- *Today:* `services/private/raw_data_export.py::assemble_daily_sim_obs_table`
+  — assembles the wide daily sim/obs DataFrame for the `csv` mode of
+  `compare_sim_obs`. It takes no user geometry (observation points are fixed
+  model locations), so it fails clause (i); it is private by Tier-2 export
+  intent. It performs no I/O — the frontend writes the CSV.
+
 ## Known public-but-flagged code (deferred migration)
 
 The following code is leak-relevant but knowingly still public in the
