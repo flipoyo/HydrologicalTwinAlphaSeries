@@ -44,6 +44,11 @@ link_obs_mesh = {
     2: 3,
 }
 
+# Native CaWaQS units of the HYD reach outtypes (internal-values masking):
+#   HYD_Q (discharge / Flow)      → m³/s   (volumetric; ×86400 → m³/day)
+#   HYD_H (water height / level)  → m      (length; no volumetric ×86400)
+# nbRecs is the number of parameter-records each binary holds; the param's
+# index in paramRecs[<key>] is its record index in that binary.
 nbRecs = {
     "AQ_MB": 16,
     "AQ_H": 1,
@@ -70,6 +75,12 @@ paramRecs = {
         "error",
     ],
     "HYD_Q": ["discharge"],
+    # HYD_H holds nbRecs=2 records; the param's index in this list is its
+    # record index in the binary (cf. temporal.decode_and_cache, enumerate).
+    # Record 0 = "water_height", record 1 = "water_level"; both are lengths in
+    # metres, so the length conversion path treats either as a raw m pass-through.
+    # The DialogMask Water Height checkbox wires record 0 ("water_height").
+    "HYD_H": ["water_height", "water_level"],
     "AQ_H": ["piezhead"],
     "AQ_MB": [
         "h_end",
@@ -102,8 +113,22 @@ obs_config = {
 # neighbour; the convention preserves the original feature-branch labelling
 # (cf. branch_migration/frontend_50.patch L2174-2181).
 AQ_FACE_DIRECTIONS = {
-    "east":  "flux_x_one",
-    "west":  "flux_x_two",
+    "east":  "flux_x_two",
+    "west":  "flux_x_one",
     "south": "flux_y_one",
     "north": "flux_y_two",
 }
+
+# Dimensions constats 
+
+_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
+
+# Length units (e.g. HYD Water Height). These are NOT volumetric: the ×86400
+# m³/s→m³/day conversion must be skipped for them. ``m`` is the CaWaQS-native
+# length unit (raw pass-through, factor 1.0); ``cm`` scales by 100.
+_LENGTH_UNITS = frozenset({"m", "cm"})
+
+# Multiplicative factor applied to native-metre length values per length token.
+_LENGTH_UNIT_FACTORS = {"m": 1.0, "cm": 100.0}
+
+_PARAM_NON_VOLUMETRIC_UNITS =   ["water_height", "water_level", "piezhead"]

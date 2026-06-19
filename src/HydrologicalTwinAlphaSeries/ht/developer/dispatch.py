@@ -48,14 +48,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, module_caw
+from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     cells_in_polygon_weighted,
-    reaches_inflow_outflow_signs,
+    reaches_in_polygon_carachterisation,
     verify_crs_match,
 )
 
@@ -83,11 +83,6 @@ from .api_types import (
 if TYPE_CHECKING:
     from .hydrological_twin import HydrologicalTwin  # noqa: F401
 
-
-# Units accepted when ``weighted=True`` — area-fraction weighting is only
-# physically meaningful on volumetric flux data (different cell sizes
-# contribute different volumes from the same intensity).
-_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
 
 
 def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
@@ -323,6 +318,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         assert request.syear is not None
         assert request.eyear is not None
 
+        # can be removed long term if we enforce target_unit presence in the dialog and/or disallow weighted
         if request.weighted and request.target_unit not in _VOLUMETRIC_UNITS:
             raise ValueError(
                 "mask(kind='area_values', weighted=True) requires a volumetric "
@@ -337,18 +333,53 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='area_values', weighted=True) requires 'polygon'; "
                 "weighted selection by raw 'cell_ids' is not supported."
             )
+        
+        if request.param in _PARAM_NON_VOLUMETRIC_UNITS and request.target_unit in _VOLUMETRIC_UNITS:
+            raise TypeError(
+                f"mask(kind='area_values', param={request.param!r}, target_unit={request.target_unit!r}) is not valid: "
+                f"param {request.param!r} is non-volumetric and cannot be converted to volumetric units like {request.target_unit!r}."
+            )
+
+        if request.target_unit in _LENGTH_UNITS and request.param not in _PARAM_NON_VOLUMETRIC_UNITS:
+            raise TypeError(
+                f"mask(kind='area_values', param={request.param!r}, target_unit={request.target_unit!r}) is not valid: "
+                f"target_unit {request.target_unit!r} is a length unit but param {request.param!r} is not recognized as non-volumetric. "
+            )
 
         weights: Optional[np.ndarray] = None
         clipped_geoms: Optional[List[Any]] = None
         if request.polygon is not None:
-            mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+            # Resolution selector for AQ internal-values specs request the cross-layer outcropping mesh keyed on the global ``id_abs``;
+            if request.resolution == "outcropping":
+                mesh_gdf = twin._build_outcropping_mesh_gdf(request.id_compartment)
+                id_col = "id_abs"
+            # Resolution selector for HYD internal values has to follow thereaches mesh 
+            else:
+                mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                id_col = twin._resolve_cell_id_col(request.id_compartment)
             verify_crs_match(
                 mesh_gdf.crs,
                 request.polygon_crs,
                 context="mask(kind='area_values')",
             )
-            id_col = twin._resolve_cell_id_col(request.id_compartment)
-            if request.weighted:
+            if request.resolution == "reaches":
+                # HYD reaches: select internal + boundary-crossing reaches. Call
+                # the characterisation once, then materialise ids / weights /
+                # clipped geometries in the SAME order so the three stay
+                # row-aligned for the downstream cells-gdf assembly.
+                reach_info = reaches_in_polygon_carachterisation(
+                    mesh_gdf, request.polygon, id_col
+                )
+                resolved_cell_ids = reach_info["internal_and_boundary_ids"]
+                weights = np.asarray(
+                    [reach_info["weights"][cid] for cid in resolved_cell_ids],
+                    dtype=np.float64,
+                )
+                clipped_geoms = [
+                    reach_info["clipped_geometries"][cid]
+                    for cid in resolved_cell_ids
+                ]
+            elif request.weighted and request.target_unit in _VOLUMETRIC_UNITS:
                 triples = cells_in_polygon_weighted(
                     mesh_gdf, request.polygon, id_col=id_col
                 )
@@ -356,30 +387,48 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 weights = np.asarray([w for _, w, _ in triples], dtype=np.float64)
                 clipped_geoms = [g for _, _, g in triples]
             else:
-                resolved_cell_ids = cells_in_polygon(
+                    resolved_cell_ids = cells_in_polygon(
                     mesh_gdf, request.polygon, id_col=id_col
                 )
         else:
             resolved_cell_ids = list(request.cell_ids or [])
 
         if request.target_unit is not None:
-            full_response = twin.read_watbal_converted(
-                id_compartment=request.id_compartment,
-                outtype=request.outtype,
-                param=request.param,
-                syear=request.syear,
-                eyear=request.eyear,
-                cutsdate=request.cutsdate,
-                cutedate=request.cutedate,
-                id_layer=request.id_layer,
-                target_unit=request.target_unit,
-            )
-            # The mesh GIS id column (ELEBU / DHRC) is contiguous and 1-based
-            # — id N lives at positional row N-1 of the binary-ordered values
-            # array. ``resolved_cell_ids`` keeps the 1-based ids as labels
-            # (meta + GeoPackage join); only the positional lookup is shifted.
-            # This mirrors ``data[id - 1]`` already used in budget.py:189/280
-            # and handlers.py:145/213.
+            if request.target_unit in _VOLUMETRIC_UNITS:
+                full_response = twin.read_watbal_converted(
+                    id_compartment=request.id_compartment,
+                    outtype=request.outtype,
+                    param=request.param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                    id_layer=request.id_layer,
+                    target_unit=request.target_unit,
+                )
+            elif request.target_unit in _LENGTH_UNITS:
+                full_response = twin.read_values(
+                    id_compartment=request.id_compartment,
+                    outtype=request.outtype,
+                    param=request.param,
+                    syear=request.syear,
+                    eyear=request.eyear,
+                    cutsdate=request.cutsdate,
+                    cutedate=request.cutedate,
+                    id_layer=request.id_layer,
+                )
+                factor = _LENGTH_UNIT_FACTORS[request.target_unit]
+                full_response.data = full_response.data * factor
+            else: 
+                raise ValueError(f"Unsupported target unit: {request.target_unit}, temporarily change the unit chosen. Dev: update the unit in the constant.py")
+            # ``resolved_cell_ids`` are 1-based GLOBAL matrix indices: per-layer
+            # GIS ids for WATBAL (where layer-0 ``id_abs == cell.id``, so the
+            # arithmetic is byte-identical to before) and global ``id_abs`` for
+            # the AQ outcropping resolver. Either way, id N lives at positional
+            # row N-1 of the binary-ordered (getCellIdVector-order) values
+            # array — correct for a cell in any layer, not just layer 0. The
+            # 1-based ids stay as labels (meta + GeoPackage join); only the
+            # positional lookup is shifted by -1.
             row_positions = np.asarray(resolved_cell_ids, dtype=np.intp) - 1
             subset_data = full_response.data[row_positions]
             if request.weighted and weights is not None:
@@ -454,7 +503,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             context="mask(kind='boundary_hyd')",
         )
         id_col = twin._resolve_cell_id_col(request.id_compartment)
-        classification = reaches_inflow_outflow_signs(
+        classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
         boundary_ids = sorted(classification["boundary_ids"])
@@ -493,7 +542,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             context="mask(kind='boundary_hyd_flux')",
         )
         id_col = twin._resolve_cell_id_col(request.id_compartment)
-        classification = reaches_inflow_outflow_signs(
+        classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
         boundary_ids = sorted(classification["boundary_ids"])

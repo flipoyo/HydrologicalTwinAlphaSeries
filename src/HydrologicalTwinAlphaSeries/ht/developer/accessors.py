@@ -52,7 +52,6 @@ import pandas as pd
 from HydrologicalTwinAlphaSeries.config.constants import obs_config, paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Operator
-
 from .api_types import (
     CompartmentInfo,
     FetchRequest,
@@ -140,6 +139,11 @@ def get_compartment_info(twin: "HydrologicalTwin", id_compartment: int) -> Compa
         cell_ids=np.array(comp.mesh.getCellIdVector()),
         out_caw_path=comp.out_caw_path,
         regime=comp.regime,
+        id_abs=np.array([
+            cell.id_abs
+            for layer in comp.mesh.mesh.values()
+            for cell in layer.layer
+        ]),
     )
 
 
@@ -164,6 +168,7 @@ def get_layer_info(twin: "HydrologicalTwin", id_compartment: int, id_layer: int)
         layer_gis_name=comp.layers_gis_names[id_layer]
                        if id_layer < len(comp.layers_gis_names) else "",
         crs=layer.crs,
+        id_abs=np.array([cell.id_abs for cell in layer.layer]),
     )
 
 
@@ -404,8 +409,19 @@ def read_watbal_converted(
     )
 
     if target_unit != 'm3/s':
-        layer_info = twin.get_layer_info(id_compartment, id_layer)
-        cell_areas = np.array(layer_info.cell_areas)
+        # ``response.data`` carries every compartment cell across all layers in
+        # CaWaQS matrix (getCellIdVector / id_abs) order, so the area vector
+        # used for the (mm/j) per-cell division MUST be the matching full
+        # cross-layer area vector — each cell weighted by its OWN ``Cell.area``
+        # (design D4), not a single-layer ``cell_areas`` slice. Only ``mm/j``
+        # actually divides by area; volumetric targets ignore it, so this is a
+        # no-op for the AQ-recharge volumetric dialog path.
+        comp = twin.get_compartment(id_compartment)
+        cell_areas = np.array([
+            cell.area
+            for layer in comp.mesh.mesh.values()
+            for cell in layer.layer
+        ])
         response.data = Operator.convert_watbal_units(
             data=response.data,
             cell_areas=cell_areas,

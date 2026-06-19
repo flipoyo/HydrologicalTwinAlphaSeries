@@ -944,6 +944,11 @@ class HydrologicalTwin(HTPersistenceMixin):
             self, id_compartment, save_directory=save_directory,
         )
 
+    def _build_outcropping_mesh_gdf(self, id_compartment: int):
+        """Return the cross-layer outcropping mesh gdf (id_abs/area/geometry)."""
+        from . import handlers
+        return handlers._build_outcropping_mesh_gdf(self, id_compartment)
+
     def compute_budget_variable(
         self,
         data: np.ndarray,

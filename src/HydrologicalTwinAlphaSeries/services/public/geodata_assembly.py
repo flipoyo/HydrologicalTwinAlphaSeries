@@ -37,7 +37,9 @@ def assemble_multi_layer_geodataframe(
 ) -> gpd.GeoDataFrame:
     """Assemble aggregated data + multi-layer geometry into a GeoDataFrame.
 
-    :param agg_df: DataFrame (index=date_labels, columns=cell_ids) from aggregate_for_map
+    :param agg_df: DataFrame (index=date_labels, columns=global ``id_abs``)
+        from aggregate_for_map — keyed by the unique global cell index so the
+        per-layer row lookup below cannot over-match a colliding per-layer id.
     :param layers: list of LayerInfo objects
     :param crs: pyproj.CRS or EPSG string
     :param layer_id_offset: starting layer ID (0 for MB, 1 for H)
@@ -45,17 +47,20 @@ def assemble_multi_layer_geodataframe(
     """
     data = agg_df.T
 
-    cell_ids = []
+    # Use the global, unique ``id_abs`` (not the per-layer ``cell.id``) both as
+    # the ID_ABS column and as the ``.loc`` selector, so a deeper-layer cell
+    # whose per-layer id collides with a layer-0 cell is matched uniquely.
+    id_abs = []
     layer_ids = []
     geometries = []
     for n_layer, layer_info in enumerate(layers):
-        cell_ids.extend(layer_info.cell_ids.tolist())
+        id_abs.extend(layer_info.id_abs.tolist())
         layer_ids.extend([n_layer + layer_id_offset] * layer_info.n_cells)
         geometries.extend(layer_info.cell_geometries)
 
-    result = data.loc[cell_ids].copy()
+    result = data.loc[id_abs].copy()
     cols = result.columns.tolist()
-    result["ID_ABS"] = cell_ids
+    result["ID_ABS"] = id_abs
     result["ID_LAY"] = layer_ids
     result["geometry"] = geometries
     result = gpd.GeoDataFrame(result, crs=crs, geometry="geometry")

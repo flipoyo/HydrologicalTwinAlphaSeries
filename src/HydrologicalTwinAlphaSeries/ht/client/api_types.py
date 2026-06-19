@@ -136,35 +136,61 @@ class CompareSimObsResult:
 
 
 @dataclass(frozen=True)
-class MaskWatbalResult:
-    """Result of :meth:`HydrologicalTwinClient.mask_watbal`.
+class CompartmentCellsEntry:
+    """A single compartment's masked-cells GeoDataFrame + layer name.
 
-    :param gdf: GeoDataFrame of the masked WATBAL cells, already joined to
-        their mesh geometries. The caller can pass this straight to
+    One entry per distinct compartment named in the ``specs`` of a
+    :meth:`HydrologicalTwinClient.mask_internal_values` call. A single polygon
+    selects a *different* cell set from each compartment's mesh, so the result
+    carries one of these per compartment rather than a single ``gdf``.
+
+    :param compartment: Compartment name (e.g. ``"WATBAL"``, ``"AQ"``).
+    :param gdf: GeoDataFrame of the masked cells for this compartment, already
+        joined to their mesh geometries. The caller can pass this straight to
         ``convertGdfToVectorLayer``. The geometry semantics depend on the
-        ``weighted`` flag that was passed to ``mask_watbal``:
+        ``weighted`` flag:
 
         * ``weighted=False`` (default): full cell footprints, no ``weight``
-          column — shape-identical to the pre-weighted-mask behaviour.
+          column.
         * ``weighted=True``: per-cell clipped intersection geometries
           (``cell.intersection(polygon)``), with an additional numeric
           ``weight`` column in ``(0, 1]``.
 
-    :param layer_name: Display name for the cells layer (one per area).
-    :param artefacts: On-disk artefact paths produced by the run, one CSV +
-        one .npy per requested param (plus the per-param polygon-total
-        CSVs when ``weighted=True``, plus the ``.gpkg`` when
-        ``write_geopackage=True``).
-    :param polygon_total_paths: Only populated when the call ran with
-        ``weighted=True``. Maps each requested param to the absolute path
-        of its one-column ``date, polygon_total`` CSV in ``m³/day``. Stays
-        ``None`` on the binary (unweighted) path.
+    :param layer_name: Display name for this compartment's cells layer.
     """
 
+    compartment: str
     gdf: Any
     layer_name: str
+
+
+@dataclass(frozen=True)
+class MaskInternalValuesResult:
+    """Result of :meth:`HydrologicalTwinClient.mask_internal_values`.
+
+    A single masked polygon selects a distinct cell set from each
+    compartment's mesh, so the produced cells are grouped **per compartment**
+    rather than exposed as one flat ``gdf``. Single-compartment callers simply
+    iterate one entry.
+
+    :param entries: One :class:`CompartmentCellsEntry` per distinct
+        compartment named in ``specs`` (e.g. one WATBAL entry and one AQ
+        entry), in first-seen spec order.
+    :param artefacts: Flat on-disk artefact path list across all compartments,
+        one CSV + one .npy per requested ``(compartment, param)`` spec (plus
+        the per-spec polygon-total CSVs when ``weighted=True``, plus the
+        ``.gpkg`` when ``write_geopackage=True``).
+    :param polygon_total_paths: Only populated when the call ran with
+        ``weighted=True``. Maps each requested ``(compartment, param)`` spec to
+        the absolute path of its one-column ``date, polygon_total`` CSV, in the
+        caller-selected ``unit`` (``m3/s`` | ``m3/j``, default ``m3/j``); the
+        unit is encoded in the CSV filename token. Stays ``None`` on the binary
+        (unweighted) path.
+    """
+
+    entries: List[CompartmentCellsEntry] = field(default_factory=list)
     artefacts: List[str] = field(default_factory=list)
-    polygon_total_paths: Optional[Dict[str, str]] = None
+    polygon_total_paths: Optional[Dict[tuple, str]] = None
 
 
 @dataclass(frozen=True)
