@@ -2,6 +2,7 @@ import os
 
 import geopandas as gpd
 import pandas as pd
+from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import get_nearest_row
@@ -89,17 +90,34 @@ class Spatial:
         fnode = section[network_col_name_fnode]
         return network_gdf[network_gdf[network_col_name_tnode] == fnode]
 
-    def buildAqOutcropping(self, exd, aq_compartment, save=True):
+    def buildAqOutcropping(self, exd, aq_compartment, save=True, coverage_threshold=0.5):
         """
         Identify aquifer cells that outcrop at the land surface.
 
         Starts with all cells from the topmost layer (layer 0), then adds cells from
-        deeper layers whose centroids are not covered by shallower cells. This captures
+        deeper layers that are not already covered by shallower cells. This captures
         areas where older geological formations are exposed at the surface.
+
+        Coverage is decided by an **areal-overlap fraction**, not a centroid
+        point-in-polygon test. For each deeper cell we measure how much of its
+        footprint is overlapped by the union of already-accumulated (shallower)
+        cells; if that fraction is >= ``coverage_threshold`` the cell is treated
+        as buried and excluded. A single centroid is a poor proxy for a cell's
+        footprint: on a resolution mismatch the centroid falls in the seam
+        between shallower cells (so a buried cell would be wrongly kept), and on
+        exact grid alignment the centroid lands on a shared edge/vertex, which
+        Shapely's interior-only ``contains`` rejects (so a perfectly stacked cell
+        would be wrongly kept). The area-fraction test fixes both.
 
         :param exd: ExplorerData instance containing post_process_directory path
         :param aq_compartment: Aquifer Compartment object with mesh attribute
         :param save: If True, saves outcropping cell IDs to OUTPCROOPCELLSLIST.dat
+        :param coverage_threshold: Minimum fraction (in ``(0, 1]``) of a deeper
+            cell's footprint area that must be overlapped by shallower cells for
+            it to count as buried (and thus excluded). Default ``0.5`` (a cell
+            more than half-buried is treated as buried). This is a hydrogeology
+            choice — raise it to keep more partially-overlapping cells, lower it
+            to drop them.
         :return: List of Cell objects (from Mesh.Layer.Cell) that outcrop at surface
         """
         print("Building Outcropping aquifer cells...", flush=True)
@@ -115,13 +133,35 @@ class Spatial:
             count = 0
 
             if n_layer != 0:
-                # STRtree (Shapely 2.x) replaces a unary_union+contains check:
-                # the union of thousands of polygons dominated runtime, while
-                # a spatial index answers "is this centroid covered?" in O(log N).
-                tree = STRtree([out_cell.geometry for out_cell in outcropCells])
+                # STRtree (Shapely 2.x) gives an O(log N) candidate prefilter:
+                # query each deeper cell's FOOTPRINT (not its centroid) for the
+                # already-accumulated shallower cells it intersects, then decide
+                # burial by overlap area. No global unary_union is built — only
+                # the few candidates the tree returns for one cell are unioned.
+                outcrop_geoms = [out_cell.geometry for out_cell in outcropCells]
+                tree = STRtree(outcrop_geoms)
 
                 for cell in layer.layer:
-                    if tree.query(cell.geometry.centroid, predicate="contains").size == 0:
+                    geom = cell.geometry
+                    cell_area = geom.area
+
+                    # Degenerate footprint: cannot compute a fraction; treat as
+                    # not buried (poke-through) rather than divide by zero.
+                    if cell_area <= 0:
+                        outcropCells.append(cell)
+                        count += 1
+                        continue
+
+                    candidate_idx = tree.query(geom, predicate="intersects")
+                    if candidate_idx.size == 0:
+                        covered_area = 0.0
+                    else:
+                        covering = unary_union(
+                            [outcrop_geoms[i] for i in candidate_idx]
+                        )
+                        covered_area = geom.intersection(covering).area
+
+                    if covered_area / cell_area < coverage_threshold:
                         outcropCells.append(cell)
                         count += 1
 

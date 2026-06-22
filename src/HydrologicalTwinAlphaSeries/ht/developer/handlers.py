@@ -397,14 +397,16 @@ def _build_aq_spatial_gdf(
 def _aq_outcropping_cells(
     twin: "HydrologicalTwin",
     id_compartment: int,
-    save_directory: str = None,
+    save_directory: Optional[str] = None,
+    coverage_threshold: float = 0.5,
 ) -> list:
     """Return the cross-layer aquifer outcropping ``Cell`` list.
 
     Thin wrapper over ``Spatial.buildAqOutcropping`` (all of layer 0 plus
-    deeper-layer cells whose centroid no shallower cell covers). When
-    ``save_directory`` is given, the ``id_abs`` list is also persisted to
-    ``OUTPCROOPCELLSLIST.dat``.
+    deeper-layer cells not already covered, by areal overlap, by shallower
+    cells). When ``save_directory`` is given, the ``id_abs`` list is also
+    persisted to ``OUTPCROOPCELLSLIST.dat``. ``coverage_threshold`` is forwarded
+    to ``buildAqOutcropping`` (see its docstring).
     """
     comp = twin.get_compartment(id_compartment)
 
@@ -419,6 +421,7 @@ def _aq_outcropping_cells(
         exd=exd_stub,
         aq_compartment=comp,
         save=save,
+        coverage_threshold=coverage_threshold,
     )
 
 
@@ -426,9 +429,12 @@ def _build_aquifer_outcropping(
     twin: "HydrologicalTwin",
     id_compartment: int,
     save_directory: str = None,
+    coverage_threshold: float = 0.5,
 ) -> np.ndarray:
     """Build aquifer outcropping cell ID array. Wraps Spatial.buildAqOutcropping."""
-    cells = _aq_outcropping_cells(twin, id_compartment, save_directory)
+    cells = _aq_outcropping_cells(
+        twin, id_compartment, save_directory, coverage_threshold=coverage_threshold
+    )
     # Return the global, unique ``id_abs`` (not the per-layer ``cell.id``) so
     # the spatial-map ``gdf["ID_ABS"].isin(...)`` filter matches each cell
     # uniquely across layers. ``buildAqOutcropping`` already persists id_abs.
@@ -438,6 +444,7 @@ def _build_aquifer_outcropping(
 def _build_outcropping_mesh_gdf(
     twin: "HydrologicalTwin",
     id_compartment: int,
+    coverage_threshold: float = 0.5,
 ) -> gpd.GeoDataFrame:
     """Return a cross-layer outcropping mesh GeoDataFrame for AQ masking.
 
@@ -450,7 +457,10 @@ def _build_outcropping_mesh_gdf(
 
     The CRS is taken from the compartment's layer-0 mesh (all layers share it).
     """
-    cells = _aq_outcropping_cells(twin, id_compartment, save_directory=None)
+    cells = _aq_outcropping_cells(
+        twin, id_compartment, save_directory=None,
+        coverage_threshold=coverage_threshold,
+    )
     comp = twin.get_compartment(id_compartment)
     crs = comp.mesh.mesh[0].crs if comp.mesh.mesh else None
     return gpd.GeoDataFrame(
