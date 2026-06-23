@@ -15,7 +15,7 @@ from HydrologicalTwinAlphaSeries.ht import (
     CellSelectionResponse,
     ValuesResponse,
 )
-from HydrologicalTwinAlphaSeries.ht.client import operations
+from HydrologicalTwinAlphaSeries.ht.client import operations_client as operations
 
 
 def _watbal_entry(result):

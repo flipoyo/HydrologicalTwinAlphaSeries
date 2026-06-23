@@ -19,7 +19,7 @@ from ...services.public.automatic_detection_config import (
     detect_project_neighbors,
 )
 from ..developer import HydrologicalTwin
-from . import operations
+from . import operations_client
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
@@ -43,10 +43,10 @@ class HydrologicalTwinClient:
     / ``processing`` imports anywhere in this package.
 
     Method bodies are intentionally thin (≤5 statements): they delegate to
-    the matching :func:`operations.run_*` function, which owns the
+    the matching :func:`operations_client.run_*` function, which owns the
     orchestration. Add a new operation by (1) defining a ``*Result``
     dataclass in :mod:`api_types`, (2) implementing ``run_<name>`` in
-    :mod:`operations`, and (3) adding a one-line facade method here.
+    :mod:`operations_client`, and (3) adding a one-line facade method here.
 
     Pre-lifecycle discovery (static, no twin required):
 
@@ -128,22 +128,22 @@ class HydrologicalTwinClient:
 
 
     def budget_barplot(self, **kwargs) -> BudgetBarplotResult:
-        return operations.run_budget_barplot(self._twin, **kwargs)
+        return operations_client.run_budget_barplot(self._twin, **kwargs)
 
     def hydrological_regime(self, **kwargs) -> HydrologicalRegimeResult:
-        return operations.run_hydrological_regime(self._twin, **kwargs)
+        return operations_client.run_hydrological_regime(self._twin, **kwargs)
 
     def spatial_map_watbal(self, **kwargs) -> SpatialMapWatbalResult:
-        return operations.run_spatial_map_watbal(self._twin, **kwargs)
+        return operations_client.run_spatial_map_watbal(self._twin, **kwargs)
 
     def spatial_map_aq(self, **kwargs) -> SpatialMapAqResult:
-        return operations.run_spatial_map_aq(self._twin, **kwargs)
+        return operations_client.run_spatial_map_aq(self._twin, **kwargs)
 
     def compare_sim_obs(self, **kwargs) -> CompareSimObsResult:
-        return operations.run_compare_sim_obs(self._twin, **kwargs)
+        return operations_client.run_compare_sim_obs(self._twin, **kwargs)
 
     def statistical_criteria(self, **kwargs) -> StatisticalCriteriaResult:
-        return operations.run_statistical_criteria(self._twin, **kwargs)
+        return operations_client.run_statistical_criteria(self._twin, **kwargs)
 
     def mask_internal_values(
         self, *, weighted: bool = True, **kwargs
@@ -151,14 +151,14 @@ class HydrologicalTwinClient:
         # ``weighted`` is broken out from kwargs so it appears in the public
         # signature; the output unit is now carried per-spec as the 4th element
         # of each ``(compartment, outtype, param, unit)`` tuple in ``specs``.
-        # See :func:`operations.run_mask_internal_values` for the ``specs``
+        # See :func:`operations_client.run_mask_internal_values` for the ``specs``
         # shape, the unit token table, and semantics.
-        return operations.run_mask_internal_values(
+        return operations_client.run_mask_internal_values(
             self._twin, weighted=weighted, **kwargs
         )
 
     def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:
-        return operations.run_mask_hyd_boundary(self._twin, **kwargs)
+        return operations_client.run_mask_hyd_boundary(self._twin, **kwargs)
 
     def mask_aq_boundary(self, **kwargs) -> MaskAqBoundaryResult:
-        return operations.run_mask_aq_boundary(self._twin, **kwargs)
+        return operations_client.run_mask_aq_boundary(self._twin, **kwargs)

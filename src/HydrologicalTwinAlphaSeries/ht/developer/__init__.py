@@ -35,7 +35,7 @@ from .api_types import (
     TwinState,
     ValuesResponse,
 )
-from .hydrological_twin import HydrologicalTwin
+from .hydrological_twin_developer import HydrologicalTwin
 
 __all__ = [
     "AqBoundaryFluxResponse",

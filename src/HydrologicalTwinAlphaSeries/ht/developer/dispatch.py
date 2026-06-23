@@ -24,21 +24,22 @@ What does NOT belong here
 - The actual computation (``compute_*``, ``_build_*_gdf``,
   ``extract_area``, ``render_*``) → ``handlers.py``.
 - Reads over twin state (``read_*``, ``get_*``, ``_resolve_*``) →
-  ``accessors.py``.
+  ``services/public/twin_io.py``.
 - The 4 non-dispatching verbs (``configure``, ``load``, ``describe``,
   ``export``) — they are small and inline in the facade by design.
 
 Relation to other modules
 -------------------------
-- ``hydrological_twin.py`` calls into this module from the 4 dispatching
+- ``hydrological_twin_developer.py`` calls into this module from the 4 dispatching
   facade methods.
 - This module calls into ``handlers.py`` for the work.
-- This module may call ``accessors.py`` for incidental state reads, but
+- This module may call ``services/public/twin_io.py`` for incidental state reads, but
   the primary path is through ``handlers``.
 
 Import direction (no backward edges)
 ------------------------------------
-    hydrological_twin.py → dispatch.py → handlers.py → accessors.py
+    L2: hydrological_twin_developer.py → dispatch.py → handlers.py
+    L3: → services/public/twin_io.py
 """
 
 from __future__ import annotations
@@ -49,15 +50,16 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
-from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
-    verify_crs_match,
 )
+from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 
 from .api_types import (
     AqBoundaryFluxResponse,
@@ -81,7 +83,7 @@ from .api_types import (
 )
 
 if TYPE_CHECKING:
-    from .hydrological_twin import HydrologicalTwin  # noqa: F401
+    from .hydrological_twin_developer import HydrologicalTwin  # noqa: F401
 
 
 
@@ -100,7 +102,8 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
                 id_layer=request.id_layer,
                 target_unit=request.target_unit,
             )
-        return twin.read_values(
+        return read_values(
+            twin,
             id_compartment=request.id_compartment,
             outtype=request.outtype,
             param=request.param,
