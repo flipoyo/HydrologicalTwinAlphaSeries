@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 
+# LAYER REFACTORING - ALL THESE TYPES COULD BE AT THE L2 once all the pipelines are aligned (ex. all the data fetching pass by fetch/simulation_matrix)
 @dataclass
 class ValuesResponse:
     """Per-cell time-series response shared by ``fetch`` and ``mask`` reads.

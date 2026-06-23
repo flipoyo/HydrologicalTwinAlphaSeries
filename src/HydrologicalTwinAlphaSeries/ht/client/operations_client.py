@@ -1154,6 +1154,15 @@ def run_mask_hyd_boundary(
         polygon=polygon,
         polygon_crs=polygon_crs,
     )
+    q_response = twin.fetch(
+        kind="simulation_matrix",
+        id_compartment=hyd_id,
+        outtype="Q",
+        param="discharge",
+        syear=syear,
+        eyear=eyear,
+        id_layer=0,
+    )
     flux_resp = twin.mask(
         kind="boundary_hyd_flux",
         id_compartment=hyd_id,
@@ -1161,6 +1170,7 @@ def run_mask_hyd_boundary(
         polygon_crs=polygon_crs,
         syear=syear,
         eyear=eyear,
+        q_response=q_response,
     )
 
     network_gdf = _mesh_gdf_for(twin, hyd_id)
@@ -1251,12 +1261,26 @@ def run_mask_aq_boundary(
 
     aq_id = _resolve_compartment_id(twin, "AQ")
 
+    from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS  # noqa: PLC0415
+
     response = twin.mask(
         kind="boundary_aq",
         id_compartment=aq_id,
         polygon=polygon,
         polygon_crs=polygon_crs,
     )
+    face_responses = {
+        direction: twin.fetch(
+            kind="simulation_matrix",
+            id_compartment=aq_id,
+            outtype="MB",
+            param=param,
+            syear=syear,
+            eyear=eyear,
+            id_layer=0,
+        )
+        for direction, param in AQ_FACE_DIRECTIONS.items()
+    }
     flux_resp = twin.mask(
         kind="boundary_aq_flux",
         id_compartment=aq_id,
@@ -1264,6 +1288,7 @@ def run_mask_aq_boundary(
         polygon_crs=polygon_crs,
         syear=syear,
         eyear=eyear,
+        face_responses=face_responses,
     )
 
     if response.edge_geometries:

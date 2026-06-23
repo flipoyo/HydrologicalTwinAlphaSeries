@@ -158,6 +158,15 @@ class MaskRequest:
     # correct AQ-recharge free surface spanning whichever layer is exposed.
     # A plain string keeps the typed mask surface serializable for the server.
     resolution: str = "single_layer"
+    # Pre-fetched time-series carriers for the boundary-flux kinds.
+    # ``boundary_hyd_flux`` needs the full HYD discharge matrix; the L1
+    # operations_client fetches it before calling mask() and threads it here so
+    # the dispatcher never needs to call back up to L1 or re-read from disk.
+    # ``boundary_aq_flux`` needs one ValuesResponse per AQ face direction
+    # (keyed by direction name, e.g. ``"N"``, ``"S"``, ``"E"``, ``"W"``).
+    # Both default to None; non-boundary-flux kinds ignore them entirely.
+    q_response: Optional[Any] = None
+    face_responses: Optional[Dict[str, Any]] = None
 
 
 @dataclass

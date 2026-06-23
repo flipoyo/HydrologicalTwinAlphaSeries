@@ -102,7 +102,7 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
                 id_layer=request.id_layer,
                 target_unit=request.target_unit,
             )
-        return read_values(
+        sim_matrix, dates = read_values(
             twin,
             id_compartment=request.id_compartment,
             outtype=request.outtype,
@@ -112,6 +112,20 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
             id_layer=request.id_layer,
             cutsdate=request.cutsdate,
             cutedate=request.cutedate,
+        )
+        return ValuesResponse(
+            data=sim_matrix,
+            dates=dates,
+            meta={
+                "id_compartment": request.id_compartment,
+                "outtype": request.outtype,
+                "param": request.param,
+                "syear": request.syear,
+                "eyear": request.eyear,
+                "id_layer": request.id_layer,
+                "cutsdate": request.cutsdate,
+                "cutedate": request.cutedate,
+            },
         )
 
     if request.kind == "observations":
@@ -266,7 +280,8 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
         dates = None
         for label in selected:
             backend_param = alias_to_param.get(label, label)
-            response = twin.read_values(
+            response = twin.fetch(
+                kind="simulation_matrix",
                 id_compartment=request.id_compartment,
                 outtype=request.outtype or "MB",
                 param=backend_param,
@@ -410,7 +425,8 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                     target_unit=request.target_unit,
                 )
             elif request.target_unit in _LENGTH_UNITS:
-                full_response = twin.read_values(
+                full_response = twin.fetch(
+                    kind="simulation_matrix",
                     id_compartment=request.id_compartment,
                     outtype=request.outtype,
                     param=request.param,
@@ -551,16 +567,12 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         boundary_ids = sorted(classification["boundary_ids"])
         signs = {cid: classification["signs"][cid] for cid in boundary_ids}
 
-        q_response = twin.read_values(
-            id_compartment=request.id_compartment,
-            outtype="Q",
-            param="discharge",
-            syear=request.syear,
-            eyear=request.eyear,
-            id_layer=request.id_layer,
-            cutsdate=request.cutsdate,
-            cutedate=request.cutedate,
-        )
+        q_response = request.q_response
+        if q_response is None:
+            raise ValueError(
+                "mask(kind='boundary_hyd_flux') requires 'q_response' to be "
+                "pre-fetched by the caller and passed via MaskRequest."
+            )
 
         if not boundary_ids:
             Q = np.empty((0, q_response.data.shape[1]))
@@ -636,19 +648,15 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         )
         boundary_faces = boundary_info["boundary_faces"]
 
+        if request.face_responses is None:
+            raise ValueError(
+                "mask(kind='boundary_aq_flux') requires 'face_responses' to be "
+                "pre-fetched by the caller and passed via MaskRequest."
+            )
         face_data: Dict[str, np.ndarray] = {}
         dates: Optional[np.ndarray] = None
-        for direction, param in AQ_FACE_DIRECTIONS.items():
-            resp = twin.read_values(
-                id_compartment=request.id_compartment,
-                outtype="MB",
-                param=param,
-                syear=request.syear,
-                eyear=request.eyear,
-                id_layer=request.id_layer,
-                cutsdate=request.cutsdate,
-                cutedate=request.cutedate,
-            )
+        for direction in AQ_FACE_DIRECTIONS:
+            resp = request.face_responses[direction]
             face_data[direction] = resp.data
             if dates is None:
                 dates = resp.dates

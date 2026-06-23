@@ -736,6 +736,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         from ...services.public import twin_io
         return twin_io.get_observation_info(self, id_compartment)
 
+
     def read_observations(
         self,
         id_compartment: int,

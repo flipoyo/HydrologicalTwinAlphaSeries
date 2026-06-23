@@ -1,10 +1,11 @@
-# TODO — HTAS cleanup
+# TODO — HTAS LAYER REFACTORING
 
 Clean up to keep the architecture consistent: avoid repetition and dead code,
 and keep a solid division of roles across the 3-level acyclic DAG
 (L1 `ht/client/` → L2 `ht/developer/` → L3 `services/`), with imports pointing
 strictly downward.
-
+The imports among layers are allowed. For instance in many L2 methods is imported and used the fetch simulation matrix function. For the moment is allowed. It pose problems or the use of the notebook anyway. In a second moment this should become stricter. *** Not prioritised ***  
+*NB: I added comments around with LAYER REFACTORING to define the areas that should be moved /replaced*
 ## Deferred from `restructure-htas-3level-dag`
 
 These were captured (not done) by the structural-relocation change that moved
