@@ -1,12 +1,7 @@
-"""Orchestration layer for the HydrologicalTwinClient.
+"""L1 · HT CLIENT · MACRO — orchestration for :class:`HydrologicalTwinClient`.
 
-Each ``run_<name>`` function takes a configured :class:`HydrologicalTwin` as
-its first positional argument and a small set of user-facing keyword
-arguments. The fetch -> transform -> render chaining for a given dialog
-operation lives here and nowhere else.
-
-This module has zero ``qgis.*`` / ``PyQt5`` / ``processing`` imports — it is
-usable from a notebook or a future HTTP server.
+Each ``run_<name>`` owns the ``fetch → transform → render`` chain for one dialog
+operation. Zero ``qgis.*`` / ``PyQt5`` / ``processing`` imports.
 """
 
 from __future__ import annotations

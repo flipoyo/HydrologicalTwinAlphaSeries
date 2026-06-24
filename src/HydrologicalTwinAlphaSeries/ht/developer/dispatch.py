@@ -1,4 +1,4 @@
-"""Per-verb ``kind=...`` routing for the dispatching macro-verbs.
+"""Per-verb ``kind=...`` routing for the dispatching micro-verbs.
 
 Role
 ----

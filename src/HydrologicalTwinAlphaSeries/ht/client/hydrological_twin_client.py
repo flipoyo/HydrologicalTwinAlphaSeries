@@ -1,15 +1,8 @@
-"""Coarse-grained, dialog-shaped client API for HydrologicalTwin.
+"""L1 · HT CLIENT · MACRO — one method per dialog operation.
 
-The :class:`HydrologicalTwinClient` exposes one method per user-facing
-operation that the QGIS plug-in surfaces in its dialogs, plus the lifecycle
-primitives (``configure`` / ``load`` / ``describe`` / ``is_ready``) and a
-one-call ``build`` classmethod that runs the lifecycle end-to-end. Each
-operation call wraps the ``fetch -> transform -> render`` chain so that
-notebook users (today) and a future HTTP server (tomorrow) can reproduce a
-dialog operation with a single call.
-
-This module — and the rest of ``ht/client/`` — has zero ``qgis.*`` /
-``PyQt5`` / ``processing`` imports.
+:class:`HydrologicalTwinClient` wraps each ``fetch → transform → render``
+chain into a single call that returns a typed ``*Result`` dataclass.
+Zero ``qgis.*`` / ``PyQt5`` / ``processing`` imports.
 """
 
 from __future__ import annotations
@@ -34,66 +27,14 @@ from .api_types import (
 
 
 class HydrologicalTwinClient:
-    """Coarse-grained, dialog-shaped API on top of :class:`HydrologicalTwin`.
+    """L1 · HT CLIENT · MACRO — one operation per dialog, on top of :class:`HydrologicalTwin`.
 
-    One method per user-facing operation surfaced by the QGIS plug-in. Each
-    method wraps a ``fetch -> transform -> render`` chain into a single call
-    that returns a typed result dataclass and is safe to drive from a
-    notebook today, from an HTTP server tomorrow — no ``qgis.*`` / ``PyQt5``
-    / ``processing`` imports anywhere in this package.
+    One method per user-facing operation. Method bodies are thin (≤5 statements):
+    they delegate to :func:`operations_client.run_*`, which owns the orchestration.
+    This is the surface a future HTTP server will expose.
 
-    Method bodies are intentionally thin (≤5 statements): they delegate to
-    the matching :func:`operations_client.run_*` function, which owns the
-    orchestration. Add a new operation by (1) defining a ``*Result``
-    dataclass in :mod:`api_types`, (2) implementing ``run_<name>`` in
-    :mod:`operations_client`, and (3) adding a one-line facade method here.
-
-    Pre-lifecycle discovery (static, no twin required):
-
-    - :meth:`detect_from_out_caw` — scan a CaWaQS output directory and
-      return ``{compartments, s_year, e_year, regime, warnings}``. Raises
-      :class:`DetectionError` if the folder is not interpretable.
-    - :meth:`detect_project_neighbors` — given a QGIS project file path
-      (or ``None``), best-effort lookup of ``{geometry_config_path,
-      obs_directory, project_name}``. Each field may be ``None``
-      independently; the function never raises on missing neighbors.
-
-    These run *before* a client is constructed: they take filesystem
-    paths and return plain dicts the caller uses to fill the inputs to
-    :meth:`configure` / :meth:`load`. Same import surface, same return
-    shape, whether the caller is the QGIS dialog, a notebook, or a
-    future HTTP server.
-
-    Lifecycle:
-
-    - :meth:`__init__` — construct from metadata; the underlying twin starts
-      in ``EMPTY`` state.
-    - :meth:`configure` / :meth:`load` — primitives that forward to the
-      underlying twin; callers (e.g. ``ExploreData``) wrap each call to map
-      developer-side errors to application-level ones.
-    - :meth:`describe` / :meth:`is_ready` — cheap inspection helpers.
-    - :meth:`build` — classmethod that runs ``configure`` + ``load`` in one
-      call; convenience entry point for notebook users.
-
-    Operations:
-
-    - :meth:`budget_barplot` — water-balance bar plot (PNG + CSV)
-    - :meth:`hydrological_regime` — discharge / piezometric-head regime
-      plots (per-point PNGs and combined PDF)
-    - :meth:`spatial_map_watbal` — single-variable WATBAL spatial map (gdf)
-    - :meth:`spatial_map_aq` — AQ spatial map (gdf): head, fluxes,
-      recharge, surface overflow
-    - :meth:`compare_sim_obs` — sim-vs-obs comparison plot in PDF or
-      interactive HTML mode
-    - :meth:`statistical_criteria` — per-observation-point performance
-      metrics (KGE, NSE, RMSE, ...) plus globals/by-layer for AQ
-    - :meth:`mask_internal_values` — per-spec compartment cell masking
-      (WATBAL params + AQ recharge) with persisted artefacts and one
-      mesh-joined gdf per compartment
-    - :meth:`mask_hyd_boundary` — HYD reaches on a polygon boundary plus
-      inside-reaches plus boundary fluxes
-    - :meth:`mask_aq_boundary` — AQ cells inside a polygon plus boundary
-      fluxes
+    Add a new operation: (1) ``*Result`` in :mod:`api_types`, (2) ``run_<name>``
+    in :mod:`operations_client`, (3) one-line facade method here.
     """
 
     def __init__(self, metadata: dict):

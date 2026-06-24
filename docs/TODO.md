@@ -2,8 +2,8 @@
 
 Clean up to keep the architecture consistent: avoid repetition and dead code,
 and keep a solid division of roles across the 3-level acyclic DAG
-(L1 `ht/client/` → L2 `ht/developer/` → L3 `services/`), with imports pointing
-strictly downward.
+(L1 · HT CLIENT · MACRO `ht/client/` → L2 · HT DEVELOPER · MICRO `ht/developer/` → L3 · SERVICES · ELEMENTARIES `services/`),
+with imports pointing strictly downward.
 The imports among layers are allowed. For instance in many L2 methods is imported and used the fetch simulation matrix function. For the moment is allowed. It pose problems or the use of the notebook anyway. In a second moment this should become stricter. *** Not prioritised ***  
 *NB: I added comments around with LAYER REFACTORING to define the areas that should be moved /replaced*
 ## Deferred from `restructure-htas-3level-dag`
@@ -12,14 +12,14 @@ These were captured (not done) by the structural-relocation change that moved
 `accessors.py` → `services/public/twin_io.py` and renamed the L1/L2 entry
 modules. They complete the move toward the clean single L2→L3 arrow.
 
-- **Fold `handlers.py` and `dispatch.py` into the L2 macro-verbs.** They are
+- **Fold `handlers.py` and `dispatch.py` into the L2 micro-verbs.** They are
   currently *transitional L2-internal modules* sitting between the
   `hydrological_twin_developer.py` facade and L3. Folding their compute /
-  routing bodies into the macro-verb methods removes the intermediate hop so L2
+  routing bodies into the micro-verb methods removes the intermediate hop so L2
   becomes a single layer that calls straight down into L3.
 - **De-orchestrate `operations_client.py`.** Today it owns full
   `fetch → transform → render` chains (e.g. `run_mask_internal_values` ≈ 290
-  lines). Push that chaining down toward L2 macro-verbs so the L1 client stays
+  lines). Push that chaining down toward L2 micro-verbs so the L1 client stays
   thin and the orchestration lives one level closer to the compute.
 - **Revisit moving the leaf data DTOs into an L3 `io_types.py`** — *done* for
   the 5 read DTOs (`ValuesResponse`, `ObservationsResponse`, `CompartmentInfo`,

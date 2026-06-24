@@ -1,49 +1,12 @@
-"""Public facade for the developer-side ``HydrologicalTwin``.
+"""L2 · HT DEVELOPER · MICRO — micro-verb facade for :class:`HydrologicalTwin`.
 
-Role
-----
-This module holds the ``HydrologicalTwin`` class — the **API boundary** of
-the developer surface. It owns the 8 canonical macro-verbs
-(``configure``, ``load``, ``describe``, ``fetch``, ``mask``, ``transform``,
-``render``, ``export``), the lifecycle state machine, and the gatekeeping
-(``_require_state``). The 4 dispatching verbs (``fetch``/``mask``/
-``transform``/``render``) delegate to ``dispatch.py`` after coercing their
-arguments to a canonical ``*Request`` dataclass.
+Owns the 8 canonical verbs (``configure``, ``load``, ``describe``, ``fetch``,
+``mask``, ``transform``, ``render``, ``export``), the lifecycle state machine,
+and ``_require_state`` gatekeeping. The 4 dispatching verbs delegate to
+``dispatch.py`` after coercing arguments to canonical ``*Request`` dataclasses.
 
-What belongs here
------------------
-- The ``HydrologicalTwin`` class definition.
-- State machine + transition helpers: ``_transition_to``, ``_require_state``.
-- Argument coercion from legacy call shapes (positional, ``request=``,
-  ``**kwargs``) to canonical ``*Request`` objects, inside each macro-verb.
-- The 4 small inline verbs (``configure``, ``load``, ``describe``, ``export``)
-  — they have no ``kind=`` dispatch and stay inline by design.
-- Facade-internal helpers retained on the class: ``_normalize_frequency``,
-  ``_build_compartments``, ``_build_catalog``, ``_bundle_dict_to_response``,
-  ``_bundle_response_to_dict``, ``_collapse_aq_series``.
-- Thin facade wrappers around moved methods where the spec requires the
-  surface to be kept on the class (e.g. ``get_compartment``,
-  ``compute_performance_stats``).
-
-What does NOT belong here
--------------------------
-- ``if request.kind == "X":`` ladders → ``dispatch.py``.
-- The actual hydrological computation (``compute_*``, ``aggregate_*``,
-  ``_build_*_gdf``, ``extract_area``, ``apply_*``, ``render_*``) →
-  ``handlers.py``.
-- Pure state reads (``get_*``, ``read_*``, ``_resolve_*``,
-  ``has_observations``, ``_ensure_disk_cache``) → ``twin_io.py``.
-
-Relation to other modules
--------------------------
-- Imports ``dispatch.py`` and calls into its 4 functions from the 4
-  dispatching macro-verbs.
-- May import ``twin_io.py`` / ``handlers.py`` to power thin facade
-  wrappers that keep the public surface stable.
-
-Import direction (no backward edges)
-------------------------------------
-    L2: hydrological_twin_developer.py → dispatch.py → handlers.py
+Import direction (downward only):
+    L2: hydrological_twin_developer.py → dispatch.py → handlers.py  (transitional)
     L3: → services/public/twin_io.py
 """
 
@@ -453,7 +416,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         return np.nansum(array, axis=0)
 
     # ╔════════════════════════════════════════════════════════════════╗
-    # ║  MACRO-METHODS — canonical public API                        ║
+    # ║  L2 · HT DEVELOPER · MICRO — canonical micro-verbs          ║
     # ╚════════════════════════════════════════════════════════════════╝
 
     def configure(
