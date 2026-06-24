@@ -1258,11 +1258,13 @@ def run_mask_aq_boundary(
 
     from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS  # noqa: PLC0415
 
-    response = twin.mask(
+    id_layers = [li.id_layer for li in twin.get_all_layers(aq_id)]
+    face_orientations = twin.mask(
         kind="boundary_aq",
         id_compartment=aq_id,
         polygon=polygon,
         polygon_crs=polygon_crs,
+        id_layers=id_layers,
     )
     face_responses = {
         direction: twin.fetch(
@@ -1272,7 +1274,6 @@ def run_mask_aq_boundary(
             param=param,
             syear=syear,
             eyear=eyear,
-            id_layer=0,
         )
         for direction, param in AQ_FACE_DIRECTIONS.items()
     }
@@ -1284,12 +1285,13 @@ def run_mask_aq_boundary(
         syear=syear,
         eyear=eyear,
         face_responses=face_responses,
+        face_orientations=face_orientations,
     )
 
-    if response.edge_geometries:
+    if face_orientations.edge_geometries:
         cells_gdf = gpd.GeoDataFrame(
-            {"cell_id": response.cell_ids},
-            geometry=list(response.edge_geometries),
+            {"cell_id": face_orientations.cell_ids},
+            geometry=list(face_orientations.edge_geometries.values()),
             crs=polygon_crs,
         )
         cells_layer_name = f"{area_name}_AQ_boundary_edges"

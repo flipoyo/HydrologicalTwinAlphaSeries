@@ -11,6 +11,7 @@ These are class-free by design: each function is ``(gdf, polygon, id_col) ->
 result`` with no state held between calls, so there is nothing for a class to
 carry. See the ``polygon-geometry-ops`` capability spec.
 """
+from pickle import DICT
 
 from typing import Any, Dict, List, Tuple, Union
 
@@ -284,74 +285,12 @@ def reaches_in_polygon_carachterisation(
     }
 
 
-def aq_cells_on_polygon_boundary(
+def cells_boundary_faces(
     aq_mesh_gdf: gpd.GeoDataFrame,
     polygon: Any,
     id_col: Union[str, int],
-) -> tuple:
-    """Return AQ-mesh boundary edges separating inside-polygon cells from outside.
-
-    A boundary edge is a cell edge that connects a cell INSIDE the polygon to
-    a cell OUTSIDE the polygon (topological boundary of the masked AQ region —
-    NOT the geometric intersection with ``polygon.exterior``). "Inside" is
-    determined by centroid containment, same convention as
-    :func:`cells_in_polygon`; ``polygon.contains(centroid)`` treats interior
-    rings as outside, so cells in holes count as outside neighbours and
-    contribute boundary edges as expected.
-
-    Returns a tuple ``(cell_ids, edge_geometries)`` aligned per boundary edge:
-    for each (inside cell, outside cell) adjacency, one entry is appended
-    where ``cell_ids[i]`` is the inside-polygon cell's id and
-    ``edge_geometries[i]`` is the shared-edge geometry. An inside cell with
-    N outside neighbours contributes N entries.
-
-    Adjacency is computed from shared geometry edges via Shapely's
-    ``predicate="touches"`` STRtree query, then filtered to keep only
-    intersections that are LineString / MultiLineString (true edge-sharing,
-    excluding corner-only adjacency).
-
-    :param aq_mesh_gdf: GeoDataFrame of aquifer cells (polygon geometries)
-    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
-    :param id_col: Column name (or integer position) to read cell ids from.
-    :return: ``(cell_ids, edge_geometries)`` aligned per boundary edge.
-    """
-    if aq_mesh_gdf.empty:
-        return [], []
-
-    geometries = list(aq_mesh_gdf.geometry.values)
-    centroids = aq_mesh_gdf.geometry.centroid
-    inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
-    inside_positions = {i for i, inside in enumerate(inside_mask) if inside}
-
-    if not inside_positions:
-        return [], []
-
-    tree = shapely.STRtree(geometries)
-    col_name = _resolve_id_col(aq_mesh_gdf, id_col)
-
-    cell_ids_out: List[Any] = []
-    edge_geometries_out: List[Any] = []
-    for inside_pos in sorted(inside_positions):
-        cell_geom = geometries[inside_pos]
-        candidate_positions = tree.query(cell_geom, predicate="touches")
-        for cand_pos in candidate_positions:
-            cand_int = int(cand_pos)
-            if cand_int == inside_pos or cand_int in inside_positions:
-                continue
-            shared = cell_geom.intersection(geometries[cand_int])
-            if shared.geom_type in ("LineString", "MultiLineString"):
-                cell_ids_out.append(aq_mesh_gdf.iloc[inside_pos][col_name])
-                edge_geometries_out.append(shared)
-
-    return cell_ids_out, edge_geometries_out
-
-
-def aq_cells_boundary_faces(
-    aq_mesh_gdf: gpd.GeoDataFrame,
-    polygon: Any,
-    id_col: Union[str, int],
-) -> Dict[str, Any]:
-    """Identify boundary AQ cells with cardinal-direction face labels.
+) -> Tuple[Dict[Any, List[str]], Dict[Any, Any]]:
+    """Identify boundary cells with cardinal-direction face labels.
 
     A boundary cell is an interior cell (centroid inside the polygon) that
     shares a face with an outside cell. The face direction is determined
@@ -362,21 +301,20 @@ def aq_cells_boundary_faces(
     counts as a flux face. Direction labelling preserves the original
     feature-branch convention (cf. branch_migration/backend_50.patch L327-333).
 
-    Returns a dict with keys:
-        * ``interior_ids``:    sorted list of all cells with centroid inside
-        * ``boundary_ids``:    sorted list of cell ids touching ≥1 outside cell
-        * ``boundary_faces``:  ``{cell_id: ["east"|"west"|"south"|"north", ...]}``
-        * ``edges_by_face``:   ``{cell_id: {direction: shapely.Geometry}}``
-                               (per-face union of shared boundary parts)
+    :param aq_mesh_gdf: GeoDataFrame of aquifer mesh cells (polygon geometries)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read cell ids from.
+    :return: ``(boundary_faces, edge_geometries)`` where ``boundary_faces`` is
+        ``{cell_id: ["east"|"west"|"south"|"north", ...]}`` — one entry per
+        boundary cell, each value the list of flux-face directions for that
+        cell (a corner cell can have two faces) — and ``edge_geometries`` is
+        ``{cell_id: geometry}``, the shared face edge(s) for that cell merged
+        into a single geometry (a ``MultiLineString`` when the cell has more
+        than one face). Both dicts share the same keys so callers can align
+        them 1:1.
     """
-    empty: Dict[str, Any] = {
-        "interior_ids":   [],
-        "boundary_ids":   [],
-        "boundary_faces": {},
-        "edges_by_face":  {},
-    }
     if aq_mesh_gdf.empty:
-        return empty
+        return {}, {}
 
     col_name = _resolve_id_col(aq_mesh_gdf, id_col)
     geometries = list(aq_mesh_gdf.geometry.values)
@@ -385,16 +323,18 @@ def aq_cells_boundary_faces(
 
     inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
     interior_positions = [i for i, x in enumerate(inside_mask) if x]
-    interior_ids = sorted([ids[i] for i in interior_positions])
 
-    if not interior_ids:
-        return empty
+    if not interior_positions:
+        return {}, {}
 
     outside_set = {ids[i] for i, x in enumerate(inside_mask) if not x}
     tree = shapely.STRtree(geometries)
 
     boundary_faces: Dict[Any, List[str]] = {}
-    edges_by_face_parts: Dict[Any, Dict[str, List[Any]]] = {}
+    # Per-cell list of shared face edges, merged to one geometry per cell after
+    # the scan so edge_geometries stays 1:1 with boundary_faces (a corner cell
+    # has 2 faces but must remain a single gdf row).
+    edge_parts: Dict[Any, List[Any]] = {}
 
     for inside_pos in interior_positions:
         cell_id = ids[inside_pos]
@@ -424,17 +364,11 @@ def aq_cells_boundary_faces(
                 face = "south" if dy < 0 else "north"
 
             boundary_faces.setdefault(cell_id, []).append(face)
-            edges_by_face_parts.setdefault(cell_id, {}).setdefault(face, []).append(shared)
+            edge_parts.setdefault(cell_id, []).append(shared)
 
-    boundary_ids = sorted(boundary_faces.keys())
-    edges_by_face = {
-        cell_id: {face: unary_union(parts) for face, parts in dir_parts.items()}
-        for cell_id, dir_parts in edges_by_face_parts.items()
+    edge_geometries: Dict[Any, Any] = {
+        cell_id: parts[0] if len(parts) == 1 else unary_union(parts)
+        for cell_id, parts in edge_parts.items()
     }
 
-    return {
-        "interior_ids":   interior_ids,
-        "boundary_ids":   boundary_ids,
-        "boundary_faces": boundary_faces,
-        "edges_by_face":  edges_by_face,
-    }
+    return boundary_faces, edge_geometries

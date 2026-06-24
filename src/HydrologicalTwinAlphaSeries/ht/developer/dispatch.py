@@ -51,8 +51,7 @@ import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
-    aq_cells_boundary_faces,
-    aq_cells_on_polygon_boundary,
+    cells_boundary_faces,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
@@ -62,8 +61,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
 from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf
 
 from .api_types import (
-    AqBoundaryFluxResponse,
-    AqBoundaryResponse,
+    BoundaryFluxResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
@@ -605,22 +603,40 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             raise ValueError(
                 "mask(kind='boundary_aq') requires both 'id_compartment' and 'polygon'."
             )
-        aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
-        verify_crs_match(
-            aq_mesh_gdf.crs,
-            request.polygon_crs,
-            context="mask(kind='boundary_aq')",
+        layers_to_scan = (
+            request.id_layers if request.id_layers is not None else [request.id_layer]
         )
-        id_col = _resolve_cell_id_col(twin, request.id_compartment)
-        cell_ids, edge_geometries = aq_cells_on_polygon_boundary(
-            aq_mesh_gdf, request.polygon, id_col=id_col
-        )
-        return AqBoundaryResponse(
-            cell_ids=list(cell_ids),
-            edge_geometries=list(edge_geometries),
+        all_face_directions: Dict[Any, List[str]] = {}
+        all_edge_geometries: Dict[Any, Any] = {}
+        for lid in layers_to_scan:
+            aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, lid)
+            verify_crs_match(
+                aq_mesh_gdf.crs,
+                request.polygon_crs,
+                context="mask(kind='boundary_aq')",
+            )
+            id_col = _resolve_cell_id_col(twin, request.id_compartment)
+            boundary_faces, edge_geometries = cells_boundary_faces(
+                aq_mesh_gdf, request.polygon, id_col=id_col
+            )
+            for cid, dirs in boundary_faces.items():
+                if cid in all_face_directions:
+                    raise ValueError(
+                        f"mask(kind='boundary_aq'): cell_id {cid!r} appears in multiple "
+                        f"layers of compartment {request.id_compartment} — cell_ids must "
+                        "be globally unique across layers. Check the mesh configuration."
+                    )
+                all_face_directions[cid] = dirs
+                all_edge_geometries[cid] = edge_geometries[cid]
+        return BoundaryFluxResponse(
+            cell_ids=list(all_face_directions.keys()),
+            face_directions=all_face_directions,
+            edge_geometries=all_edge_geometries,
+            fluxes={},
+            dates=None,
             meta={
                 "id_compartment": request.id_compartment,
-                "id_layer": request.id_layer,
+                "id_layers": layers_to_scan,
                 "kind": request.kind,
             },
         )
@@ -636,17 +652,15 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='boundary_aq_flux') requires 'syear' and 'eyear' "
                 "to read the face-flux time series."
             )
-        aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
-        verify_crs_match(
-            aq_mesh_gdf.crs,
-            request.polygon_crs,
-            context="mask(kind='boundary_aq_flux')",
-        )
-        id_col = _resolve_cell_id_col(twin, request.id_compartment)
-        boundary_info = aq_cells_boundary_faces(
-            aq_mesh_gdf, request.polygon, id_col=id_col
-        )
-        boundary_faces = boundary_info["boundary_faces"]
+        # The boundary cells + their flux faces were already resolved across all
+        # layers by the boundary_aq pass and threaded in via face_orientations;
+        # reuse them rather than recomputing single-layer here.
+        if request.face_orientations is None:
+            raise ValueError(
+                "mask(kind='boundary_aq_flux') requires 'face_orientations' "
+                "(the boundary_aq response) to be passed via MaskRequest."
+            )
+        boundary_faces = request.face_orientations.face_directions
 
         if request.face_responses is None:
             raise ValueError(
@@ -668,7 +682,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 for direction in directions
             }
 
-        return AqBoundaryFluxResponse(
+        return BoundaryFluxResponse(
             cell_ids=sorted(boundary_faces.keys()),
             face_directions={cid: list(d) for cid, d in boundary_faces.items()},
             fluxes=fluxes,
@@ -680,7 +694,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "syear":          request.syear,
                 "eyear":          request.eyear,
                 "kind":           request.kind,
-                "interior_ids":   list(boundary_info["interior_ids"]),
+                "cell_ids":       list(request.face_orientations.cell_ids),
             },
         )
 

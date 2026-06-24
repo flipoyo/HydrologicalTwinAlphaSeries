@@ -143,6 +143,7 @@ class MaskRequest:
     syear: Optional[int] = None
     eyear: Optional[int] = None
     id_layer: int = 0
+    id_layers: Optional[List[int]] = None
     cutsdate: Optional[str] = None
     cutedate: Optional[str] = None
     polygon: Any = None
@@ -167,6 +168,11 @@ class MaskRequest:
     # Both default to None; non-boundary-flux kinds ignore them entirely.
     q_response: Optional[Any] = None
     face_responses: Optional[Dict[str, Any]] = None
+    # The boundary_aq BoundaryFluxResponse, threaded into boundary_aq_flux so
+    # the flux pass reuses the multi-layer boundary faces / edges instead of
+    # recomputing them. Typed Any (like q_response / face_responses) because it
+    # carries a response dataclass, not a bare mapping.
+    face_orientations: Optional[Any] = None
 
 
 @dataclass
@@ -308,13 +314,6 @@ class HydBoundaryResponse:
 
 
 @dataclass
-class AqBoundaryResponse:
-    cell_ids: List[Any] = field(default_factory=list)
-    edge_geometries: List[Any] = field(default_factory=list)
-    meta: Optional[Dict[str, Any]] = None
-
-
-@dataclass
 class HydBoundaryFluxResponse:
     """Per-boundary-reach signed discharge time series.
 
@@ -330,7 +329,7 @@ class HydBoundaryFluxResponse:
 
 
 @dataclass
-class AqBoundaryFluxResponse:
+class BoundaryFluxResponse:
     """Per-(boundary-cell, face-direction) flux time series.
 
     fluxes is nested: ``fluxes[cell_id][direction]`` is a 1D ndarray of
@@ -340,6 +339,7 @@ class AqBoundaryFluxResponse:
     """
     cell_ids: List[Any] = field(default_factory=list)
     face_directions: Dict[Any, List[str]] = field(default_factory=dict)
+    edge_geometries: Dict[Any, Any] = field(default_factory=dict)
     fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
     dates: Optional[np.ndarray] = None
     meta: Optional[Dict[str, Any]] = None
