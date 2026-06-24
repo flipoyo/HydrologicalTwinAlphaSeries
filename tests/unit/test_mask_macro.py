@@ -387,7 +387,7 @@ def test_mask_area_values_weighted_without_polygon_raises(monkeypatch):
 
 def test_mask_area_values_length_unit_skips_86400_and_scales(monkeypatch):
     """A length param (water_height) with target_unit='cm' reads raw values
-    (read_values, NO ×86400 read_watbal_converted path) and scales by the cm
+    via fetch (NO ×86400 read_watbal_converted path) and scales by the cm
     factor 100."""
     mesh = _grid_mesh(nx=2, ny=1)  # cells 1, 2 → positional rows 0, 1
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
@@ -399,7 +399,8 @@ def test_mask_area_values_length_unit_skips_86400_and_scales(monkeypatch):
 
     monkeypatch.setattr(twin, "read_watbal_converted", fail_converted)
     monkeypatch.setattr(
-        twin, "read_values", lambda **_kw: _make_full_mesh_values_response(n_cells=2)
+        twin, "fetch",
+        lambda **_kw: _make_full_mesh_values_response(n_cells=2),
     )
 
     polygon = box(0.0, 0.0, 2.0, 1.0)  # both cells fully inside
@@ -419,7 +420,8 @@ def test_mask_area_values_metre_unit_is_passthrough(monkeypatch):
     mesh = _grid_mesh(nx=2, ny=1)
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     monkeypatch.setattr(
-        twin, "read_values", lambda **_kw: _make_full_mesh_values_response(n_cells=2)
+        twin, "fetch",
+        lambda **_kw: _make_full_mesh_values_response(n_cells=2),
     )
 
     polygon = box(0.0, 0.0, 2.0, 1.0)
@@ -677,7 +679,6 @@ def test_mask_boundary_hyd_flux_subsets_and_applies_signs(monkeypatch):
         }
     )
     twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
-    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=3))
     polygon = box(0.0, 0.0, 10.0, 10.0)
 
     response = twin.mask(
@@ -686,6 +687,7 @@ def test_mask_boundary_hyd_flux_subsets_and_applies_signs(monkeypatch):
         polygon=polygon,
         syear=2010,
         eyear=2011,
+        q_response=_make_q_response(n_reaches=3),
     )
 
     assert isinstance(response, HydBoundaryFluxResponse)
@@ -713,7 +715,6 @@ def test_mask_boundary_hyd_flux_no_boundary_returns_empty(monkeypatch):
         }
     )
     twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
-    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=2))
     polygon = box(0.0, 0.0, 10.0, 10.0)
 
     response = twin.mask(
@@ -722,6 +723,7 @@ def test_mask_boundary_hyd_flux_no_boundary_returns_empty(monkeypatch):
         polygon=polygon,
         syear=2010,
         eyear=2011,
+        q_response=_make_q_response(n_reaches=2),
     )
 
     assert response.reach_ids == []
@@ -739,7 +741,6 @@ def test_mask_boundary_hyd_flux_meta_carries_classification(monkeypatch):
         }
     )
     twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
-    monkeypatch.setattr(twin, "read_values", lambda **kw: _make_q_response(n_reaches=3))
 
     response = twin.mask(
         kind="boundary_hyd_flux",
@@ -747,6 +748,7 @@ def test_mask_boundary_hyd_flux_meta_carries_classification(monkeypatch):
         polygon=box(0.0, 0.0, 10.0, 10.0),
         syear=2010,
         eyear=2011,
+        q_response=_make_q_response(n_reaches=3),
     )
 
     assert response.meta["inflow_ids"] == [1]
@@ -787,26 +789,20 @@ def _make_face_flux_response(n_cells: int, value: float, n_timesteps: int = 5) -
 
 
 def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
-    """Centre cell has 4 boundary faces. Mock read_values to return a
-    different constant per face param so we can verify the dispatcher
-    picked up each direction's data correctly."""
+    """Centre cell has 4 boundary faces. Pass pre-built face_responses keyed by
+    direction so we can verify the dispatcher picked up each direction's data."""
     mesh = _aq_cross_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh, cell_id_col="cell_id")
     polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only cell 1's centroid
 
-    # AQ_FACE_DIRECTIONS = {east: flux_x_one, west: flux_x_two,
+    # AQ_FACE_DIRECTIONS = {east: flux_x_two, west: flux_x_one,
     #                       south: flux_y_one, north: flux_y_two}
-    param_to_value = {
-        "flux_x_two": 1.0,  # east
-        "flux_x_one": 2.0,  # west
-        "flux_y_one": 3.0,  # south
-        "flux_y_two": 4.0,  # north
+    face_responses = {
+        "east":  _make_face_flux_response(n_cells=5, value=1.0),
+        "west":  _make_face_flux_response(n_cells=5, value=2.0),
+        "south": _make_face_flux_response(n_cells=5, value=3.0),
+        "north": _make_face_flux_response(n_cells=5, value=4.0),
     }
-
-    def fake_read_values(**kw):
-        return _make_face_flux_response(n_cells=5, value=param_to_value[kw["param"]])
-
-    monkeypatch.setattr(twin, "read_values", fake_read_values)
 
     response = twin.mask(
         kind="boundary_aq_flux",
@@ -814,6 +810,7 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
         polygon=polygon,
         syear=2010,
         eyear=2011,
+        face_responses=face_responses,
     )
 
     assert isinstance(response, AqBoundaryFluxResponse)
@@ -838,10 +835,10 @@ def test_mask_boundary_aq_flux_requires_syear_eyear(monkeypatch):
 def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
     mesh = _aq_cross_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh, cell_id_col="cell_id")
-    monkeypatch.setattr(
-        twin, "read_values",
-        lambda **kw: _make_face_flux_response(n_cells=5, value=0.0),
-    )
+    face_responses = {
+        direction: _make_face_flux_response(n_cells=5, value=0.0)
+        for direction in ("east", "west", "south", "north")
+    }
     polygon = box(100.0, 100.0, 200.0, 200.0)
 
     response = twin.mask(
@@ -850,6 +847,7 @@ def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
         polygon=polygon,
         syear=2010,
         eyear=2011,
+        face_responses=face_responses,
     )
 
     assert response.cell_ids == []
