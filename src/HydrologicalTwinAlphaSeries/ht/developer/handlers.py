@@ -120,7 +120,7 @@ def _prepare_sim_obs_data(
                 context="observations vs mesh spatial linkage",
             )
 
-    sim_response = twin.read_values(
+    sim_response = twin_io.read_values(
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
@@ -363,7 +363,8 @@ def _build_aq_spatial_gdf(
     """Extract, aggregate, and assemble an AQ spatial map GeoDataFrame."""
     comp_info = twin.get_compartment_info(id_compartment)
 
-    response = twin.read_values(
+    response = twin.fetch(
+        kind="simulation_matrix",
         id_compartment=id_compartment, outtype=outtype, param=param,
         syear=syear, eyear=eyear,
         id_layer=-9999,
@@ -817,7 +818,8 @@ def extract_area(
     """Extract simulated values for specific cells (area subset)."""
     comp = twin.get_compartment(id_compartment)
 
-    full_response = twin.read_values(
+    full_response = twin.fetch(
+        kind="simulation_matrix",
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
