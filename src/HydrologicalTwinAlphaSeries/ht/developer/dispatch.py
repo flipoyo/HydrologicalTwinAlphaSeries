@@ -59,7 +59,7 @@ from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
 )
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
-from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf
 
 from .api_types import (
     AqBoundaryFluxResponse,
@@ -373,7 +373,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 id_col = "id_abs"
             # Resolution selector for HYD internal values has to follow thereaches mesh 
             else:
-                mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+                mesh_gdf = _resolve_mesh_gdf(twin,request.id_compartment, request.id_layer)
                 id_col = _resolve_cell_id_col(twin, request.id_compartment)
             verify_crs_match(
                 mesh_gdf.crs,
@@ -497,7 +497,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             raise ValueError(
                 "mask(kind='polygon_cells') requires both 'id_compartment' and 'polygon'."
             )
-        mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+        mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
         verify_crs_match(
             mesh_gdf.crs,
             request.polygon_crs,
@@ -515,7 +515,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             raise ValueError(
                 "mask(kind='boundary_hyd') requires both 'id_compartment' and 'polygon'."
             )
-        network_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+        network_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
         verify_crs_match(
             network_gdf.crs,
             request.polygon_crs,
@@ -554,7 +554,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='boundary_hyd_flux') requires 'syear' and 'eyear' "
                 "to read the discharge time series."
             )
-        network_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+        network_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
         verify_crs_match(
             network_gdf.crs,
             request.polygon_crs,
@@ -605,7 +605,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             raise ValueError(
                 "mask(kind='boundary_aq') requires both 'id_compartment' and 'polygon'."
             )
-        aq_mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+        aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
         verify_crs_match(
             aq_mesh_gdf.crs,
             request.polygon_crs,
@@ -636,7 +636,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='boundary_aq_flux') requires 'syear' and 'eyear' "
                 "to read the face-flux time series."
             )
-        aq_mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
+        aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
         verify_crs_match(
             aq_mesh_gdf.crs,
             request.polygon_crs,
