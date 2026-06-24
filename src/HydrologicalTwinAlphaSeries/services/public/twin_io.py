@@ -60,6 +60,7 @@ from .io_types import (
     ValuesResponse,
 )
 
+#LAYERREFACTORING - ALL THESE FUNCTIONS (get_compartment, layer_info) COULD BE CONSIDERED BELONGING TO THE DOMAIN (evaluate inheritance relationship in this sense) AND NOT SERVICE SPHERE OR BEING DIRECTLY TOOLS
 def get_compartment(twin: "HydrologicalTwin", id_compartment: int) -> Compartment:
     """Return a registered Compartment.
 
@@ -119,14 +120,14 @@ def _resolve_layer_infos(
     if layers is not None:
         return layers
     if layer_names:
-        comp_info = twin.get_compartment_info(id_compartment)
+        comp_info = get_compartment_info(twin, id_compartment)
         return [
-            twin.get_layer_info(id_compartment, comp_info.layers_gis_names.index(layer_name))
+            get_layer_info(twin, id_compartment, comp_info.layers_gis_names.index(layer_name))
             for layer_name in layer_names
         ]
     if id_layer == -9999:
-        return twin.get_all_layers(id_compartment)
-    return [twin.get_layer_info(id_compartment, id_layer)]
+        return get_all_layers(twin, id_compartment)
+    return [get_layer_info(twin, id_compartment, id_layer)]
 
 
 def get_compartment_info(twin: "HydrologicalTwin", id_compartment: int) -> CompartmentInfo:
@@ -178,7 +179,7 @@ def get_all_layers(twin: "HydrologicalTwin", id_compartment: int) -> List[LayerI
     """Return LayerInfo for every layer in a compartment's mesh."""
     comp = twin.get_compartment(id_compartment)
     return [
-        twin.get_layer_info(id_compartment, lid)
+        get_layer_info(twin, id_compartment, lid)
         for lid in comp.mesh.mesh
     ]
 

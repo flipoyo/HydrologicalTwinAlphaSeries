@@ -70,3 +70,7 @@ in `run_mask_internal_values`) with pure GeoDataFrame *assembly* (gpd join +
 weight column — a services-layer op, no twin / no dispatch).
 - **Fix:** keep the `twin.*` selection inline in `run_mask_internal_values`;
   extract the pure geopandas assembly into `services/`.
+
+
+
+### Create more L2 APIs to differentiate more; ex - rendering only for images, while the ouptucreation for others
