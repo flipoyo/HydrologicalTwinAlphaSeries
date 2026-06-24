@@ -140,7 +140,8 @@ def _twin_with_mock_compartment(monkeypatch, mesh_gdf, cell_id_col="cell_id"):
     """
     twin = _twin_in_loaded_state()
     monkeypatch.setattr(twin, "_resolve_mesh_gdf", lambda *_args, **_kw: mesh_gdf)
-    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_args, **_kw: cell_id_col)
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+    monkeypatch.setattr(_dispatch, "_resolve_cell_id_col", lambda *_args, **_kw: cell_id_col)
     return twin
 
 
@@ -602,7 +603,8 @@ def test_mask_boundary_aq_passes_id_layer_through(monkeypatch):
 
     twin = _twin_in_loaded_state()
     monkeypatch.setattr(twin, "_resolve_mesh_gdf", fake_resolve_mesh_gdf)
-    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_a, **_kw: "cell_id")
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+    monkeypatch.setattr(_dispatch, "_resolve_cell_id_col", lambda *_a, **_kw: "cell_id")
     polygon = box(1.1, 0.1, 1.9, 0.9)
 
     response = twin.mask(

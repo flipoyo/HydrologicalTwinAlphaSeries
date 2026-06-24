@@ -59,7 +59,7 @@ from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
 )
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
-from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col
 
 from .api_types import (
     AqBoundaryFluxResponse,
@@ -374,7 +374,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             # Resolution selector for HYD internal values has to follow thereaches mesh 
             else:
                 mesh_gdf = twin._resolve_mesh_gdf(request.id_compartment, request.id_layer)
-                id_col = twin._resolve_cell_id_col(request.id_compartment)
+                id_col = _resolve_cell_id_col(twin, request.id_compartment)
             verify_crs_match(
                 mesh_gdf.crs,
                 request.polygon_crs,
@@ -503,7 +503,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             request.polygon_crs,
             context="mask(kind='polygon_cells')",
         )
-        id_col = twin._resolve_cell_id_col(request.id_compartment)
+        id_col = _resolve_cell_id_col(twin,request.id_compartment)
         cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
         return CellSelectionResponse(
             cell_ids=list(cell_ids),
@@ -521,7 +521,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             request.polygon_crs,
             context="mask(kind='boundary_hyd')",
         )
-        id_col = twin._resolve_cell_id_col(request.id_compartment)
+        id_col = _resolve_cell_id_col(twin, request.id_compartment)
         classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
@@ -560,7 +560,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             request.polygon_crs,
             context="mask(kind='boundary_hyd_flux')",
         )
-        id_col = twin._resolve_cell_id_col(request.id_compartment)
+        id_col = _resolve_cell_id_col(twin, request.id_compartment)
         classification = reaches_in_polygon_carachterisation(
             network_gdf, request.polygon, id_col=id_col
         )
@@ -611,7 +611,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             request.polygon_crs,
             context="mask(kind='boundary_aq')",
         )
-        id_col = twin._resolve_cell_id_col(request.id_compartment)
+        id_col = _resolve_cell_id_col(twin, request.id_compartment)
         cell_ids, edge_geometries = aq_cells_on_polygon_boundary(
             aq_mesh_gdf, request.polygon, id_col=id_col
         )
@@ -642,7 +642,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             request.polygon_crs,
             context="mask(kind='boundary_aq_flux')",
         )
-        id_col = twin._resolve_cell_id_col(request.id_compartment)
+        id_col = _resolve_cell_id_col(twin, request.id_compartment)
         boundary_info = aq_cells_boundary_faces(
             aq_mesh_gdf, request.polygon, id_col=id_col
         )

@@ -662,11 +662,6 @@ class HydrologicalTwin(HTPersistenceMixin):
         from ...services.public import twin_io
         return twin_io._resolve_mesh_gdf(self, id_compartment, id_layer)
 
-    def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
-        """Return the name or index of the cell ID column for a compartment's mesh."""
-        from ...services.public import twin_io
-        return twin_io._resolve_cell_id_col(self, id_compartment)
-
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
         from ...services.public import twin_io
