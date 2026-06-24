@@ -163,8 +163,7 @@ class MaskRequest:
     # operations_client fetches it before calling mask() and threads it here so
     # the dispatcher never needs to call back up to L1 or re-read from disk.
     # ``boundary_aq_flux`` needs one ValuesResponse per AQ face direction
-    # (keyed by direction name, e.g. ``"N"``, ``"S"``, ``"E"``, ``"W"``).
-    # Both default to None; non-boundary-flux kinds ignore them entirely.
+    # (keyed by direction name, e.g. ``"east"``, ``"west"``, ``"south"``, ``"north"``).
     q_response: Optional[Any] = None
     face_responses: Optional[Dict[str, Any]] = None
 
