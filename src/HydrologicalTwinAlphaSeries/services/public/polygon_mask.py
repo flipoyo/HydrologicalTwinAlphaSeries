@@ -15,7 +15,6 @@ carry. See the ``polygon-geometry-ops`` capability spec.
 from typing import Any, Dict, List, Tuple, Union
 
 import geopandas as gpd
-import pandas as pd
 import shapely
 from shapely.ops import unary_union
 
