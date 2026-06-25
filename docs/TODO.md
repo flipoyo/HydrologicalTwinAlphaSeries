@@ -17,10 +17,6 @@ modules. They complete the move toward the clean single L2→L3 arrow.
   `hydrological_twin_developer.py` facade and L3. Folding their compute /
   routing bodies into the micro-verb methods removes the intermediate hop so L2
   becomes a single layer that calls straight down into L3.
-- **De-orchestrate `operations_client.py`.** Today it owns full
-  `fetch → transform → render` chains (e.g. `run_mask_internal_values` ≈ 290
-  lines). Push that chaining down toward L2 micro-verbs so the L1 client stays
-  thin and the orchestration lives one level closer to the compute.
 - **Revisit moving the leaf data DTOs into an L3 `io_types.py`** — *done* for
   the 5 read DTOs (`ValuesResponse`, `ObservationsResponse`, `CompartmentInfo`,
   `LayerInfo`, `ObservationInfo`), which now live in
@@ -74,3 +70,18 @@ weight column — a services-layer op, no twin / no dispatch).
 
 
 ### Create more L2 APIs to differentiate more; ex - rendering only for images, while the ouptucreation for others
+
+
+## TO DO - FASTER (pure clening /removal)
+- remove ht/persistence -> remove the hydrotwin class depending from that one
+- remove all the passage throught the hydrological_twin_developer of the twin_io calls
+- AT LEAST the read values has to be clean: ideal structure is:
+HT_DEV : 
+  if fetch.simulation matrix  
+    call: temporal.load_from_cache 
+    call:: temporal.temporal_mask - NEW METHOD produced as a result of the final part ofread_values (twin_io)
+
+
+## Twin_io analysis 
+- read_values can be replaced
+- read_observation can be deleted and completely replaced by a 
