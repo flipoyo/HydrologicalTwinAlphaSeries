@@ -16,6 +16,29 @@ from HydrologicalTwinAlphaSeries.ht import (
     ValuesResponse,
 )
 from HydrologicalTwinAlphaSeries.ht.client import operations_client as operations
+from HydrologicalTwinAlphaSeries.ht.developer import dispatch
+from HydrologicalTwinAlphaSeries.ht.developer.api_types import (
+    AssembleRequest,
+    ExportRequest,
+)
+
+
+def _attach_assemble_export(twin):
+    """Give a fake twin the L2 ``assemble`` / ``export`` verbs.
+
+    ``run_mask_internal_values`` routes its shaping/disk writes through these
+    verbs. The dispatch functions ignore ``twin`` entirely (they only read the
+    request and call pure L3 writers), so the fakes delegate to them via the
+    same kwargs→request coercion the real facade uses — exercising the real L3
+    shaping/writing without a full twin.
+    """
+    twin.assemble = lambda kind, **kwargs: dispatch.assemble(
+        twin, AssembleRequest(kind=kind, **kwargs)
+    )
+    twin.export = lambda kind, **kwargs: dispatch.export(
+        twin, ExportRequest(kind=kind, **kwargs)
+    )
+    return twin
 
 
 def _watbal_entry(result):
@@ -52,10 +75,12 @@ def _fake_twin_and_polygon():
     # here it mirrors the single mesh (cell_ids double as global id_abs).
     outcropping_gdf = mesh_gdf.rename(columns={"id_cell": "id_abs"})
 
-    twin = SimpleNamespace(
-        mask=fake_mask,
-        out_caw_directory="/tmp/fake_out_caw",
-        _build_outcropping_mesh_gdf=lambda *_a, **_k: outcropping_gdf,
+    twin = _attach_assemble_export(
+        SimpleNamespace(
+            mask=fake_mask,
+            out_caw_directory="/tmp/fake_out_caw",
+            _build_outcropping_mesh_gdf=lambda *_a, **_k: outcropping_gdf,
+        )
     )
     polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
     return twin, polygon, mesh_gdf
@@ -303,7 +328,9 @@ def _weighted_twin_and_polygon():
             )
         raise ValueError(f"unexpected mask kind: {kind!r}")
 
-    twin = SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    twin = _attach_assemble_export(
+        SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    )
     polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
     return twin, polygon, mesh_gdf
 
@@ -507,7 +534,9 @@ def _hyd_twin_and_polygon():
             )
         raise ValueError(f"unexpected mask kind: {kind!r}")
 
-    twin = SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    twin = _attach_assemble_export(
+        SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    )
     polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
     return twin, polygon, mesh_gdf
 
@@ -624,7 +653,9 @@ def _unit_capturing_twin_and_polygon():
             )
         raise ValueError(f"unexpected mask kind: {kind!r}")
 
-    twin = SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    twin = _attach_assemble_export(
+        SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    )
     polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
     return twin, polygon, mesh_gdf, raw
 
