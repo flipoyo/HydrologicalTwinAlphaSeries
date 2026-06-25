@@ -15,10 +15,6 @@ from HydrologicalTwinAlphaSeries.config.constants import _LENGTH_UNITS
 from HydrologicalTwinAlphaSeries.services.private.raw_data_export import (
     assemble_daily_sim_obs_table,
 )
-from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
-    save_area_geopackage,
-    save_area_values_npy,
-)
 
 from .api_types import (
     BudgetBarplotResult,
@@ -902,8 +898,8 @@ def run_mask_internal_values(
                 columns=[f"cell_{i}" for i in range(response.data.shape[0])],
             )
             df.to_csv(csv_path)
-            # Tier-1 privileged write — see services/SECURITY.md.
-            save_area_values_npy(npy_path, response.data)
+            # Privileged .npy write routed through the L2 export gate.
+            twin.export(kind="npy", path=npy_path, data=response.data)
             artefacts.append(csv_path)
             artefacts.append(npy_path)
         ctx["retained_responses"][param] = response
@@ -984,12 +980,15 @@ def run_mask_internal_values(
                     "weighted": bool(weighted),
                 }
             )
-        # Tier-1 privileged write — see services/SECURITY.md.
-        save_area_geopackage(
-            gpkg_path,
-            compartment_blocks,
-            provenance_rows,
-            daily_values_unit_override=spec_units,
+        # Privileged GeoPackage write routed through the L2 export gate.
+        twin.export(
+            kind="geopackage",
+            path=gpkg_path,
+            data=compartment_blocks,
+            options={
+                "provenance_rows": provenance_rows,
+                "unit_override": spec_units,
+            },
         )
         artefacts.append(gpkg_path)
 

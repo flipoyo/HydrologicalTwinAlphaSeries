@@ -67,6 +67,8 @@ from .api_types import (
     BudgetComputationResponse,
     CellSelectionResponse,
     CriteriaResponse,
+    ExportRequest,
+    ExportResult,
     FetchRequest,
     HydBoundaryFluxResponse,
     HydBoundaryResponse,
@@ -984,3 +986,33 @@ def render(twin: "HydrologicalTwin", request: RenderRequest) -> RenderResult:
     else:
         raise ValueError(f"Unknown render kind: {request.kind!r}")
     return RenderResult(artefacts=artefacts, meta={"kind": request.kind})
+
+
+def export(twin: "HydrologicalTwin", request: ExportRequest) -> ExportResult:
+    """Dispatch ladder for ``HydrologicalTwin.export``.
+
+    ``request.kind`` selects a **data file format**, never a semantic artefact
+    and never an image. Each branch is a transparent pass-through to the
+    privileged L3 writers in ``services/private/submodel_export.py`` — no
+    reshaping, no fetch/transform. This is the single L2 gate point where the
+    Tier-1 write import lives (see ``services/SECURITY.md``).
+    """
+    from ...services.private.submodel_export import (
+        save_area_geopackage,
+        save_area_values_npy,
+    )
+
+    if request.kind == "npy":
+        # Tier-1 privileged write — see services/SECURITY.md.
+        save_area_values_npy(request.path, request.data)
+    elif request.kind == "geopackage":
+        # Tier-1 privileged write — see services/SECURITY.md.
+        save_area_geopackage(
+            request.path,
+            request.data,
+            request.options["provenance_rows"],
+            request.options["unit_override"],
+        )
+    else:
+        raise ValueError(f"Unknown export kind: {request.kind!r}")
+    return ExportResult(path=request.path, meta={"kind": request.kind})

@@ -12,11 +12,12 @@ These were captured (not done) by the structural-relocation change that moved
 `accessors.py` → `services/public/twin_io.py` and renamed the L1/L2 entry
 modules. They complete the move toward the clean single L2→L3 arrow.
 
-- **Fold `handlers.py` and `dispatch.py` into the L2 micro-verbs.** They are
+- **Fold `handlers.py` into the L2 micro-verbs or L3 elementaries evaluating by case to case.** They are
   currently *transitional L2-internal modules* sitting between the
   `hydrological_twin_developer.py` facade and L3. Folding their compute /
   routing bodies into the micro-verb methods removes the intermediate hop so L2
-  becomes a single layer that calls straight down into L3.
+  becomes a single layer that calls straight down into L3. dispatch instead will have exactly the same 
+  role that operations_client is having now: the code side of a facade. 
 - **Revisit moving the leaf data DTOs into an L3 `io_types.py`** — *done* for
   the 5 read DTOs (`ValuesResponse`, `ObservationsResponse`, `CompartmentInfo`,
   `LayerInfo`, `ObservationInfo`), which now live in
@@ -85,3 +86,12 @@ HT_DEV :
 ## Twin_io analysis 
 - read_values can be replaced
 - read_observation can be deleted and completely replaced by a 
+
+
+## Proposals
+- **`assemble` micro-verb (semantic-artefact, no I/O).** Counterpart to `export`:
+  where `export(kind=<format>)` serializes data to disk, `assemble(kind=<artefact>)`
+  builds the exportable object (DataFrame / table) and **returns** it, writing nothing
+  (server-tomorrow seam). First home for `assemble_daily_sim_obs_table`, then the
+  criteria report and budget/boundary tables — the content-shaped writers `export`
+  intentionally leaves out.

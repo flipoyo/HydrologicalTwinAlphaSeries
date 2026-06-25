@@ -250,9 +250,21 @@ class RenderRequest:
 
 @dataclass
 class ExportRequest:
-    path: Optional[str] = None
-    fmt: str = "pickle"
+    """Inputs for ``HydrologicalTwin.export(kind=...)`` (alpha-2 shape).
+
+    ``kind`` selects a **data file format** (``"npy"`` or ``"geopackage"``),
+    not a semantic artefact and never an image type. ``data`` carries the
+    primary payload (an ndarray for npy, the ``compartment_blocks`` mapping for
+    geopackage) and ``options`` carries kind-specific extras (e.g.
+    ``provenance_rows`` / ``unit_override`` for geopackage). The extras ride an
+    ``options`` dict rather than ``**kwargs`` so they never collide with the
+    facade's ``request=`` coercion idiom.
+    """
+
+    kind: str = "npy"
+    path: str = ""
     data: Any = None
+    options: Dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
