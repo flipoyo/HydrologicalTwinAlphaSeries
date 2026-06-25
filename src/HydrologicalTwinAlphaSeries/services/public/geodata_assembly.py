@@ -1,3 +1,8 @@
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any, Mapping, Optional
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -67,3 +72,82 @@ def assemble_multi_layer_geodataframe(
     result = result[["ID_ABS", "ID_LAY"] + cols + ["geometry"]]
     result = result.sort_values(by=["ID_LAY", "ID_ABS"])
     return result
+
+
+def build_compartment_bundle(
+    compartment_blocks: Mapping[Any, tuple],
+    output_dir: str,
+    area_name: str,
+    label: str,
+    syear: Any,
+    eyear: Any,
+    polygon: Any,
+    polygon_crs: Any,
+    weighted: bool,
+    source_run: str,
+) -> tuple:
+    """Shape a per-key block mapping into a GeoPackage-ready bundle.
+
+    Pure data-assembly: composes the output path, builds one provenance row per
+    key, and returns the payload a later ``twin.export(kind="geopackage", ...)``
+    writes. It performs **no disk I/O** and imports nothing from ``ht/`` — every
+    twin-derived value (e.g. ``source_run``) arrives as a parameter, keeping the
+    L3 import edge downward only.
+
+    :param compartment_blocks: generic per-key block mapping shaped as
+        ``{key: (rows_gdf, {series_key: ValuesResponse}, totals)}``. For the
+        Internal Values case, ``key`` is the compartment, ``rows_gdf`` holds the
+        masked cell footprints, the inner mapping is keyed by param, and
+        ``totals`` is the per-param polygon-total frames (or ``None`` when not
+        weighted). The shape is deliberately generic: ``rows_gdf`` may hold
+        cell-edge geometries instead of footprints, and ``series_key`` admits a
+        flux-direction token (the AQ-boundary reuse routes ``(cell, direction)``
+        fluxes through here unchanged, the direction travelling in the
+        ``series_key``/``param`` field) — so no GeoPackage schema change is
+        needed to serve that future caller.
+    :param output_dir: directory the composed ``gpkg_path`` lives in (not created
+        here; the writer/export step owns disk side effects).
+    :param area_name: masked-area name, the ``{area_name}`` path token.
+    :param label: basename token (e.g. ``"InternalValues"``).
+    :param syear, eyear: year stamps for the path and provenance rows.
+    :param polygon: shapely geometry of the mask; its ``.wkt`` feeds provenance.
+    :param polygon_crs: CRS of the mask polygon (provenance only).
+    :param weighted: whether the run used area-fraction weighting (provenance).
+    :param source_run: the originating run directory (``twin.out_caw_directory``),
+        passed in so L3 needs no twin handle.
+    :returns: the plain tuple ``(gpkg_path, compartment_blocks, provenance_rows,
+        unit_override)``. The caller (L2) wraps this tuple into its own typed
+        result — L3 never names that type, keeping the import edge downward only.
+    """
+    gpkg_path = os.path.join(
+        output_dir, f"{area_name}_{label}_{syear}_{eyear}.gpkg"
+    )
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    run_fields = {
+        "source_run": source_run or "",
+        "syear": syear,
+        "eyear": eyear,
+        "polygon_crs": polygon_crs or "",
+        "area_name": area_name,
+        "polygon_wkt": polygon.wkt,
+        "generated_at": generated_at,
+    }
+
+    provenance_rows = []
+    unit_override: dict = {}
+    for key, (_rows_gdf, series, _totals) in compartment_blocks.items():
+        series_keys = list(series.keys())
+        for series_key, response in series.items():
+            unit = (response.meta or {}).get("target_unit") if response is not None else None
+            if unit is not None:
+                unit_override[series_key] = unit
+        provenance_rows.append(
+            {
+                **run_fields,
+                "compartment": key,
+                "params": json.dumps(series_keys),
+                "weighted": bool(weighted),
+            }
+        )
+
+    return gpkg_path, compartment_blocks, provenance_rows, unit_override

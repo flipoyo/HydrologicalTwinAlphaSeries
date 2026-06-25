@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import numpy as np
 
@@ -52,6 +52,7 @@ MINIMUM_STATE: Dict[str, TwinState] = {
     "transform": TwinState.LOADED,
     "render": TwinState.LOADED,
     "export": TwinState.LOADED,
+    "assemble": TwinState.LOADED,
 }
 
 
@@ -173,6 +174,40 @@ class MaskRequest:
     # recomputing them. Typed Any (like q_response / face_responses) because it
     # carries a response dataclass, not a bare mapping.
     face_orientations: Optional[Any] = None
+
+
+@dataclass
+class AssembleRequest:
+    """Inputs for ``HydrologicalTwin.assemble(kind=...)``.
+
+    ``assemble`` is shape-only: it turns already-fetched per-key blocks into a
+    serialization-ready payload (a :class:`CompartmentBundleResult`) that a
+    subsequent ``twin.export(kind="geopackage", ...)`` writes to disk. It never
+    fetches/masks and never touches disk itself.
+
+    ``kind`` is the only required field; the rest are optional so the same
+    request shape can serve future kinds. For ``kind="compartment_bundle"``:
+
+    - ``label`` — basename token (e.g. ``"InternalValues"``); L3 composes
+      ``{area_name}_{label}_{syear}_{eyear}.gpkg``.
+    - ``compartment_blocks`` — the generic per-key block mapping
+      ``{key: (rows_gdf, {series_key: ValuesResponse}, totals)}``.
+    - ``output_dir`` — the directory the composed ``gpkg_path`` lives in.
+    - ``source_run`` — a twin-derived value (the caller passes
+      ``twin.out_caw_directory``) so L3 needs no upward import.
+    """
+
+    kind: str = "compartment_bundle"
+    label: Optional[str] = None
+    compartment_blocks: Optional[Mapping] = None
+    output_dir: Optional[str] = None
+    area_name: Optional[str] = None
+    syear: Optional[int] = None
+    eyear: Optional[int] = None
+    polygon: Any = None
+    polygon_crs: Any = None
+    weighted: bool = False
+    source_run: Optional[str] = None
 
 
 @dataclass
@@ -507,3 +542,20 @@ class RenderResult:
 class ExportResult:
     path: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class CompartmentBundleResult:
+    """Serialization-ready payload from ``assemble(kind="compartment_bundle")``.
+
+    Constructed at L2 (``dispatch.assemble`` wraps the plain 4-tuple returned by
+    the L3 :func:`build_compartment_bundle`) and consumed by L1
+    ``operations_client``. L3 never names this type, so the import edge stays
+    downward only. ``gpkg_path`` is a *composed* path string — no file exists at
+    it until a later ``twin.export(kind="geopackage", ...)`` writes it.
+    """
+
+    gpkg_path: str
+    compartment_blocks: Mapping
+    provenance_rows: list
+    unit_override: Mapping

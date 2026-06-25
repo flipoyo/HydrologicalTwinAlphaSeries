@@ -805,12 +805,7 @@ def run_mask_internal_values(
         ``artefacts`` list, and (when ``weighted=True``) the per-spec
         ``polygon_total_paths`` mapping keyed by ``(compartment, param)``.
     """
-    import json  # noqa: PLC0415
-    from datetime import datetime, timezone  # noqa: PLC0415
-
     import pandas as pd  # noqa: PLC0415 — local import keeps top-of-module light
-
-    from HydrologicalTwinAlphaSeries import __version__ as _htas_ver  # noqa: PLC0415
 
     specs = [tuple(s) for s in specs]
 
@@ -819,11 +814,6 @@ def run_mask_internal_values(
     artefacts: list = []
     polygon_total_paths: dict = {}
     years_token = f"{syear}-{eyear}"
-    # Per-param unit from each spec's 4th element — the single source of truth
-    # for that param's GeoPackage ``daily_values`` unit label (matches the
-    # per-spec ``target_unit`` used for its numeric conversion).
-    spec_units = {param: unit for _, _, param, unit in specs}
-
     # Distinct compartments in first-seen order; resolve each mesh once.
     compartments = list(dict.fromkeys(comp for comp, *_ in specs))
     comp_resolved = {}
@@ -947,50 +937,42 @@ def run_mask_internal_values(
         # compartment: a cells_<compartment> layer per mesh, a
         # compartment-keyed daily_values table, and one provenance row per
         # compartment. The per-compartment data is already assembled in
-        # comp_resolved; here we shape it for the generalised writer.
-        gpkg_path = os.path.join(
-            output_dir, f"{area_name}_InternalValues_{syear}_{eyear}.gpkg"
-        )
-        generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        run_fields = {
-            "source_run": getattr(twin, "out_caw_directory", "") or "",
-            "syear": syear,
-            "eyear": eyear,
-            "polygon_crs": polygon_crs or "",
-            "area_name": area_name,
-            "polygon_wkt": polygon.wkt,
-            "generated_at": generated_at,
-            "htas_ver": _htas_ver or "unknown",
+        # comp_resolved; the path/provenance/unit shaping now lives in the L3
+        # ``build_compartment_bundle`` reached via the ``assemble`` verb, and the
+        # disk write stays behind the ``export`` gate. assemble() is shape-only —
+        # nothing is written until export() runs.
+        compartment_blocks = {
+            comp: (
+                comp_resolved[comp]["cells_gdf"],
+                comp_resolved[comp]["retained_responses"],
+                comp_resolved[comp]["polygon_total_dfs"] if weighted else None,
+            )
+            for comp in compartments
         }
-        compartment_blocks = {}
-        provenance_rows = []
-        for comp in compartments:
-            ctx = comp_resolved[comp]
-            comp_params = [p for c, _, p, _ in specs if c == comp]
-            compartment_blocks[comp] = (
-                ctx["cells_gdf"],
-                ctx["retained_responses"],
-                ctx["polygon_total_dfs"] if weighted else None,
-            )
-            provenance_rows.append(
-                {
-                    **run_fields,
-                    "compartment": comp,
-                    "params": json.dumps(comp_params),
-                    "weighted": bool(weighted),
-                }
-            )
+        bundle = twin.assemble(
+            kind="compartment_bundle",
+            label="InternalValues",
+            compartment_blocks=compartment_blocks,
+            output_dir=output_dir,
+            area_name=area_name,
+            syear=syear,
+            eyear=eyear,
+            polygon=polygon,
+            polygon_crs=polygon_crs,
+            weighted=weighted,
+            source_run=getattr(twin, "out_caw_directory", "") or "",
+        )
         # Privileged GeoPackage write routed through the L2 export gate.
         twin.export(
             kind="geopackage",
-            path=gpkg_path,
-            data=compartment_blocks,
+            path=bundle.gpkg_path,
+            data=bundle.compartment_blocks,
             options={
-                "provenance_rows": provenance_rows,
-                "unit_override": spec_units,
+                "provenance_rows": bundle.provenance_rows,
+                "unit_override": bundle.unit_override,
             },
         )
-        artefacts.append(gpkg_path)
+        artefacts.append(bundle.gpkg_path)
 
     entries = [
         CompartmentCellsEntry(

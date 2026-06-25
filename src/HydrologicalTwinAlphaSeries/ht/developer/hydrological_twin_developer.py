@@ -28,6 +28,8 @@ from HydrologicalTwinAlphaSeries.services.public.temporal import Temporal
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AssembleRequest,
+    CompartmentBundleResult,
     CompartmentCatalog,
     CompartmentInfo,
     ConfigureRequest,
@@ -656,6 +658,39 @@ class HydrologicalTwin:
 
         from . import dispatch
         return dispatch.export(self, request)
+
+    def assemble(
+        self,
+        kind: Union[str, AssembleRequest] = "compartment_bundle",
+        request: Optional[AssembleRequest] = None,
+        **kwargs: Any,
+    ) -> CompartmentBundleResult:
+        """Shape already-fetched per-key blocks into a serialization-ready payload.
+
+        ``assemble`` is the 6th canonical dispatching verb, alongside ``fetch``,
+        ``mask``, ``transform``, ``render``, and ``export``. ``kind`` selects a
+        shaping workflow (``"compartment_bundle"`` today). It is **shape-only**:
+        it performs no ``fetch``/``mask``/``transform`` and no disk I/O — the
+        returned :class:`CompartmentBundleResult` is written by a subsequent
+        ``twin.export(kind="geopackage", ...)`` call.
+
+        Follows the same coercion idiom as the other dispatching verbs: pass a
+        pre-built :class:`AssembleRequest` positionally, or supply kwargs that
+        are folded into one. Unexpected kwargs raise ``TypeError``.
+        """
+        self._require_state("assemble")
+        if isinstance(kind, AssembleRequest) and request is None:
+            request = kind
+            kind = request.kind
+        if request is None:
+            assert isinstance(kind, str)
+            request = AssembleRequest(kind=kind, **kwargs)
+        elif kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+
+        from . import dispatch
+        return dispatch.assemble(self, request)
 
     def get_compartment(self, id_compartment: int) -> Compartment:
         """Return a registered Compartment.

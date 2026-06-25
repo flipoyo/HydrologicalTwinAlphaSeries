@@ -61,11 +61,13 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
 from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf
 
 from .api_types import (
+    AssembleRequest,
     BoundaryFluxResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
     BudgetComputationResponse,
     CellSelectionResponse,
+    CompartmentBundleResult,
     CriteriaResponse,
     ExportRequest,
     ExportResult,
@@ -1016,3 +1018,38 @@ def export(twin: "HydrologicalTwin", request: ExportRequest) -> ExportResult:
     else:
         raise ValueError(f"Unknown export kind: {request.kind!r}")
     return ExportResult(path=request.path, meta={"kind": request.kind})
+
+
+def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
+    """Dispatch ladder for ``HydrologicalTwin.assemble``.
+
+    Routes ``kind="compartment_bundle"`` down to the pure L3 shaping function
+    :func:`build_compartment_bundle`, then wraps its plain 4-tuple into the
+    L2-owned :class:`CompartmentBundleResult` so L3 never names the result type.
+    ``assemble`` is shape-only — no disk write happens here.
+    """
+    from ...services.public.geodata_assembly import build_compartment_bundle
+
+    if request.kind == "compartment_bundle":
+        gpkg_path, compartment_blocks, provenance_rows, unit_override = (
+            build_compartment_bundle(
+                compartment_blocks=request.compartment_blocks or {},
+                output_dir=request.output_dir or "",
+                area_name=request.area_name or "",
+                label=request.label or "",
+                syear=request.syear,
+                eyear=request.eyear,
+                polygon=request.polygon,
+                polygon_crs=request.polygon_crs,
+                weighted=request.weighted,
+                source_run=request.source_run or "",
+            )
+        )
+        return CompartmentBundleResult(
+            gpkg_path=gpkg_path,
+            compartment_blocks=compartment_blocks,
+            provenance_rows=provenance_rows,
+            unit_override=unit_override,
+        )
+
+    raise ValueError(f"Unknown assemble kind: {request.kind!r}")
