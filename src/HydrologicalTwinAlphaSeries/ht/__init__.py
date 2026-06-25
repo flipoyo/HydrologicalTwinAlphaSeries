@@ -1,6 +1,7 @@
 from HydrologicalTwinAlphaSeries.ht.developer import (
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
+    BoundaryFluxResponse,
     BudgetComputationResponse,
     CellSelectionResponse,
     CompartmentCatalog,
@@ -38,6 +39,7 @@ from HydrologicalTwinAlphaSeries.ht.developer import (
 __all__ = [
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
+    "BoundaryFluxResponse",
     "BudgetComputationResponse",
     "CellSelectionResponse",
     "CompartmentCatalog",

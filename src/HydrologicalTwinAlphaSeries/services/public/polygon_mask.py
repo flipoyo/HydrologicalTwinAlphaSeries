@@ -11,7 +11,6 @@ These are class-free by design: each function is ``(gdf, polygon, id_col) ->
 result`` with no state held between calls, so there is nothing for a class to
 carry. See the ``polygon-geometry-ops`` capability spec.
 """
-from pickle import DICT
 
 from typing import Any, Dict, List, Tuple, Union
 

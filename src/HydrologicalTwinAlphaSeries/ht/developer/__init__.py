@@ -1,6 +1,7 @@
 from .api_types import (
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
+    BoundaryFluxResponse,
     BudgetComputationResponse,
     CellSelectionResponse,
     CompartmentCatalog,
@@ -38,6 +39,7 @@ from .hydrological_twin_developer import HydrologicalTwin
 __all__ = [
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
+    "BoundaryFluxResponse",
     "BudgetComputationResponse",
     "CellSelectionResponse",
     "CompartmentCatalog",

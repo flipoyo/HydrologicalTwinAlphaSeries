@@ -6,8 +6,7 @@ import pytest
 from shapely.geometry import LineString, box
 
 from HydrologicalTwinAlphaSeries.ht import (
-    AqBoundaryFluxResponse,
-    AqBoundaryResponse,
+    BoundaryFluxResponse,
     CellSelectionResponse,
     HydBoundaryFluxResponse,
     HydBoundaryResponse,
@@ -571,29 +570,33 @@ def test_mask_boundary_hyd_no_boundary_reaches_returns_empty(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# S7 — kind="boundary_aq" + AqBoundaryResponse
+# S7 — kind="boundary_aq" + BoundaryFluxResponse (face orientations)
 # ---------------------------------------------------------------------------
 
 
-def test_mask_boundary_aq_returns_aq_boundary_response(monkeypatch):
-    """3x1 strip; polygon covers only middle cell — its 2 outside neighbours give 2 boundary edges."""
+def test_mask_boundary_aq_returns_boundary_response(monkeypatch):
+    """3x1 strip; polygon covers only middle cell — its 2 outside neighbours
+    give 2 flux faces on that single boundary cell."""
     mesh = _grid_mesh(nx=3, ny=1)
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only the middle cell's centroid (id 2)
 
     response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
 
-    assert isinstance(response, AqBoundaryResponse)
-    assert sorted(response.cell_ids) == [2, 2]
-    assert len(response.edge_geometries) == 2
-    assert all(edge.geom_type == "LineString" for edge in response.edge_geometries)
+    assert isinstance(response, BoundaryFluxResponse)
+    # One entry per boundary cell; cell 2 is the only inside cell.
+    assert response.cell_ids == [2]
+    assert len(response.face_directions[2]) == 2  # left + right outside faces
+    # edge_geometries is keyed by cell_id with one merged geometry per cell.
+    assert set(response.edge_geometries.keys()) == {2}
+    assert response.edge_geometries[2].geom_type in ("LineString", "MultiLineString")
     assert response.meta["id_compartment"] == 2
-    assert response.meta["id_layer"] == 0
+    assert response.meta["id_layers"] == [0]
     assert response.meta["kind"] == "boundary_aq"
 
 
-def test_mask_boundary_aq_passes_id_layer_through(monkeypatch):
-    """id_layer reaches _resolve_mesh_gdf and ends up in the response meta."""
+def test_mask_boundary_aq_scans_all_id_layers(monkeypatch):
+    """id_layers drives one _resolve_mesh_gdf call per layer; meta carries the list."""
     mesh = _grid_mesh(nx=3, ny=1)
     captured_layers = []
 
@@ -608,11 +611,11 @@ def test_mask_boundary_aq_passes_id_layer_through(monkeypatch):
     polygon = box(1.1, 0.1, 1.9, 0.9)
 
     response = twin.mask(
-        kind="boundary_aq", id_compartment=2, polygon=polygon, id_layer=3
+        kind="boundary_aq", id_compartment=2, polygon=polygon, id_layers=[3]
     )
 
     assert captured_layers == [3]
-    assert response.meta["id_layer"] == 3
+    assert response.meta["id_layers"] == [3]
 
 
 def test_mask_boundary_aq_missing_id_compartment_raises(monkeypatch):
@@ -654,7 +657,8 @@ def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):
     response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
 
     assert response.cell_ids == []
-    assert response.edge_geometries == []
+    assert response.edge_geometries == {}
+    assert response.face_directions == {}
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +810,10 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
         "north": _make_face_flux_response(n_cells=5, value=4.0),
     }
 
+    # boundary_aq resolves the boundary cells + flux faces; boundary_aq_flux
+    # reuses them via face_orientations rather than recomputing from the mesh.
+    face_orientations = twin.mask(kind="boundary_aq", id_compartment=1, polygon=polygon)
+
     response = twin.mask(
         kind="boundary_aq_flux",
         id_compartment=1,
@@ -813,9 +821,10 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
         syear=2010,
         eyear=2011,
         face_responses=face_responses,
+        face_orientations=face_orientations,
     )
 
-    assert isinstance(response, AqBoundaryFluxResponse)
+    assert isinstance(response, BoundaryFluxResponse)
     assert response.cell_ids == [1]
     assert sorted(response.face_directions[1]) == ["east", "north", "south", "west"]
     # Each direction's flux is 5 timesteps of the per-direction constant.
@@ -843,6 +852,10 @@ def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
     }
     polygon = box(100.0, 100.0, 200.0, 200.0)
 
+    # Disjoint polygon → boundary_aq finds no boundary cells; the empty
+    # orientations carry through to an empty flux response.
+    face_orientations = twin.mask(kind="boundary_aq", id_compartment=1, polygon=polygon)
+
     response = twin.mask(
         kind="boundary_aq_flux",
         id_compartment=1,
@@ -850,6 +863,7 @@ def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
         syear=2010,
         eyear=2011,
         face_responses=face_responses,
+        face_orientations=face_orientations,
     )
 
     assert response.cell_ids == []

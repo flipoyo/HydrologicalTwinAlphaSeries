@@ -7,8 +7,7 @@ import pytest
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, box
 
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
-    aq_cells_boundary_faces,
-    aq_cells_on_polygon_boundary,
+    cells_boundary_faces,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
@@ -404,127 +403,6 @@ def test_reaches_on_polygon_boundary_id_col_as_integer_position():
 
 
 # ---------------------------------------------------------------------------
-# aq_cells_on_polygon_boundary — inside↔outside topological boundary (S6)
-# ---------------------------------------------------------------------------
-
-
-def test_aq_cells_on_polygon_boundary_inside_cell_with_one_outside_neighbor():
-    """3x1 strip; polygon covers only the middle cell — its two outside neighbours give 2 boundary edges."""
-    mesh = _grid_mesh(nx=3, ny=1)  # cells: 0 left, 1 middle, 2 right
-    polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only cell 1's centroid (1.5, 0.5)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Cell 1 is the only inside cell; both its neighbours (0, 2) are outside,
-    # so it contributes 2 boundary edges (its left and right shared edges).
-    assert sorted(cell_ids) == [1, 1]
-    assert len(edges) == 2
-    for edge in edges:
-        assert edge.geom_type == "LineString"
-
-
-def test_aq_cells_on_polygon_boundary_inside_cell_with_all_inside_neighbors():
-    """3x3 mesh; polygon covers all cells → centre cell (4) has all-inside neighbours → no entry for it."""
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(0.0, 0.0, 3.0, 3.0)  # covers all 9 cells
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # All cells inside → no inside↔outside adjacency anywhere → empty result.
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_polygon_disjoint_from_mesh():
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(100.0, 100.0, 200.0, 200.0)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_excludes_corner_only_adjacency():
-    """3x3 mesh; polygon covers cells 0,1,3,4 (lower-left 2x2 block).
-
-    Boundary cells: 0,1,3,4. Each has some outside neighbours.
-    Corner-only adjacency (e.g. cell 4 corner-touches cell 8 at (2,2))
-    must NOT be counted — only edge-sharing neighbours produce LineString
-    intersections.
-    """
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(0.0, 0.0, 2.0, 2.0)  # cells 0,1,3,4 inside
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Edge-sharing outside neighbours per inside cell on this 3x3 mesh:
-    #   0 → no outside edge-neighbour (1 and 3 are both inside)
-    #   1 → 2 (right outside neighbour)         → 1 edge
-    #   3 → 6 (top outside neighbour, j=2)      → 1 edge
-    #   4 → 5 (right) and 7 (top)               → 2 edges
-    # Corner-only contacts (e.g. 4↔8, 1↔5, 3↔7) are NOT counted.
-    assert sorted(cell_ids) == [1, 3, 4, 4]
-    assert len(edges) == 4
-    assert all(edge.geom_type == "LineString" for edge in edges)
-
-
-def test_aq_cells_on_polygon_boundary_hole_induced_boundary():
-    """Cell whose centroid falls inside a hole counts as outside, contributing edges."""
-    mesh = _grid_mesh(nx=3, ny=3)
-    # Outer covers all 9 cells; hole punches out the centre cell (id 4)
-    outer = [(0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
-    hole = [(1.1, 1.1), (1.9, 1.1), (1.9, 1.9), (1.1, 1.9), (1.1, 1.1)]
-    polygon = Polygon(outer, holes=[hole])
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Cell 4 is now "outside" (centroid inside the hole).
-    # Its 4 edge-neighbours (1, 3, 5, 7) are still inside, each contributes
-    # one boundary edge → 4 entries.
-    assert sorted(cell_ids) == [1, 3, 5, 7]
-    assert len(edges) == 4
-    assert all(edge.geom_type == "LineString" for edge in edges)
-
-
-def test_aq_cells_on_polygon_boundary_multipolygon_each_component_contributes():
-    """Two disjoint polygons over a 5x1 mesh each select one cell; both contribute boundary edges."""
-    mesh = _grid_mesh(nx=5, ny=1)
-    multi = MultiPolygon(
-        [
-            box(0.1, 0.1, 0.9, 0.9),  # only cell 0 inside
-            box(4.1, 0.1, 4.9, 0.9),  # only cell 4 inside
-        ]
-    )
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, multi, id_col="cell_id")
-
-    # Cell 0 → outside neighbour 1 → 1 edge; cell 4 → outside neighbour 3 → 1 edge.
-    assert sorted(cell_ids) == [0, 4]
-    assert len(edges) == 2
-
-
-def test_aq_cells_on_polygon_boundary_empty_mesh():
-    mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
-    polygon = box(0.0, 0.0, 1.0, 1.0)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_id_col_as_integer_position():
-    mesh = _grid_mesh(nx=3, ny=1)
-    polygon = box(1.1, 0.1, 1.9, 0.9)  # only middle cell inside
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col=0)
-
-    assert sorted(cell_ids) == [1, 1]
-    assert len(edges) == 2
-
-
-# ---------------------------------------------------------------------------
 # reaches_in_polygon_carachterisation — directional classification
 # ---------------------------------------------------------------------------
 
@@ -597,11 +475,11 @@ def test_reaches_on_polygon_boundary_now_delegates_to_signs_helper():
 
 
 # ---------------------------------------------------------------------------
-# aq_cells_boundary_faces — per-cell direction labels
+# cells_boundary_faces — per-cell direction labels + merged edge geometry
 # ---------------------------------------------------------------------------
 
 
-def test_aq_cells_boundary_faces_single_inside_cell_four_directions():
+def test_cells_boundary_faces_single_inside_cell_four_directions():
     """Cross of 5 cells: centre is the only inside cell, 4 outside neighbours,
     one per cardinal direction. Each contributes one face on the centre cell.
     """
@@ -619,17 +497,18 @@ def test_aq_cells_boundary_faces_single_inside_cell_four_directions():
     )
     polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only centre cell's centroid (5,5)
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert result["interior_ids"] == [0]
-    assert result["boundary_ids"] == [0]
-    assert sorted(result["boundary_faces"][0]) == ["east", "north", "south", "west"]
-    assert set(result["edges_by_face"][0].keys()) == {"north", "east", "west", "south"}
-    for edge in result["edges_by_face"][0].values():
-        assert edge.geom_type in ("LineString", "MultiLineString")
+    assert sorted(boundary_faces[0]) == ["east", "north", "south", "west"]
+    # One merged geometry per cell; the 4 faces of the centre cell collapse to
+    # a single (multi-part) edge geometry.
+    assert set(edge_geometries.keys()) == {0}
+    assert edge_geometries[0].geom_type in ("LineString", "MultiLineString")
+    # The two dicts share keys so callers can align them 1:1.
+    assert boundary_faces.keys() == edge_geometries.keys()
 
 
-def test_aq_cells_boundary_faces_excludes_corner_only_neighbours():
+def test_cells_boundary_faces_excludes_corner_only_neighbours():
     """3x3 grid; polygon covers cell 4 only. Diagonal neighbours touch only
     at a point — must NOT be counted as boundary faces."""
     cells = []
@@ -641,13 +520,13 @@ def test_aq_cells_boundary_faces_excludes_corner_only_neighbours():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(1.1, 1.1, 1.9, 1.9)  # only cell 4 (centre) inside
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, _ = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     # 4 edge-sharing neighbours; 4 corner-only excluded.
-    assert sorted(result["boundary_faces"][4]) == ["east", "north", "south", "west"]
+    assert sorted(boundary_faces[4]) == ["east", "north", "south", "west"]
 
 
-def test_aq_cells_boundary_faces_all_inside_no_boundary():
+def test_cells_boundary_faces_all_inside_no_boundary():
     cells = []
     ids = []
     for j in range(3):
@@ -657,22 +536,18 @@ def test_aq_cells_boundary_faces_all_inside_no_boundary():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(0.0, 0.0, 3.0, 3.0)  # covers everything
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert sorted(result["interior_ids"]) == ids
-    assert result["boundary_ids"] == []
-    assert result["boundary_faces"] == {}
+    # All cells inside → no inside↔outside adjacency → empty result.
+    assert boundary_faces == {}
+    assert edge_geometries == {}
 
 
-def test_aq_cells_boundary_faces_empty_mesh():
+def test_cells_boundary_faces_empty_mesh():
     mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
     polygon = box(0.0, 0.0, 1.0, 1.0)
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert result == {
-        "interior_ids":   [],
-        "boundary_ids":   [],
-        "boundary_faces": {},
-        "edges_by_face":  {},
-    }
+    assert boundary_faces == {}
+    assert edge_geometries == {}
