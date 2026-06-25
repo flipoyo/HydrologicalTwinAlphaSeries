@@ -551,3 +551,91 @@ def test_cells_boundary_faces_empty_mesh():
 
     assert boundary_faces == {}
     assert edge_geometries == {}
+
+
+def test_cells_boundary_faces_refined_neighbours_with_drift():
+    """Quadtree-refined mesh: a big inside cell whose east edge is shared by
+    two half-height outside cells, plus a full-size north neighbour. The small
+    cells overlap the big one by a sub-CRS-unit amount (mimicking reprojection
+    / float32 shapefile drift), so the inside↔outside relationship is
+    ``overlaps``/``intersects``, not ``touches``.
+
+    Regression for the size-transition faces silently vanishing: a ``touches``
+    query never returned the drifted small neighbours, so the east edge was
+    lost. Both small neighbours contribute to the east face; the face-direction
+    list is deduped (one ``"east"`` no matter how many neighbours share it),
+    while the merged edge geometry still spans the full shared edge.
+    """
+    eps = 1e-7
+    cells = {
+        0: box(0.0, 0.0, 2.0, 2.0),                                  # big, inside
+        1: Polygon([(2 - eps, 0), (3, 0), (3, 1), (2 - eps, 1)]),    # small, east-lower
+        2: Polygon([(2 - eps, 1), (3, 1), (3, 2), (2 - eps, 2)]),    # small, east-upper
+        3: box(0.0, 2.0, 2.0, 4.0),                                  # big, north
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(0.0, 0.0, 2.0, 2.0)  # contains only cell 0's centroid (1,1)
+
+    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    # Two small east neighbours + one north neighbour: east is recorded once
+    # (deduped), north once. The merged east edge geometry still spans both
+    # half-height neighbours (full length 2.0).
+    assert sorted(boundary_faces[0]) == ["east", "north"]
+    assert edge_geometries.keys() == boundary_faces.keys()
+    assert edge_geometries[0].length == pytest.approx(4.0)  # 2.0 east + 2.0 north
+
+
+def test_cells_boundary_faces_small_neighbour_labelled_by_edge_not_centroid():
+    """A small outside cell hugging the *upper* half of a big inside cell's
+    east edge sits diagonally (up-and-right) from the big cell's centroid, so
+    the old ``|dx| ≥ |dy|`` centroid heuristic would mislabel it "west". The
+    edge-orientation rule must label it "east".
+    """
+    cells = {
+        0: box(0.0, 0.0, 2.0, 2.0),  # big, inside
+        1: box(2.0, 1.0, 3.0, 2.0),  # small, shares upper half of east edge
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(0.0, 0.0, 2.0, 2.0)
+
+    boundary_faces, _ = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    assert boundary_faces[0] == ["east"]
+
+
+def test_cells_boundary_faces_corner_wrapping_neighbour_yields_two_faces():
+    """A single outside neighbour that wraps a corner of the inside cell shares
+    an L-shaped (perpendicular) pair of edges, so it straddles TWO cardinal
+    faces at once.
+
+    Regression for the missing border segments: ``cell.boundary ∩ neighbour``
+    returns one MultiLineString whose bounding box is (near-)square, so reading
+    the box as a whole collapsed the L into a single — often mislabelled — face
+    and dropped the other. The shared edge must be split into its straight
+    segments and each classified on its own orientation.
+    """
+    # Inside cell occupies (0,0)-(1,1), centroid (0.5,0.5). The L-shaped outside
+    # neighbour wraps its north-east corner, sharing both the east edge
+    # (x=1, y0..1) and the north edge (y=1, x0..1).
+    inside = box(0.0, 0.0, 1.0, 1.0)
+    corner_l = Polygon([(1, 0), (2, 0), (2, 2), (0, 2), (0, 1), (1, 1)])
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": [0, 1]},
+        geometry=[inside, corner_l],
+        crs="EPSG:3857",
+    )
+    polygon = box(0.0, 0.0, 1.0, 1.0).buffer(0.2)  # only cell 0's centroid inside
+
+    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+
+    assert sorted(boundary_faces[0]) == ["east", "north"]
+    assert edge_geometries[0].length == pytest.approx(2.0)  # 1.0 east + 1.0 north

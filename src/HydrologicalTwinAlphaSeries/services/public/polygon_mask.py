@@ -284,6 +284,46 @@ def reaches_in_polygon_carachterisation(
     }
 
 
+# Hardcoded floor (CRS length units, e.g. metres): a shared edge shorter than
+# this is treated as a corner/vertex touch or floating-point grit, not a true
+# flux face. Real mesh faces — even on the smallest refined cells — are orders
+# of magnitude longer than a millimetre, so this only ever cuts noise.
+_FACE_MIN_EDGE_LENGTH = 1e-3
+
+
+def _iter_line_segments(geom: Any) -> List[Any]:
+    """Flatten a shared-edge geometry into its straight 2-point segments.
+
+    ``cell.boundary ∩ neighbour`` can be a ``LineString``, a
+    ``MultiLineString`` (the neighbour shares two collinear stretches), or a
+    ``GeometryCollection`` (line stretches plus stray corner ``Point``s). A
+    *single* such geometry can also wrap a corner of the cell — an L-shaped
+    pair of perpendicular edges — in which case the whole shared edge straddles
+    **two** cardinal faces (e.g. east + north). Classifying the geometry as a
+    whole by its bounding box collapses that L into one (often mislabelled)
+    face and silently drops the other.
+
+    Splitting into individual consecutive-coordinate segments lets each
+    straight piece be classified on its own orientation, so a corner-wrapping
+    neighbour correctly yields both faces. Non-line parts (points) are skipped.
+    """
+    segments: List[Any] = []
+    if isinstance(geom, shapely.GeometryCollection):
+        parts = list(geom.geoms)
+    elif isinstance(geom, shapely.MultiLineString):
+        parts = list(geom.geoms)
+    else:
+        parts = [geom]
+
+    for part in parts:
+        if not isinstance(part, shapely.LineString) or part.is_empty:
+            continue
+        coords = list(part.coords)
+        for a, b in zip(coords[:-1], coords[1:]):
+            segments.append(shapely.LineString([a, b]))
+    return segments
+
+
 def cells_boundary_faces(
     aq_mesh_gdf: gpd.GeoDataFrame,
     polygon: Any,
@@ -292,13 +332,25 @@ def cells_boundary_faces(
     """Identify boundary cells with cardinal-direction face labels.
 
     A boundary cell is an interior cell (centroid inside the polygon) that
-    shares a face with an outside cell. The face direction is determined
-    from the centroid offset between the boundary cell and its outside
-    neighbour: if ``|dx| ≥ |dy|`` then ``"east" if dx < 0 else "west"``,
-    else ``"south" if dy < 0 else "north"``. Corner-touching neighbours
-    (intersection is a Point) are filtered out — only true edge-sharing
-    counts as a flux face. Direction labelling preserves the original
-    feature-branch convention (cf. branch_migration/backend_50.patch L327-333).
+    shares a face with an outside cell. Neighbours are found with an
+    ``intersects`` STRtree query (not ``touches``): on a quadtree-refined
+    mesh a small cell often shares only *part* of a big neighbour's edge,
+    and sub-CRS-unit coordinate drift (reprojection, float32 shapefile
+    coords) makes shapely classify such a pair as ``overlaps``/``intersects``
+    rather than ``touches`` — querying ``touches`` silently drops those
+    neighbours, so size-transition faces vanish. The shared edge is taken as
+    ``cell.boundary ∩ neighbour`` (boundary against the *solid* neighbour),
+    which recovers the full edge even under tiny overlap, where
+    boundary-vs-boundary would collapse to near-zero length.
+
+    The face direction is read from the **orientation of that shared edge**,
+    not from a centroid offset: a (near-)vertical edge is an east/west face,
+    a (near-)horizontal edge a north/south face, and the side is fixed by the
+    edge's position relative to this cell's centroid. The old centroid-offset
+    heuristic (``|dx| ≥ |dy|`` …) mislabels mismatched neighbours, because a
+    small cell hugging part of a big cell's edge sits *diagonally* from its
+    centroid. Edges shorter than ``1e-3`` CRS units (corner touches, grit)
+    are dropped — only true edge-sharing counts as a flux face.
 
     :param aq_mesh_gdf: GeoDataFrame of aquifer mesh cells (polygon geometries)
     :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
@@ -341,7 +393,10 @@ def cells_boundary_faces(
         cell_cx = cell_geom.centroid.x
         cell_cy = cell_geom.centroid.y
 
-        candidate_positions = tree.query(cell_geom, predicate="touches")
+        # `intersects`, not `touches`: a refined-mesh neighbour that shares
+        # only part of an edge — or drifts by sub-CRS-unit amounts — is an
+        # `overlaps`/`intersects` pair, which a `touches` query never returns.
+        candidate_positions = tree.query(cell_geom, predicate="intersects")
         for cand_pos in candidate_positions:
             cand_int = int(cand_pos)
             if cand_int == inside_pos:
@@ -351,19 +406,42 @@ def cells_boundary_faces(
                 continue
             neigh_geom = geometries[cand_int]
 
-            shared = cell_geom.boundary.intersection(neigh_geom.boundary)
-            if shared.is_empty or shared.geom_type == "Point":
-                continue
+            # Boundary against the *solid* neighbour, so a tiny overlap still
+            # yields the full shared edge (boundary-vs-boundary would collapse
+            # to ~0 length when the two edges drift apart and only cross at
+            # endpoints).
+            shared = cell_geom.boundary.intersection(neigh_geom)
+            if shared.length < _FACE_MIN_EDGE_LENGTH:
+                continue  # corner/vertex touch or floating-point grit
 
-            dx = neigh_geom.centroid.x - cell_cx
-            dy = neigh_geom.centroid.y - cell_cy
-            if abs(dx) >= abs(dy):
-                face = "east" if dx < 0 else "west"
-            else:
-                face = "south" if dy < 0 else "north"
+            # Split the shared edge into its straight segments and classify
+            # each on its OWN orientation: a single neighbour wrapping a corner
+            # of this cell shares an L-shaped (perpendicular) pair of edges that
+            # straddle two cardinal faces (e.g. east + north). Reading the
+            # bounding box of the whole L collapses it into one mislabelled face
+            # and drops the other — the cause of the missing border segments.
+            for seg in _iter_line_segments(shared):
+                if seg.length < _FACE_MIN_EDGE_LENGTH:
+                    continue  # grit-sized sliver of a multi-part shared edge
 
-            boundary_faces.setdefault(cell_id, []).append(face)
-            edge_parts.setdefault(cell_id, []).append(shared)
+                # Direction from the segment's own orientation, not the centroid
+                # offset: a small neighbour sits diagonally from its big
+                # neighbour's centroid, which flips the |dx|≥|dy| test.
+                minx, miny, maxx, maxy = seg.bounds
+                if (maxx - minx) <= (maxy - miny):  # segment runs N–S → E/W face
+                    edge_x = 0.5 * (minx + maxx)
+                    face = "east" if edge_x > cell_cx else "west"
+                else:                               # segment runs E–W → N/S face
+                    edge_y = 0.5 * (miny + maxy)
+                    face = "north" if edge_y > cell_cy else "south"
+
+                # A cell can collect the same face from several neighbours (two
+                # small outside cells along one big edge); keep the direction
+                # list deduped but accumulate every geometry piece.
+                faces_for_cell = boundary_faces.setdefault(cell_id, [])
+                if face not in faces_for_cell:
+                    faces_for_cell.append(face)
+                edge_parts.setdefault(cell_id, []).append(seg)
 
     edge_geometries: Dict[Any, Any] = {
         cell_id: parts[0] if len(parts) == 1 else unary_union(parts)
