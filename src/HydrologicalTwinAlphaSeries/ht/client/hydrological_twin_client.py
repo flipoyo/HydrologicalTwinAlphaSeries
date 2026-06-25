@@ -101,5 +101,13 @@ class HydrologicalTwinClient:
     def mask_hyd_boundary(self, **kwargs) -> MaskHydBoundaryResult:
         return operations_client.run_mask_hyd_boundary(self._twin, **kwargs)
 
-    def mask_aq_boundary(self, **kwargs) -> MaskAqBoundaryResult:
-        return operations_client.run_mask_aq_boundary(self._twin, **kwargs)
+    def mask_aq_boundary(
+        self, *, write_geopackage: bool = False, **kwargs
+    ) -> MaskAqBoundaryResult:
+        # ``write_geopackage`` is broken out so it appears in the public
+        # signature; ``False`` keeps today's loose face-flux CSV behaviour and
+        # ``True`` additionally writes the AqBoundary GeoPackage bundle. See
+        # :func:`operations_client.run_mask_aq_boundary` for the two modes.
+        return operations_client.run_mask_aq_boundary(
+            self._twin, write_geopackage=write_geopackage, **kwargs
+        )
