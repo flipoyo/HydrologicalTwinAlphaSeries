@@ -7,7 +7,7 @@ heavy hydrological work invoked by ``dispatch.py``. Each takes a
 ``HydrologicalTwin`` instance (named ``twin``) as first argument, plus
 whatever request-specific parameters the dispatch branch passes through.
 Handlers call into ``services/`` (``Renderer``, ``Operator``, ``Extractor``,
-``Comparator``) and into ``accessors.py`` to read twin state.
+``Comparator``) and into ``services/public/twin_io.py`` to read twin state.
 
 What belongs here
 -----------------
@@ -28,24 +28,25 @@ What does NOT belong here
 -------------------------
 - ``if request.kind == "X":`` ladders → ``dispatch.py``.
 - Pure state reads / lookups (``get_*``, ``read_*``, ``_resolve_*``,
-  ``has_observations``, ``_ensure_disk_cache``) → ``accessors.py``.
-- Lifecycle state transitions or gatekeeping → ``hydrological_twin.py``.
-- Argument coercion from legacy call shapes → ``hydrological_twin.py``.
+  ``has_observations``, ``_ensure_disk_cache``) → ``services/public/twin_io.py``.
+- Lifecycle state transitions or gatekeeping → ``hydrological_twin_developer.py``.
+- Argument coercion from legacy call shapes → ``hydrological_twin_developer.py``.
 
 Relation to other modules
 -------------------------
 - Called by ``dispatch.py`` (the primary entry point).
-- May be called directly by facade wrappers in ``hydrological_twin.py``
+- May be called directly by facade wrappers in ``hydrological_twin_developer.py``
   when the spec requires the surface to be kept on the class (e.g.
   ``compute_performance_stats`` is called by
-  ``ht/client/operations.py::run_statistical_criteria``).
-- Reads twin state via ``accessors.py``.
-- Does NOT import ``dispatch.py`` or ``hydrological_twin.py`` at runtime —
+  ``ht/client/operations_client.py::run_statistical_criteria``).
+- Reads twin state via ``services/public/twin_io.py``.
+- Does NOT import ``dispatch.py`` or ``hydrological_twin_developer.py`` at runtime —
   the ``HydrologicalTwin`` type hint comes via ``TYPE_CHECKING``.
 
 Import direction (no backward edges)
 ------------------------------------
-    hydrological_twin.py → dispatch.py → handlers.py → accessors.py
+    L2: hydrological_twin_developer.py → dispatch.py → handlers.py
+    L3: → services/public/twin_io.py
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ from .api_types import (
 )
 
 if TYPE_CHECKING:
-    from .hydrological_twin import HydrologicalTwin  # noqa: F401
+    from .hydrological_twin_developer import HydrologicalTwin  # noqa: F401
 
 
 def compute_performance_stats(

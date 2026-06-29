@@ -1,49 +1,13 @@
-"""Public facade for the developer-side ``HydrologicalTwin``.
+"""L2 · HT DEVELOPER · MICRO — micro-verb facade for :class:`HydrologicalTwin`.
 
-Role
-----
-This module holds the ``HydrologicalTwin`` class — the **API boundary** of
-the developer surface. It owns the 8 canonical macro-verbs
-(``configure``, ``load``, ``describe``, ``fetch``, ``mask``, ``transform``,
-``render``, ``export``), the lifecycle state machine, and the gatekeeping
-(``_require_state``). The 4 dispatching verbs (``fetch``/``mask``/
-``transform``/``render``) delegate to ``dispatch.py`` after coercing their
-arguments to a canonical ``*Request`` dataclass.
+Owns the 8 canonical verbs (``configure``, ``load``, ``describe``, ``fetch``,
+``mask``, ``transform``, ``render``, ``export``), the lifecycle state machine,
+and ``_require_state`` gatekeeping. The 4 dispatching verbs delegate to
+``dispatch.py`` after coercing arguments to canonical ``*Request`` dataclasses.
 
-What belongs here
------------------
-- The ``HydrologicalTwin`` class definition.
-- State machine + transition helpers: ``_transition_to``, ``_require_state``.
-- Argument coercion from legacy call shapes (positional, ``request=``,
-  ``**kwargs``) to canonical ``*Request`` objects, inside each macro-verb.
-- The 4 small inline verbs (``configure``, ``load``, ``describe``, ``export``)
-  — they have no ``kind=`` dispatch and stay inline by design.
-- Facade-internal helpers retained on the class: ``_normalize_frequency``,
-  ``_build_compartments``, ``_build_catalog``, ``_bundle_dict_to_response``,
-  ``_bundle_response_to_dict``, ``_collapse_aq_series``.
-- Thin facade wrappers around moved methods where the spec requires the
-  surface to be kept on the class (e.g. ``get_compartment``,
-  ``compute_performance_stats``).
-
-What does NOT belong here
--------------------------
-- ``if request.kind == "X":`` ladders → ``dispatch.py``.
-- The actual hydrological computation (``compute_*``, ``aggregate_*``,
-  ``_build_*_gdf``, ``extract_area``, ``apply_*``, ``render_*``) →
-  ``handlers.py``.
-- Pure state reads (``get_*``, ``read_*``, ``_resolve_*``,
-  ``has_observations``, ``_ensure_disk_cache``) → ``accessors.py``.
-
-Relation to other modules
--------------------------
-- Imports ``dispatch.py`` and calls into its 4 functions from the 4
-  dispatching macro-verbs.
-- May import ``accessors.py`` / ``handlers.py`` to power thin facade
-  wrappers that keep the public surface stable.
-
-Import direction (no backward edges)
-------------------------------------
-    hydrological_twin.py → dispatch.py → handlers.py → accessors.py
+Import direction (downward only):
+    L2: hydrological_twin_developer.py → dispatch.py → handlers.py  (transitional)
+    L3: → services/public/twin_io.py
 """
 
 from __future__ import annotations
@@ -435,8 +399,14 @@ class HydrologicalTwin(HTPersistenceMixin):
         id_compartment: int,
         request: FetchRequest,
     ) -> List[LayerInfo]:
-        from .accessors import _resolve_layer_infos
-        return _resolve_layer_infos(self, id_compartment, request)
+        from ...services.public import twin_io
+        return twin_io._resolve_layer_infos(
+            self,
+            id_compartment,
+            layers=request.layers,
+            layer_names=request.layer_names,
+            id_layer=request.id_layer,
+        )
 
     @staticmethod
     def _collapse_aq_series(values: np.ndarray) -> np.ndarray:
@@ -446,7 +416,7 @@ class HydrologicalTwin(HTPersistenceMixin):
         return np.nansum(array, axis=0)
 
     # ╔════════════════════════════════════════════════════════════════╗
-    # ║  MACRO-METHODS — canonical public API                        ║
+    # ║  L2 · HT DEVELOPER · MICRO — canonical micro-verbs          ║
     # ╚════════════════════════════════════════════════════════════════╝
 
     def configure(
@@ -684,38 +654,38 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Raises KeyError if the compartment was not registered at init time.
         """
-        from . import accessors
-        return accessors.get_compartment(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.get_compartment(self, id_compartment)
 
     def _resolve_mesh_gdf(self, id_compartment: int, id_layer: int = 0):
         """Return the mesh GeoDataFrame for a compartment's layer."""
-        from . import accessors
-        return accessors._resolve_mesh_gdf(self, id_compartment, id_layer)
+        from ...services.public import twin_io
+        return twin_io._resolve_mesh_gdf(self, id_compartment, id_layer)
 
     def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
         """Return the name or index of the cell ID column for a compartment's mesh."""
-        from . import accessors
-        return accessors._resolve_cell_id_col(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io._resolve_cell_id_col(self, id_compartment)
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""
-        from . import accessors
-        return accessors.get_compartment_info(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.get_compartment_info(self, id_compartment)
 
     def list_compartments(self) -> List[CompartmentInfo]:
         """Return info for all registered compartments."""
-        from . import accessors
-        return accessors.list_compartments(self)
+        from ...services.public import twin_io
+        return twin_io.list_compartments(self)
 
     def get_layer_info(self, id_compartment: int, id_layer: int) -> LayerInfo:
         """Return cell data for a specific mesh layer."""
-        from . import accessors
-        return accessors.get_layer_info(self, id_compartment, id_layer)
+        from ...services.public import twin_io
+        return twin_io.get_layer_info(self, id_compartment, id_layer)
 
     def get_all_layers(self, id_compartment: int) -> List[LayerInfo]:
         """Return LayerInfo for every layer in a compartment's mesh."""
-        from . import accessors
-        return accessors.get_all_layers(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.get_all_layers(self, id_compartment)
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L2 — DATA LAYER  (Observations & Simulations I/O)           ║
@@ -726,26 +696,9 @@ class HydrologicalTwin(HTPersistenceMixin):
 
         Returns None if the compartment has no observations.
         """
-        from . import accessors
-        return accessors.get_observation_info(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.get_observation_info(self, id_compartment)
 
-    def read_values(
-        self,
-        id_compartment: int,
-        outtype: str,
-        param: str,
-        syear: int,
-        eyear: int,
-        id_layer: int = 0,
-        cutsdate: Optional[str] = None,
-        cutedate: Optional[str] = None,
-    ) -> ValuesResponse:
-        """Extract simulated values for a given variable and period (NumPy version)."""
-        from . import accessors
-        return accessors.read_values(
-            self, id_compartment, outtype, param, syear, eyear,
-            id_layer=id_layer, cutsdate=cutsdate, cutedate=cutedate,
-        )
 
     def read_observations(
         self,
@@ -754,13 +707,13 @@ class HydrologicalTwin(HTPersistenceMixin):
         eyear: int,
     ) -> ObservationsResponse:
         """Read observation data for all observation points of a compartment."""
-        from . import accessors
-        return accessors.read_observations(self, id_compartment, syear, eyear)
+        from ...services.public import twin_io
+        return twin_io.read_observations(self, id_compartment, syear, eyear)
 
     def read_sim_steady(self, id_compartment: int) -> pd.DataFrame:
         """Read steady-state simulation data. Wraps Temporal.readSimSteady."""
-        from . import accessors
-        return accessors.read_sim_steady(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.read_sim_steady(self, id_compartment)
 
     def read_obs_steady(
         self,
@@ -770,16 +723,16 @@ class HydrologicalTwin(HTPersistenceMixin):
         cutedate: str = None,
     ) -> pd.DataFrame:
         """Read steady-state observation data. Wraps Temporal.readObsSteady."""
-        from . import accessors
-        return accessors.read_obs_steady(
+        from ...services.public import twin_io
+        return twin_io.read_obs_steady(
             self, id_compartment, obs_aggr,
             cutsdate=cutsdate, cutedate=cutedate,
         )
 
     def _ensure_disk_cache(self) -> None:
         """Materialise the on-disk ``.npy`` cache for every compartment and outtype."""
-        from . import accessors
-        return accessors._ensure_disk_cache(self)
+        from ...services.public import twin_io
+        return twin_io._ensure_disk_cache(self)
 
     # ╔════════════════════════════════════════════════════════════════╗
     # ║  L3 — ESTIMATION LAYER  (comparison, filtering, inference)   ║
@@ -839,8 +792,8 @@ class HydrologicalTwin(HTPersistenceMixin):
         target_unit: str = 'mm/j',
     ) -> ValuesResponse:
         """Extract watbal values with vectorized unit conversion."""
-        from . import accessors
-        return accessors.read_watbal_converted(
+        from ...services.public import twin_io
+        return twin_io.read_watbal_converted(
             self, id_compartment, outtype, param, syear, eyear,
             cutsdate=cutsdate, cutedate=cutedate,
             id_layer=id_layer, target_unit=target_unit,
@@ -1103,8 +1056,8 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     def has_observations(self, id_compartment: int) -> bool:
         """Check if a compartment has observation data."""
-        from . import accessors
-        return accessors.has_observations(self, id_compartment)
+        from ...services.public import twin_io
+        return twin_io.has_observations(self, id_compartment)
 
     def extract_area(
         self,

@@ -1,12 +1,13 @@
-"""Read-only views into ``HydrologicalTwin`` state.
+"""L3 io service — read-only views into ``HydrologicalTwin`` state.
 
 Role
 ----
-This module holds the *accessors*: module-level functions that read from a
-``HydrologicalTwin`` instance (``twin``) and return derived views over its
-compartments, layers, observations, and on-disk caches. They are the lowest
-layer of the ``ht/developer/`` package — they depend only on twin state, not
-on other developer-side modules.
+This module (``services/public/twin_io.py``) holds the *twin io* functions:
+module-level functions that read from a ``HydrologicalTwin`` instance
+(``twin``) and return derived views over its compartments, layers,
+observations, and on-disk caches. It is an **L3 service** — the finest layer
+of the dependency graph. It depends only on twin state and other L3 services;
+it imports *nothing* from the L1 client or L2 developer layers.
 
 What belongs here
 -----------------
@@ -22,28 +23,27 @@ What belongs here
 What does NOT belong here
 -------------------------
 - Heavy computation (``compute_*``, ``aggregate_*``, ``_build_*_gdf``,
-  ``extract_area``, ``apply_*``) → ``handlers.py``.
-- Rendering (``render_*``) → ``handlers.py``.
-- ``if request.kind == "X":`` ladders → ``dispatch.py``.
-- Lifecycle state transitions or gatekeeping → ``hydrological_twin.py``.
+  ``extract_area``, ``apply_*``) → L2 ``ht/developer/handlers.py``.
+- Rendering (``render_*``) → L2 ``ht/developer/handlers.py``.
+- ``if request.kind == "X":`` ladders → L2 ``ht/developer/dispatch.py``.
+- Lifecycle state transitions or gatekeeping → L2
+  ``ht/developer/hydrological_twin_developer.py``.
 
-Relation to other modules
--------------------------
-- ``handlers.py`` imports from this module to read twin state.
-- ``hydrological_twin.py`` keeps thin facade wrappers that delegate here.
-- This module imports *nothing* from ``dispatch.py`` or ``handlers.py`` —
-  the dependency arrow points the other way.
-
-Import direction (no backward edges)
-------------------------------------
-    hydrological_twin.py → dispatch.py → handlers.py → accessors.py
+Import direction (downward only — L3 imports no L1/L2)
+------------------------------------------------------
+The L2 facade wrappers in ``hydrological_twin_developer.py`` call into this
+module; this module never imports back up into ``ht/``. Data DTOs come from
+the L3 leaf module ``io_types.py`` (a strictly downward edge). The
+``"HydrologicalTwin"`` annotations are un-evaluated forward-ref strings
+(``from __future__ import annotations``), so no upward import is needed for
+type hints.
 """
 
 from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import List, Optional, Union
 
 import geopandas as gpd
 import numpy as np
@@ -52,19 +52,13 @@ import pandas as pd
 from HydrologicalTwinAlphaSeries.config.constants import obs_config, paramRecs
 from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Operator
-from .api_types import (
+from .io_types import (
     CompartmentInfo,
-    FetchRequest,
-    InvalidStateError,
     LayerInfo,
     ObservationInfo,
     ObservationsResponse,
     ValuesResponse,
 )
-
-if TYPE_CHECKING:
-    from .hydrological_twin import HydrologicalTwin  # noqa: F401
-
 
 def get_compartment(twin: "HydrologicalTwin", id_compartment: int) -> Compartment:
     """Return a registered Compartment.
@@ -97,7 +91,7 @@ def _resolve_cell_id_col(twin: "HydrologicalTwin", id_compartment: int) -> Union
     polygon kinds to tell ``cells_in_polygon`` which column carries cell ids.
     """
     if twin.config_geom is None:
-        raise InvalidStateError(
+        raise ValueError(
             f"Cannot resolve cell-id column for compartment {id_compartment}: "
             "config_geom is not loaded."
         )
@@ -112,19 +106,27 @@ def _resolve_cell_id_col(twin: "HydrologicalTwin", id_compartment: int) -> Union
 def _resolve_layer_infos(
     twin: "HydrologicalTwin",
     id_compartment: int,
-    request: FetchRequest,
+    layers: Optional[List[LayerInfo]] = None,
+    layer_names: Optional[List[str]] = None,
+    id_layer: int = 0,
 ) -> List[LayerInfo]:
-    if request.layers is not None:
-        return request.layers
-    if request.layer_names:
+    """Resolve which layers a fetch targets, from plain selector arguments.
+
+    Takes the three fields the L2 caller reads off its ``FetchRequest``
+    (``layers`` / ``layer_names`` / ``id_layer``) as plain arguments, so this
+    L3 service does not depend on the L2 request type.
+    """
+    if layers is not None:
+        return layers
+    if layer_names:
         comp_info = twin.get_compartment_info(id_compartment)
         return [
             twin.get_layer_info(id_compartment, comp_info.layers_gis_names.index(layer_name))
-            for layer_name in request.layer_names
+            for layer_name in layer_names
         ]
-    if request.id_layer == -9999:
+    if id_layer == -9999:
         return twin.get_all_layers(id_compartment)
-    return [twin.get_layer_info(id_compartment, request.id_layer)]
+    return [twin.get_layer_info(id_compartment, id_layer)]
 
 
 def get_compartment_info(twin: "HydrologicalTwin", id_compartment: int) -> CompartmentInfo:
@@ -166,7 +168,7 @@ def get_layer_info(twin: "HydrologicalTwin", id_compartment: int, id_layer: int)
         cell_areas=np.array([cell.area for cell in layer.layer]),
         cell_geometries=[cell.geometry for cell in layer.layer],
         layer_gis_name=comp.layers_gis_names[id_layer]
-                       if id_layer < len(comp.layers_gis_names) else "",
+                    if id_layer < len(comp.layers_gis_names) else "",
         crs=layer.crs,
         id_abs=np.array([cell.id_abs for cell in layer.layer]),
     )
@@ -216,9 +218,12 @@ def read_values(
     id_layer: int = 0,
     cutsdate: Optional[str] = None,
     cutedate: Optional[str] = None,
-) -> ValuesResponse:
-    """Extract simulated values for a given variable and period (NumPy version)."""
+) -> tuple:
+    """Extract simulated values for a given variable and period.
 
+    Returns ``(sim_matrix, dates)`` as a raw tuple — callers are responsible
+    for wrapping into a ``ValuesResponse`` DTO if needed.
+    """
     comp = twin.get_compartment(id_compartment)
 
     sim_matrix = twin.temporal.load_from_cache(
@@ -249,20 +254,7 @@ def read_values(
         sim_matrix = sim_matrix[:, mask]
         dates = dates[mask]
 
-    return ValuesResponse(
-        data=sim_matrix,
-        dates=dates,
-        meta={
-            "id_compartment": id_compartment,
-            "outtype": outtype,
-            "param": param,
-            "syear": syear,
-            "eyear": eyear,
-            "id_layer": id_layer,
-            "cutsdate": cutsdate,
-            "cutedate": cutedate,
-        },
-    )
+    return sim_matrix, dates
 
 
 def read_observations(
@@ -380,6 +372,7 @@ def _ensure_disk_cache(twin: "HydrologicalTwin") -> None:
             )
 
 
+#LAYERREFACTORING - THIS FUNCTION SHOULD BE AT L2
 def read_watbal_converted(
     twin: "HydrologicalTwin",
     id_compartment: int,
@@ -397,7 +390,8 @@ def read_watbal_converted(
     Combines read_values + Operator.convert_watbal_units.
     Returns ValuesResponse with converted data.
     """
-    response = twin.read_values(
+    sim_matrix, dates = read_values(
+        twin,
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
@@ -409,7 +403,7 @@ def read_watbal_converted(
     )
 
     if target_unit != 'm3/s':
-        # ``response.data`` carries every compartment cell across all layers in
+        # ``sim_matrix`` carries every compartment cell across all layers in
         # CaWaQS matrix (getCellIdVector / id_abs) order, so the area vector
         # used for the (mm/j) per-cell division MUST be the matching full
         # cross-layer area vector — each cell weighted by its OWN ``Cell.area``
@@ -422,13 +416,26 @@ def read_watbal_converted(
             for layer in comp.mesh.mesh.values()
             for cell in layer.layer
         ])
-        response.data = Operator.convert_watbal_units(
-            data=response.data,
+        sim_matrix = Operator.convert_watbal_units(
+            data=sim_matrix,
             cell_areas=cell_areas,
             target_unit=target_unit,
         )
 
-    return response
+    return ValuesResponse(
+        data=sim_matrix,
+        dates=dates,
+        meta={
+            "id_compartment": id_compartment,
+            "outtype": outtype,
+            "param": param,
+            "syear": syear,
+            "eyear": eyear,
+            "id_layer": id_layer,
+            "cutsdate": cutsdate,
+            "cutedate": cutedate,
+        },
+    )
 
 
 def has_observations(twin: "HydrologicalTwin", id_compartment: int) -> bool:

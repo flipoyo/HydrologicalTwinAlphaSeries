@@ -1,4 +1,4 @@
-"""Unit tests for the polygon-mask geometric helpers in tools.spatial_utils."""
+"""Unit tests for the polygon-mask geometric helpers in services.public.polygon_mask."""
 
 import time
 
@@ -6,7 +6,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, box
 
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,

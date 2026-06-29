@@ -1,4 +1,4 @@
-"""Per-verb ``kind=...`` routing for the dispatching macro-verbs.
+"""Per-verb ``kind=...`` routing for the dispatching micro-verbs.
 
 Role
 ----
@@ -24,21 +24,22 @@ What does NOT belong here
 - The actual computation (``compute_*``, ``_build_*_gdf``,
   ``extract_area``, ``render_*``) → ``handlers.py``.
 - Reads over twin state (``read_*``, ``get_*``, ``_resolve_*``) →
-  ``accessors.py``.
+  ``services/public/twin_io.py``.
 - The 4 non-dispatching verbs (``configure``, ``load``, ``describe``,
   ``export``) — they are small and inline in the facade by design.
 
 Relation to other modules
 -------------------------
-- ``hydrological_twin.py`` calls into this module from the 4 dispatching
+- ``hydrological_twin_developer.py`` calls into this module from the 4 dispatching
   facade methods.
 - This module calls into ``handlers.py`` for the work.
-- This module may call ``accessors.py`` for incidental state reads, but
+- This module may call ``services/public/twin_io.py`` for incidental state reads, but
   the primary path is through ``handlers``.
 
 Import direction (no backward edges)
 ------------------------------------
-    hydrological_twin.py → dispatch.py → handlers.py → accessors.py
+    L2: hydrological_twin_developer.py → dispatch.py → handlers.py
+    L3: → services/public/twin_io.py
 """
 
 from __future__ import annotations
@@ -49,15 +50,16 @@ import numpy as np
 import pandas as pd
 
 from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
-from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     aq_cells_boundary_faces,
     aq_cells_on_polygon_boundary,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
-    verify_crs_match,
 )
+from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 
 from .api_types import (
     AqBoundaryFluxResponse,
@@ -81,7 +83,7 @@ from .api_types import (
 )
 
 if TYPE_CHECKING:
-    from .hydrological_twin import HydrologicalTwin  # noqa: F401
+    from .hydrological_twin_developer import HydrologicalTwin  # noqa: F401
 
 
 
@@ -100,7 +102,8 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
                 id_layer=request.id_layer,
                 target_unit=request.target_unit,
             )
-        return twin.read_values(
+        sim_matrix, dates = read_values(
+            twin,
             id_compartment=request.id_compartment,
             outtype=request.outtype,
             param=request.param,
@@ -109,6 +112,20 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
             id_layer=request.id_layer,
             cutsdate=request.cutsdate,
             cutedate=request.cutedate,
+        )
+        return ValuesResponse(
+            data=sim_matrix,
+            dates=dates,
+            meta={
+                "id_compartment": request.id_compartment,
+                "outtype": request.outtype,
+                "param": request.param,
+                "syear": request.syear,
+                "eyear": request.eyear,
+                "id_layer": request.id_layer,
+                "cutsdate": request.cutsdate,
+                "cutedate": request.cutedate,
+            },
         )
 
     if request.kind == "observations":
@@ -263,7 +280,8 @@ def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
         dates = None
         for label in selected:
             backend_param = alias_to_param.get(label, label)
-            response = twin.read_values(
+            response = twin.fetch(
+                kind="simulation_matrix",
                 id_compartment=request.id_compartment,
                 outtype=request.outtype or "MB",
                 param=backend_param,
@@ -407,7 +425,8 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                     target_unit=request.target_unit,
                 )
             elif request.target_unit in _LENGTH_UNITS:
-                full_response = twin.read_values(
+                full_response = twin.fetch(
+                    kind="simulation_matrix",
                     id_compartment=request.id_compartment,
                     outtype=request.outtype,
                     param=request.param,
@@ -548,16 +567,12 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         boundary_ids = sorted(classification["boundary_ids"])
         signs = {cid: classification["signs"][cid] for cid in boundary_ids}
 
-        q_response = twin.read_values(
-            id_compartment=request.id_compartment,
-            outtype="Q",
-            param="discharge",
-            syear=request.syear,
-            eyear=request.eyear,
-            id_layer=request.id_layer,
-            cutsdate=request.cutsdate,
-            cutedate=request.cutedate,
-        )
+        q_response = request.q_response
+        if q_response is None:
+            raise ValueError(
+                "mask(kind='boundary_hyd_flux') requires 'q_response' to be "
+                "pre-fetched by the caller and passed via MaskRequest."
+            )
 
         if not boundary_ids:
             Q = np.empty((0, q_response.data.shape[1]))
@@ -633,19 +648,15 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         )
         boundary_faces = boundary_info["boundary_faces"]
 
+        if request.face_responses is None:
+            raise ValueError(
+                "mask(kind='boundary_aq_flux') requires 'face_responses' to be "
+                "pre-fetched by the caller and passed via MaskRequest."
+            )
         face_data: Dict[str, np.ndarray] = {}
         dates: Optional[np.ndarray] = None
-        for direction, param in AQ_FACE_DIRECTIONS.items():
-            resp = twin.read_values(
-                id_compartment=request.id_compartment,
-                outtype="MB",
-                param=param,
-                syear=request.syear,
-                eyear=request.eyear,
-                id_layer=request.id_layer,
-                cutsdate=request.cutsdate,
-                cutedate=request.cutedate,
-            )
+        for direction in AQ_FACE_DIRECTIONS:
+            resp = request.face_responses[direction]
             face_data[direction] = resp.data
             if dates is None:
                 dates = resp.dates

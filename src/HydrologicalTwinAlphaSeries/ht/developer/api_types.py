@@ -6,6 +6,17 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
+# Leaf data DTOs live at L3 (``services/public/io_types.py``) so the L3 io
+# service can import them with a strictly downward edge. They are re-exported
+# here so existing L2 import sites keep referencing them from ``api_types``.
+from ...services.public.io_types import (
+    CompartmentInfo,
+    LayerInfo,
+    ObservationInfo,
+    ObservationsResponse,
+    ValuesResponse,
+)
+
 # ---------------------------------------------------------------------------
 # Internal state model
 # ---------------------------------------------------------------------------
@@ -147,6 +158,14 @@ class MaskRequest:
     # correct AQ-recharge free surface spanning whichever layer is exposed.
     # A plain string keeps the typed mask surface serializable for the server.
     resolution: str = "single_layer"
+    # Pre-fetched time-series carriers for the boundary-flux kinds.
+    # ``boundary_hyd_flux`` needs the full HYD discharge matrix; the L1
+    # operations_client fetches it before calling mask() and threads it here so
+    # the dispatcher never needs to call back up to L1 or re-read from disk.
+    # ``boundary_aq_flux`` needs one ValuesResponse per AQ face direction
+    # (keyed by direction name, e.g. ``"east"``, ``"west"``, ``"south"``, ``"north"``).
+    q_response: Optional[Any] = None
+    face_responses: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -235,26 +254,6 @@ class ExportRequest:
 
 
 @dataclass
-class ValuesResponse:
-    """Per-cell time-series response shared by ``fetch`` and ``mask`` reads.
-
-    ``weights`` and ``clipped_geometries`` are populated on the weighted
-    polygon-mask path (``mask(kind="area_values", weighted=True)``) and on the
-    HYD ``resolution="reaches"`` path (where reaches are always boundary-clipped
-    and carry a length-fraction weight, even when ``weighted=False``). On every
-    other path both fields are ``None`` so the binary-mask response shape is
-    unchanged from the parent ``add-mask-macro`` capability.
-    """
-
-    data: np.ndarray
-    dates: np.ndarray
-    meta: Optional[Dict[str, Any]] = None
-    csv_path: Optional[str] = None
-    weights: Optional[np.ndarray] = None
-    clipped_geometries: Optional[List[Any]] = None
-
-
-@dataclass
 class TemporalOpResponse:
     data: np.ndarray
     date_labels: np.ndarray
@@ -265,13 +264,6 @@ class TemporalOpResponse:
 class SpatialAverageResponse:
     data: np.ndarray
     meta: Dict[str, Any]
-
-
-@dataclass
-class ObservationsResponse:
-    data: np.ndarray
-    dates: np.ndarray
-    meta: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -401,48 +393,6 @@ class AquiferBalanceResponse:
 # ---------------------------------------------------------------------------
 # Model and catalog responses
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class CompartmentInfo:
-    id_compartment: int
-    name: str
-    layers_gis_names: List[str]
-    n_layers: int
-    n_cells: int
-    cell_ids: np.ndarray
-    out_caw_path: str
-    regime: str
-    # 1-based global cell index (``Cell.id_abs``) in getCellIdVector order —
-    # the simulation-matrix row order. Distinct from ``cell_ids`` (per-layer).
-    id_abs: Optional[np.ndarray] = None
-
-
-@dataclass
-class LayerInfo:
-    id_layer: int
-    n_cells: int
-    cell_ids: np.ndarray
-    cell_areas: np.ndarray
-    cell_geometries: list
-    layer_gis_name: str
-    crs: Any = None
-    # 1-based global cell index (``Cell.id_abs``) for each cell in this layer.
-    id_abs: Optional[np.ndarray] = None
-
-
-@dataclass
-class ObservationInfo:
-    id_compartment: int
-    obs_type: str
-    n_points: int
-    layer_gis_name: str
-    point_names: List[str]
-    point_ids: list
-    cell_ids: List[int]
-    layer_ids: List[int]
-    geometries: list
-    mesh_ids: List[int]
 
 
 @dataclass
