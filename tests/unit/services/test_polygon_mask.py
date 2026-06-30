@@ -4,6 +4,7 @@ import time
 
 import geopandas as gpd
 import pytest
+import shapely
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, box
 
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
@@ -639,3 +640,105 @@ def test_cells_boundary_faces_corner_wrapping_neighbour_yields_two_faces():
 
     assert sorted(boundary_faces[0]) == ["east", "north"]
     assert edge_geometries[0].length == pytest.approx(2.0)  # 1.0 east + 1.0 north
+
+
+# ---------------------------------------------------------------------------
+# cells_boundary_faces — refined (quadtree) grids: T-junction merge + dedup
+# (fix-aq-boundary-refined-grid)
+# ---------------------------------------------------------------------------
+
+
+def _refined_t_junction_mesh() -> gpd.GeoDataFrame:
+    """One standard cell (id 0) whose WEST side abuts three 1/3-height cells.
+
+    Big inside cell occupies x∈[2,4], y∈[0,2]. Three smaller outside cells each
+    span the full west edge x∈[0,2] in thirds of the height — the canonical
+    refinement T-junction: one side of the big cell shared with three neighbours.
+    """
+    cells = {
+        0: box(2.0, 0.0, 4.0, 2.0),
+        1: box(0.0, 0.0, 2.0, 2.0 / 3.0),
+        2: box(0.0, 2.0 / 3.0, 2.0, 4.0 / 3.0),
+        3: box(0.0, 4.0 / 3.0, 2.0, 2.0),
+    }
+    return gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+
+
+def test_cells_boundary_faces_refined_t_junction_single_continuous_line():
+    """Refined T-junction: the shared side is one continuous LineString, no gap,
+    no dropped sub-edge, and the direction appears exactly once (not thrice)."""
+    mesh = _refined_t_junction_mesh()
+    # Polygon contains only the big cell's centroid (3, 1); the three small
+    # cells (centroid x=1) are outside.
+    polygon = box(2.1, 0.05, 3.9, 1.95)
+
+    boundary_faces, edge_geometries = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # The big cell faces its three west neighbours on one side → "east" once.
+    assert boundary_faces[0] == ["east"]
+    geom = edge_geometries[0]
+    # The three collinear sub-edges fuse into ONE continuous line spanning the
+    # full shared side (length 2.0), not a gappy MultiLineString of 3 parts.
+    assert geom.geom_type == "LineString"
+    assert geom.length == pytest.approx(2.0)
+    # No hairline gap: the merged line is connected end to end.
+    assert shapely.line_merge(geom).geom_type == "LineString"
+
+
+def test_cells_boundary_faces_corner_cell_stays_multiline_per_side():
+    """A corner cell bordering two perpendicular sides yields a MultiLineString
+    with one line per side — the per-side merge must NOT chain perpendicular
+    edges into one L-shaped line just because they touch at the corner vertex."""
+    cells = {
+        0: box(1.0, 1.0, 2.0, 2.0),  # inside (centroid 1.5, 1.5)
+        1: box(0.0, 1.0, 1.0, 2.0),  # west neighbour
+        2: box(1.0, 0.0, 2.0, 1.0),  # south neighbour
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(1.1, 1.1, 1.9, 1.9)  # only the centre cell's centroid inside
+
+    boundary_faces, edge_geometries = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    assert sorted(boundary_faces[0]) == ["east", "south"]
+    geom = edge_geometries[0]
+    assert isinstance(geom, MultiLineString)
+    assert len(geom.geoms) == 2  # one line per bordered side, kept distinct
+    # Each side is unit length; total 2.0 with no fused L-corner.
+    assert geom.length == pytest.approx(2.0)
+
+
+def test_cells_boundary_faces_uniform_grid_geometry_unchanged():
+    """Uniform-grid invariance (D4): after the fix the merged edge geometry is
+    *geometrically* identical to the pre-change behaviour (same covered linework
+    via shapely.equals, modulo vertex order / Multi-vs-Single container), and the
+    per-cell distinct directions are unchanged.
+
+    The pre-change behaviour for the centre cell of a 3x3 grid (4 outside
+    neighbours) is the union of its 4 unit sides — i.e. the cell's own boundary
+    ring. We assert the new output covers exactly that linework.
+    """
+    mesh = _grid_mesh(nx=3, ny=3)
+    polygon = box(1.1, 1.1, 1.9, 1.9)  # only centre cell (id 4) inside
+
+    boundary_faces, edge_geometries = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # Pre-change reference: the 4 shared sides = the centre cell's boundary ring.
+    expected = box(1, 1, 2, 2).boundary
+    geom = edge_geometries[4]
+    assert shapely.equals(geom, expected)
+    # Distinct cardinal directions unchanged (all four, each once).
+    assert sorted(boundary_faces[4]) == ["east", "north", "south", "west"]

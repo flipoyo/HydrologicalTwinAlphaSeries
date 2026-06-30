@@ -16,7 +16,6 @@ from HydrologicalTwinAlphaSeries.ht import (
     TwinState,
     ValuesResponse,
 )
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import CRSMismatchError
 
 
 def _twin_in_loaded_state() -> HydrologicalTwin:
@@ -187,18 +186,21 @@ def test_mask_polygon_cells_missing_polygon_raises(monkeypatch):
         twin.mask(kind="polygon_cells", id_compartment=1)
 
 
-def test_mask_polygon_cells_crs_mismatch_raises(monkeypatch):
+def test_mask_polygon_cells_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs that differs from the mesh CRS is reprojected onto
+    the mesh (not raised). The op runs through and returns a CellSelectionResponse."""
     mesh = _grid_mesh(crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="polygon_cells",
-            id_compartment=1,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="polygon_cells",
+        id_compartment=1,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, CellSelectionResponse)
 
 
 def test_mask_polygon_cells_no_polygon_crs_skips_validation(monkeypatch):
@@ -231,14 +233,21 @@ def test_mask_area_values_with_polygon_resolves_cells_then_delegates(monkeypatch
     np.testing.assert_array_equal(sorted(captured["cell_ids"].tolist()), [1, 2, 4, 5])
 
 
-def test_mask_area_values_with_polygon_crs_mismatch_raises(monkeypatch):
+def test_mask_area_values_with_polygon_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs that differs from the mesh CRS is reprojected onto
+    the mesh rather than raising — the op proceeds to extract_area."""
     mesh = _grid_mesh(crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)
-    monkeypatch.setattr(twin, "extract_area", lambda **_kw: None)  # never called
+    called = {"extract_area": False}
+    monkeypatch.setattr(
+        twin, "extract_area", lambda **_kw: called.__setitem__("extract_area", True)
+    )
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(**_area_values_kwargs(polygon=polygon, polygon_crs="EPSG:4326"))
+    # No CRSMismatchError: the polygon is reprojected onto the mesh CRS first.
+    twin.mask(**_area_values_kwargs(polygon=polygon, polygon_crs="EPSG:4326"))
+
+    assert called["extract_area"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -516,20 +525,23 @@ def test_mask_boundary_hyd_missing_polygon_raises(monkeypatch):
         twin.mask(kind="boundary_hyd", id_compartment=1)
 
 
-def test_mask_boundary_hyd_crs_mismatch_raises(monkeypatch):
+def test_mask_boundary_hyd_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs differing from the network CRS is reprojected onto
+    the network (not raised); the op returns a HydBoundaryResponse."""
     network = _hyd_network(
         {1: LineString([(2.0, 5.0), (15.0, 5.0)])}, crs="EPSG:3857"
     )
     twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
     polygon = box(0.0, 0.0, 10.0, 10.0)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="boundary_hyd",
-            id_compartment=1,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="boundary_hyd",
+        id_compartment=1,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, HydBoundaryResponse)
 
 
 def test_mask_boundary_hyd_meta_carries_inflow_outflow_signs(monkeypatch):
@@ -635,18 +647,21 @@ def test_mask_boundary_aq_missing_polygon_raises(monkeypatch):
         twin.mask(kind="boundary_aq", id_compartment=2)
 
 
-def test_mask_boundary_aq_crs_mismatch_raises(monkeypatch):
+def test_mask_boundary_aq_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs differing from the AQ mesh CRS is reprojected onto
+    the mesh (not raised); the op returns a BoundaryFluxResponse."""
     mesh = _grid_mesh(nx=3, ny=1, crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(1.1, 0.1, 1.9, 0.9)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="boundary_aq",
-            id_compartment=2,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="boundary_aq",
+        id_compartment=2,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, BoundaryFluxResponse)
 
 
 def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):

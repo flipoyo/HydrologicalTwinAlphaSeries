@@ -57,7 +57,7 @@ from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     reaches_in_polygon_carachterisation,
 )
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import reproject_polygon_to_match
 from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf
 
 from .api_types import (
@@ -377,9 +377,10 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             else:
                 mesh_gdf = _resolve_mesh_gdf(twin,request.id_compartment, request.id_layer)
                 id_col = _resolve_cell_id_col(twin, request.id_compartment)
-            verify_crs_match(
-                mesh_gdf.crs,
+            request.polygon = reproject_polygon_to_match(
+                request.polygon,
                 request.polygon_crs,
+                mesh_gdf.crs,
                 context="mask(kind='area_values')",
             )
             if request.resolution == "reaches":
@@ -500,9 +501,10 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='polygon_cells') requires both 'id_compartment' and 'polygon'."
             )
         mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
-        verify_crs_match(
-            mesh_gdf.crs,
+        request.polygon = reproject_polygon_to_match(
+            request.polygon,
             request.polygon_crs,
+            mesh_gdf.crs,
             context="mask(kind='polygon_cells')",
         )
         id_col = _resolve_cell_id_col(twin,request.id_compartment)
@@ -518,9 +520,10 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "mask(kind='boundary_hyd') requires both 'id_compartment' and 'polygon'."
             )
         network_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
-        verify_crs_match(
-            network_gdf.crs,
+        request.polygon = reproject_polygon_to_match(
+            request.polygon,
             request.polygon_crs,
+            network_gdf.crs,
             context="mask(kind='boundary_hyd')",
         )
         id_col = _resolve_cell_id_col(twin, request.id_compartment)
@@ -557,9 +560,10 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "to read the discharge time series."
             )
         network_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
-        verify_crs_match(
-            network_gdf.crs,
+        request.polygon = reproject_polygon_to_match(
+            request.polygon,
             request.polygon_crs,
+            network_gdf.crs,
             context="mask(kind='boundary_hyd_flux')",
         )
         id_col = _resolve_cell_id_col(twin, request.id_compartment)
@@ -614,11 +618,18 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         all_edge_geometries: Dict[Any, Any] = {}
         for lid in layers_to_scan:
             aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, lid)
-            verify_crs_match(
-                aq_mesh_gdf.crs,
+            # Reproject once into this layer's mesh CRS. All AQ layers of one
+            # compartment share a CRS, so we also advance request.polygon_crs to
+            # the mesh CRS — on the next loop iteration the helper then sees a
+            # matching CRS and no-ops, instead of re-reprojecting an already
+            # reprojected polygon from the stale original polygon_crs.
+            request.polygon = reproject_polygon_to_match(
+                request.polygon,
                 request.polygon_crs,
+                aq_mesh_gdf.crs,
                 context="mask(kind='boundary_aq')",
             )
+            request.polygon_crs = aq_mesh_gdf.crs
             id_col = _resolve_cell_id_col(twin, request.id_compartment)
             boundary_faces, edge_geometries = cells_boundary_faces(
                 aq_mesh_gdf, request.polygon, id_col=id_col
@@ -630,7 +641,18 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                         f"layers of compartment {request.id_compartment} — cell_ids must "
                         "be globally unique across layers. Check the mesh configuration."
                     )
-                all_face_directions[cid] = dirs
+                # One cardinal face per cell maps to exactly one CaWaQS finite-
+                # difference flux (flux_x/flux_y one/two via AQ_FACE_DIRECTIONS).
+                # On a refined (quadtree) grid a cell may share one side with
+                # several smaller outside neighbours, so deduplicate to the
+                # distinct cardinal directions (insertion order preserved): the
+                # geometry side already merges those same-side sub-edges into one
+                # line per direction, and the flux side carries one net series per
+                # direction — never N. ``cells_boundary_faces`` already returns
+                # unique directions; this guard keeps the contract explicit and
+                # robust if that ever changes.
+                unique_dirs = list(dict.fromkeys(dirs))
+                all_face_directions[cid] = unique_dirs
                 all_edge_geometries[cid] = edge_geometries[cid]
         return BoundaryFluxResponse(
             cell_ids=list(all_face_directions.keys()),
@@ -679,16 +701,29 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             if dates is None:
                 dates = resp.dates
 
+        # CaWaQS stores ONE finite-difference flux per cardinal face per cell
+        # (flux_x_one/two, flux_y_one/two → west/east/south/north via
+        # AQ_FACE_DIRECTIONS). So a boundary cell yields exactly one net flux
+        # series per *distinct* cardinal direction it borders — never N, even
+        # when N smaller refined neighbours share that side. ``boundary_faces``
+        # already carries the deduplicated directions (set via the boundary_aq
+        # pass above); we deduplicate again here so this branch does not depend
+        # on the caller having done so, and so the per-direction series is read
+        # from CaWaQS exactly once (no silent dict-key overwrite, no double-read).
         fluxes: Dict[Any, Dict[str, np.ndarray]] = {}
         for cell_id, directions in boundary_faces.items():
             fluxes[cell_id] = {
                 direction: face_data[direction][cell_id - 1, :]
-                for direction in directions
+                for direction in dict.fromkeys(directions)
             }
 
         return BoundaryFluxResponse(
             cell_ids=sorted(boundary_faces.keys()),
-            face_directions={cid: list(d) for cid, d in boundary_faces.items()},
+            # Unique directions per cell, 1:1 with the per-direction flux series
+            # above — one cardinal face = one net CaWaQS flux.
+            face_directions={
+                cid: list(dict.fromkeys(d)) for cid, d in boundary_faces.items()
+            },
             fluxes=fluxes,
             dates=dates,
             meta={

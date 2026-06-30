@@ -6,6 +6,7 @@ from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
     get_nearest_row,
     get_spatial_index,
     read_hyd_corresp_file,
+    reproject_polygon_to_match,
     reproject_to_match,
     verify_crs_match,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "get_nearest_row",
     "get_spatial_index",
     "read_hyd_corresp_file",
+    "reproject_polygon_to_match",
     "reproject_to_match",
     "verify_crs_match",
 ]
