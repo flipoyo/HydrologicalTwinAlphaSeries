@@ -20,6 +20,18 @@ import shapely
 from shapely.ops import unary_union
 
 
+def _as_linestrings(geom: Any) -> List[Any]:
+    """Flatten a ``LineString`` / ``MultiLineString`` into a list of LineStrings.
+
+    A per-side merged edge is normally a single ``LineString``; if a side could
+    not be fully fused it stays a ``MultiLineString`` and we keep each part, so
+    the cell's collected ``MultiLineString`` carries every sub-line.
+    """
+    if isinstance(geom, shapely.MultiLineString):
+        return list(geom.geoms)
+    return [geom]
+
+
 def _resolve_id_col(gdf: gpd.GeoDataFrame, id_col: Union[str, int]) -> str:
     """Resolve ``id_col`` (column name or integer position) to a column name."""
     if isinstance(id_col, int):
@@ -284,44 +296,107 @@ def reaches_in_polygon_carachterisation(
     }
 
 
-# Hardcoded floor (CRS length units, e.g. metres): a shared edge shorter than
-# this is treated as a corner/vertex touch or floating-point grit, not a true
-# flux face. Real mesh faces — even on the smallest refined cells — are orders
-# of magnitude longer than a millimetre, so this only ever cuts noise.
-_FACE_MIN_EDGE_LENGTH = 1e-3
+
+# --- Shared-face detection thresholds (see Decision 3/4 of the design) -------
+#
+# The two thresholds below live at *different scales on purpose*, because they
+# guard against two unrelated things:
+#
+#   * ``_FACE_BUFFER_EPS`` (the LOWER guard) is the buffer half-width used to
+#     grow each cell before intersecting. It only has to bridge the sub-metre
+#     geometric misalignment of a rotated / off-grid mesh, so it is a small
+#     fixed length set by *float/rotation drift* — NOT by cell size. A genuine
+#     shared edge of length ``L`` then overlaps in a thin ribbon of area
+#     ``≈ 2·ε·L``; a corner-only touch overlaps in a tiny ``≈ (2ε)²`` nub.
+#   * the minimum-face-length **floor** (the UPPER guard) is what separates a
+#     real face from that corner nub. It must sit *above* the nub yet *below*
+#     the smallest real face — and the smallest real face is the smallest cell
+#     side, which is set by the *mesh*, not by ε. A single hard-coded constant
+#     cannot track it across meshes (3C faces ≈ 2000 m, 8C CRAIE faces ≈ 100 m),
+#     so the floor is derived per-mesh in ``_mesh_face_floor`` below.
+#
+# Keeping the two at separate scales is the whole fix: the predecessor conflated
+# them into one 1 mm common-grid snap, which could bridge float drift but could
+# not also serve as a real-face threshold on a rotated mesh.
+_FACE_BUFFER_EPS = 0.05  # m — buffer half-width; lower guard, set by drift not mesh
+_FACE_LENGTH_FRAC = 0.10  # floor as a fraction of the smallest cell side
+_FACE_NUB_CLAMP = 10  # floor lower bound as a multiple of ε (keeps floor ≫ nub)
+
+# Snap grid (CRS units) applied ONLY when fusing one side's recovered sub-edges
+# into a single line. Clipping the smaller cell's boundary to the ε-buffered
+# ribbon over-captures by ≈ 2ε at each end (a tiny backward perpendicular stub),
+# so two collinear same-side sub-edges of a refinement T-junction *overlap* and
+# branch instead of touching end-to-end — and plain ``line_merge`` cannot fuse
+# overlapping/branched lines into one ``LineString``. Snapping the per-side union
+# to 2ε collapses those stubs and overlaps so the side fuses cleanly. It is tied
+# to the buffer scale (NOT the mesh), unlike the retired ``_FACE_SNAP_GRID``
+# which tried — and failed — to also serve as the shared-edge detector.
+_FACE_MERGE_SNAP = 2.0 * _FACE_BUFFER_EPS
 
 
-def _iter_line_segments(geom: Any) -> List[Any]:
-    """Flatten a shared-edge geometry into its straight 2-point segments.
+def _mesh_face_floor(aq_mesh_gdf: gpd.GeoDataFrame) -> float:
+    """Derive the minimum-face-length floor once for the whole mesh.
 
-    ``cell.boundary ∩ neighbour`` can be a ``LineString``, a
-    ``MultiLineString`` (the neighbour shares two collinear stretches), or a
-    ``GeometryCollection`` (line stretches plus stray corner ``Point``s). A
-    *single* such geometry can also wrap a corner of the cell — an L-shaped
-    pair of perpendicular edges — in which case the whole shared edge straddles
-    **two** cardinal faces (e.g. east + north). Classifying the geometry as a
-    whole by its bounding box collapses that L into one (often mislabelled)
-    face and silently drops the other.
+    The floor must lie between two scales set by *different* things: its lower
+    bound is the buffer-induced corner nub (``≈ 2ε``, driven by ε), its upper
+    bound is the smallest real face (= the smallest cell side, driven by the
+    mesh). It is computed as::
 
-    Splitting into individual consecutive-coordinate segments lets each
-    straight piece be classified on its own orientation, so a corner-wrapping
-    neighbour correctly yields both faces. Non-line parts (points) are skipped.
+        side  = p1( sqrt(cell_area) )            # robust smallest cell side
+        floor = max(_FACE_LENGTH_FRAC * side, _FACE_NUB_CLAMP * _FACE_BUFFER_EPS)
+
+    * ``sqrt(area)`` is used as the cell "side", **not** the bounding-box
+      extent: on the rotated 3C mesh the bbox width is inflated by the tilt
+      (2015 m for a true ~1999 m side), whereas ``sqrt(area)`` is rotation-
+      invariant and recovers the real side — which matters precisely because
+      rotation is the root cause being fixed.
+    * the **1st percentile** (not strict ``min``) is robust to a single sliver
+      or degenerate cell in a future shapefile, which would otherwise crater
+      ``min(side)`` and pull the floor down toward the nub.
+    * the ``max(..., _FACE_NUB_CLAMP * ε)`` clamp guarantees the floor never
+      approaches the corner nub even on an arbitrarily fine mesh
+      (``floor ≥ 0.5 m ≫ 2ε = 0.1 m`` always).
+
+    Measured floors that validated these constants: 3C ≈ 200 m, 8C ALLUVIONS
+    ≈ 20 m, 8C CRAIE ≈ 10 m — each ~100–200× above the nub and ~10× below the
+    smallest real face on that mesh, i.e. ~10× headroom both ways. Use those as
+    the reference point when tuning ``_FACE_LENGTH_FRAC``.
     """
-    segments: List[Any] = []
-    if isinstance(geom, shapely.GeometryCollection):
-        parts = list(geom.geoms)
-    elif isinstance(geom, shapely.MultiLineString):
-        parts = list(geom.geoms)
-    else:
-        parts = [geom]
+    areas = aq_mesh_gdf.geometry.area
+    side = float(areas.pow(0.5).quantile(0.01))
+    return max(_FACE_LENGTH_FRAC * side, _FACE_NUB_CLAMP * _FACE_BUFFER_EPS)
 
-    for part in parts:
-        if not isinstance(part, shapely.LineString) or part.is_empty:
-            continue
-        coords = list(part.coords)
-        for a, b in zip(coords[:-1], coords[1:]):
-            segments.append(shapely.LineString([a, b]))
-    return segments
+
+def _shared_face(cell_geom: Any, neigh_geom: Any, eps: float, floor: float) -> Tuple[float, Any]:
+    """Detect the shared flux face of two cells and recover its line geometry.
+
+    Robust to rotated / off-grid meshes, where the smaller cell's shared-edge
+    endpoints fall mid-edge on the larger cell (not on a shared vertex), so the
+    classic ``boundary ∩ boundary`` collapses to points and drops the face.
+
+    Instead each cell is grown outward by ``eps`` (``mitre`` join, so the ribbon
+    ends stay square and short faces measure correctly) and the polygons are
+    intersected: a genuine shared edge of length ``L`` overlaps in a thin ribbon
+    of area ``≈ 2·ε·L``, a corner-only touch in a ``≈ (2ε)²`` nub. Overlaps below
+    ``eps * floor`` (i.e. a recovered length below ``≈ floor / 2``) are rejected
+    as nubs. The face line is recovered by clipping the **smaller** cell's
+    boundary to the ribbon and line-merging — the smaller cell is chosen because
+    its edge *is* the full face, whereas the larger cell's edge spans several
+    small neighbours and would over-capture.
+
+    :return: ``(length, line)`` — the recovered face length and its merged
+        ``LineString`` / ``MultiLineString``, or ``(0.0, None)`` for a nub.
+    """
+    strip = cell_geom.buffer(eps, join_style="mitre").intersection(
+        neigh_geom.buffer(eps, join_style="mitre")
+    )
+    if strip.is_empty or strip.area < eps * floor:
+        return 0.0, None
+    smaller = cell_geom if cell_geom.area <= neigh_geom.area else neigh_geom
+    line = shapely.line_merge(smaller.boundary.intersection(strip))
+    if line.is_empty:
+        return 0.0, None
+    return line.length, line
 
 
 def cells_boundary_faces(
@@ -332,25 +407,29 @@ def cells_boundary_faces(
     """Identify boundary cells with cardinal-direction face labels.
 
     A boundary cell is an interior cell (centroid inside the polygon) that
-    shares a face with an outside cell. Neighbours are found with an
-    ``intersects`` STRtree query (not ``touches``): on a quadtree-refined
-    mesh a small cell often shares only *part* of a big neighbour's edge,
-    and sub-CRS-unit coordinate drift (reprojection, float32 shapefile
-    coords) makes shapely classify such a pair as ``overlaps``/``intersects``
-    rather than ``touches`` — querying ``touches`` silently drops those
-    neighbours, so size-transition faces vanish. The shared edge is taken as
-    ``cell.boundary ∩ neighbour`` (boundary against the *solid* neighbour),
-    which recovers the full edge even under tiny overlap, where
-    boundary-vs-boundary would collapse to near-zero length.
+    shares a face with an outside cell. The face direction is determined
+    from the centroid offset between the boundary cell and its outside
+    neighbour: if ``|dx| ≥ |dy|`` then ``"east" if dx < 0 else "west"``,
+    else ``"south" if dy < 0 else "north"``. Direction labelling preserves
+    the original feature-branch convention (cf.
+    branch_migration/backend_50.patch L327-333).
 
-    The face direction is read from the **orientation of that shared edge**,
-    not from a centroid offset: a (near-)vertical edge is an east/west face,
-    a (near-)horizontal edge a north/south face, and the side is fixed by the
-    edge's position relative to this cell's centroid. The old centroid-offset
-    heuristic (``|dx| ≥ |dy|`` …) mislabels mismatched neighbours, because a
-    small cell hugging part of a big cell's edge sits *diagonally* from its
-    centroid. Edges shorter than ``1e-3`` CRS units (corner touches, grit)
-    are dropped — only true edge-sharing counts as a flux face.
+    **Shared-face detection (robust on rotated / off-grid meshes).** Two cells
+    share a flux face IFF, after growing each by a small outward buffer ``ε``,
+    their polygons overlap in a thin ribbon (see :func:`_shared_face`). The face
+    line is recovered by clipping the *smaller* cell's boundary to that ribbon.
+    This does NOT require the shared edge's endpoints to be vertices of both
+    cells, so it recovers refinement T-junction faces (where the small cell's
+    endpoints fall mid-edge on the large cell) that the old
+    ``boundary ∩ boundary`` test dropped as zero-length points.
+
+    Two thresholds at two scales separate a real face from a corner touch:
+    ``ε`` (``_FACE_BUFFER_EPS``, the lower guard — only bridges sub-metre
+    rotation/coordinate drift) and a minimum-face-length **floor** (the upper
+    guard, derived per-mesh by :func:`_mesh_face_floor` from a low percentile of
+    ``sqrt(cell_area)``, so it scales with the mesh and stays well above the
+    corner nub). A corner-only touch falls below the floor and is rejected; a
+    real face of any orientation is kept.
 
     :param aq_mesh_gdf: GeoDataFrame of aquifer mesh cells (polygon geometries)
     :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
@@ -360,9 +439,11 @@ def cells_boundary_faces(
         boundary cell, each value the list of flux-face directions for that
         cell (a corner cell can have two faces) — and ``edge_geometries`` is
         ``{cell_id: geometry}``, the shared face edge(s) for that cell merged
-        into a single geometry (a ``MultiLineString`` when the cell has more
-        than one face). Both dicts share the same keys so callers can align
-        them 1:1.
+        into a single geometry. Collinear sub-edges on one side (a refinement
+        T-junction, where several smaller outside cells abut one side) fuse into
+        a single continuous ``LineString``; a corner cell bordering two
+        perpendicular sides stays a ``MultiLineString`` with one line per side.
+        Both dicts share the same keys so callers can align them 1:1.
     """
     if aq_mesh_gdf.empty:
         return {}, {}
@@ -381,11 +462,21 @@ def cells_boundary_faces(
     outside_set = {ids[i] for i, x in enumerate(inside_mask) if not x}
     tree = shapely.STRtree(geometries)
 
+    # Minimum-face-length floor, derived once from the whole mesh (not per pair):
+    # it must scale with the mesh's smallest real face while staying well above
+    # the buffer-induced corner nub. See _mesh_face_floor.
+    face_floor = _mesh_face_floor(aq_mesh_gdf)
+
+    # Per-cell ordered set of bordered cardinal directions (each direction at
+    # most once — a refined cell with several same-side neighbours still borders
+    # that side once). Insertion order is preserved so face_directions is stable.
     boundary_faces: Dict[Any, List[str]] = {}
-    # Per-cell list of shared face edges, merged to one geometry per cell after
-    # the scan so edge_geometries stays 1:1 with boundary_faces (a corner cell
-    # has 2 faces but must remain a single gdf row).
-    edge_parts: Dict[Any, List[Any]] = {}
+    # Shared sub-edges grouped by (cell_id, direction). Grouping by direction is
+    # what keeps the per-side merge correct: all sub-edges of one side are
+    # collinear and fuse to one line, while two *perpendicular* sides of a corner
+    # cell stay separate (they must NOT fuse, even though they touch at the shared
+    # corner vertex — see the merge step below).
+    edge_parts: Dict[Tuple[Any, str], List[Any]] = {}
 
     for inside_pos in interior_positions:
         cell_id = ids[inside_pos]
@@ -393,9 +484,6 @@ def cells_boundary_faces(
         cell_cx = cell_geom.centroid.x
         cell_cy = cell_geom.centroid.y
 
-        # `intersects`, not `touches`: a refined-mesh neighbour that shares
-        # only part of an edge — or drifts by sub-CRS-unit amounts — is an
-        # `overlaps`/`intersects` pair, which a `touches` query never returns.
         candidate_positions = tree.query(cell_geom, predicate="intersects")
         for cand_pos in candidate_positions:
             cand_int = int(cand_pos)
@@ -406,46 +494,57 @@ def cells_boundary_faces(
                 continue
             neigh_geom = geometries[cand_int]
 
-            # Boundary against the *solid* neighbour, so a tiny overlap still
-            # yields the full shared edge (boundary-vs-boundary would collapse
-            # to ~0 length when the two edges drift apart and only cross at
-            # endpoints).
-            shared = cell_geom.boundary.intersection(neigh_geom)
-            if shared.length < _FACE_MIN_EDGE_LENGTH:
-                continue  # corner/vertex touch or floating-point grit
+            # The flux face is the segment the two cells share. Detect it by the
+            # area overlap of the two cells grown by ε and recover the line from
+            # the smaller cell's boundary (see _shared_face): robust to rotation
+            # and off-grid coordinates, where the small cell's endpoints fall
+            # mid-edge on the large cell. A corner-only touch yields a tiny nub
+            # below the floor and is skipped.
+            length, shared = _shared_face(
+                cell_geom, neigh_geom, _FACE_BUFFER_EPS, face_floor
+            )
+            if shared is None or length < face_floor:
+                continue
 
-            # Split the shared edge into its straight segments and classify
-            # each on its OWN orientation: a single neighbour wrapping a corner
-            # of this cell shares an L-shaped (perpendicular) pair of edges that
-            # straddle two cardinal faces (e.g. east + north). Reading the
-            # bounding box of the whole L collapses it into one mislabelled face
-            # and drops the other — the cause of the missing border segments.
-            for seg in _iter_line_segments(shared):
-                if seg.length < _FACE_MIN_EDGE_LENGTH:
-                    continue  # grit-sized sliver of a multi-part shared edge
+            dx = neigh_geom.centroid.x - cell_cx
+            dy = neigh_geom.centroid.y - cell_cy
+            if abs(dx) >= abs(dy):
+                face = "east" if dx < 0 else "west"
+            else:
+                face = "south" if dy < 0 else "north"
 
-                # Direction from the segment's own orientation, not the centroid
-                # offset: a small neighbour sits diagonally from its big
-                # neighbour's centroid, which flips the |dx|≥|dy| test.
-                minx, miny, maxx, maxy = seg.bounds
-                if (maxx - minx) <= (maxy - miny):  # segment runs N–S → E/W face
-                    edge_x = 0.5 * (minx + maxx)
-                    face = "east" if edge_x > cell_cx else "west"
-                else:                               # segment runs E–W → N/S face
-                    edge_y = 0.5 * (miny + maxy)
-                    face = "north" if edge_y > cell_cy else "south"
+            cell_faces = boundary_faces.setdefault(cell_id, [])
+            if face not in cell_faces:
+                cell_faces.append(face)
+            edge_parts.setdefault((cell_id, face), []).append(shared)
 
-                # A cell can collect the same face from several neighbours (two
-                # small outside cells along one big edge); keep the direction
-                # list deduped but accumulate every geometry piece.
-                faces_for_cell = boundary_faces.setdefault(cell_id, [])
-                if face not in faces_for_cell:
-                    faces_for_cell.append(face)
-                edge_parts.setdefault(cell_id, []).append(seg)
+    # Merge each cell's sub-edges into one geometry per cell, fusing *per side*.
+    # Same-side (collinear) sub-edges of a refinement T-junction are line-merged
+    # into one continuous ``LineString``; the per-side lines of a corner cell are
+    # then collected without merging across sides. The cross-side union is kept
+    # un-merged on purpose: a plain ``line_merge`` across a corner would chain two
+    # perpendicular sides into one L-shaped ``LineString`` (they touch at the
+    # shared corner vertex), which would misrepresent a two-faced cell. Grouping
+    # by direction first guarantees one merged line per bordered side — matching
+    # the one-flux-per-cardinal-direction contract (see dispatch ``boundary_aq``).
+    per_cell_lines: Dict[Any, List[Any]] = {}
+    for (cell_id, _face), parts in edge_parts.items():
+        # Snap to 2ε first so the buffer's ≈2ε over-capture stubs collapse and the
+        # collinear sub-edges meet end-to-end, letting line_merge fuse one side's
+        # several refinement sub-edges into a single continuous LineString.
+        snapped = shapely.set_precision(unary_union(parts), _FACE_MERGE_SNAP)
+        merged = shapely.line_merge(snapped)
+        per_cell_lines.setdefault(cell_id, []).append(merged)
 
-    edge_geometries: Dict[Any, Any] = {
-        cell_id: parts[0] if len(parts) == 1 else unary_union(parts)
-        for cell_id, parts in edge_parts.items()
-    }
+    edge_geometries: Dict[Any, Any] = {}
+    for cell_id, lines in per_cell_lines.items():
+        if len(lines) == 1:
+            edge_geometries[cell_id] = lines[0]
+        else:
+            # One bordered side per entry already; collect (do not re-merge) into
+            # a MultiLineString so perpendicular sides stay distinct lines.
+            edge_geometries[cell_id] = shapely.MultiLineString(
+                [g for line in lines for g in _as_linestrings(line)]
+            )
 
     return boundary_faces, edge_geometries
