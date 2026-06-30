@@ -107,11 +107,25 @@ obs_config = {
     1: {"id_col_time": 2, "id_col_data": 4},
 }
 
+# Canonical statement of the AQ boundary-flux sign convention. This is the single
+# source of truth: the ``AQ_FACE_DIRECTIONS`` comment below references it, and it
+# is *shipped* into the boundary-flux outputs (loose-CSV header line + GeoPackage
+# ``provenance`` row) so a downstream reader can interpret a value's sign without
+# reading source code. A comment and a shipped string that restate the same fact
+# independently would drift; one constant referenced by both cannot.
+AQ_BOUNDARY_FLUX_SIGN_CONVENTION = (
+    "Sign convention (CaWaQS): positive = flux entering the cell. Each face "
+    "direction is named from the inside cell's perspective relative to its "
+    "outside neighbour; a per-cell net is the net inflow across that cell's "
+    "exposed boundary faces."
+)
+
 # AQ face flux direction → CaWaQS AQ_MB parameter name.
-# Sign convention (CaWaQS): positive = flux entering the cell from that direction.
-# Direction is named from the inside cell's perspective relative to its outside
-# neighbour; the convention preserves the original feature-branch labelling
-# (cf. branch_migration/frontend_50.patch L2174-2181).
+# Sign convention is AQ_BOUNDARY_FLUX_SIGN_CONVENTION above (the canonical source):
+# positive = flux entering the cell from that direction. Direction is named from
+# the inside cell's perspective relative to its outside neighbour; the convention
+# preserves the original feature-branch labelling (cf.
+# branch_migration/frontend_50.patch L2174-2181).
 AQ_FACE_DIRECTIONS = {
     "east":  "flux_x_two",
     "west":  "flux_x_one",
@@ -119,9 +133,29 @@ AQ_FACE_DIRECTIONS = {
     "north": "flux_y_two",
 }
 
-# Dimensions constats 
+# Dimensions constats
 
-_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
+_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s", "m3/mois"})
+
+# Multiplicative factor converting a CaWaQS-native ``m³/s`` flux to the given
+# volumetric token. ``m3/s`` is the raw pass-through (1.0); ``m3/j`` (jour) is the
+# m³/day rate (× one day of seconds); ``m3/mois`` (mois) is an *average-month*
+# flow RATE — every daily value rescaled by the same factor, NOT a calendar
+# re-aggregation. 2_629_800 = 86400 × 365.25 / 12 (seconds in an average month).
+_VOLUMETRIC_UNIT_FACTORS = {
+    "m3/s": 1.0,
+    "m3/j": 86400.0,
+    "m3/mois": 2_629_800.0,
+}
+
+# Token → loose-CSV column-name suffix for the AQ boundary-flux export. Derived
+# from the same token as the factor (above) so the values and their declared unit
+# can never diverge, and two runs differing only in unit do not overwrite each
+# other in one output directory.
+_VOLUMETRIC_UNIT_CSV_SUFFIX = {
+    "m3/j": "m3d",
+    "m3/mois": "m3mois",
+}
 
 # Length units (e.g. HYD Water Height). These are NOT volumetric: the ×86400
 # m³/s→m³/day conversion must be skipped for them. ``m`` is the CaWaQS-native

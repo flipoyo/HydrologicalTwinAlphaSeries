@@ -1222,6 +1222,7 @@ def run_mask_aq_boundary(
     area_name: str,
     write_geopackage: bool = False,
     temp_dir: str = None,
+    unit: str = "m3/j",
 ) -> MaskAqBoundaryResult:
     """Mask AQ cells touching the polygon boundary and persist face-flux time series.
 
@@ -1236,7 +1237,8 @@ def run_mask_aq_boundary(
 
         * ``False`` (default mode): behaves exactly as before — when fluxes
           are non-empty a single loose per-(cell, direction) face-flux CSV is
-          written (values in m³/d) and **no** GeoPackage is produced.
+          written (values in the chosen ``unit``) and **no** GeoPackage is
+          produced.
         * ``True`` (GeoPackage mode): in addition to the loose CSV, a single
           transportable bundle is written at
           ``<output_dir>/<area_name>_AqBoundary_<syear>_<eyear>.gpkg`` —
@@ -1247,9 +1249,10 @@ def run_mask_aq_boundary(
           layer), a long-form ``daily_values`` table (one row block per layer,
           ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``) holding
           **one net daily-flux series per boundary cell** (the per-direction
-          face series summed into a single net series, in m³/d, row-aligned to
-          its ``cells_AQ_layer<id>`` layer by ``cell_id``), and a ``provenance``
-          table (one row per layer block). The ``.gpkg`` path is appended to
+          face series summed into a single net series, in the chosen ``unit``,
+          row-aligned to its ``cells_AQ_layer<id>`` layer by ``cell_id``), and a
+          ``provenance`` table (one row per layer block, carrying the sign
+          convention). The ``.gpkg`` path is appended to
           ``MaskAqBoundaryResult.artefacts``.
 
         The GeoPackage carries the per-cell **net** exchange (a corner cell's
@@ -1259,10 +1262,23 @@ def run_mask_aq_boundary(
     :param temp_dir: Accepted for signature parity with the other mask
         operations; the GeoPackage path uses ``output_dir`` only, so this is
         currently unused here.
+    :param unit: Output unit token for the boundary face fluxes (default
+        ``"m3/j"``, preserving the prior ``m³/day`` behaviour). Accepted tokens:
+        ``"m3/j"`` (``m³/day``; raw CaWaQS ``m³/s`` × 86400) and ``"m3/mois"``
+        (``m³/month``, an *average-month* flow **rate** = raw × 2_629_800, **not**
+        a calendar re-aggregation — the time axis stays one row per simulated
+        day). The token is the single source of truth for the numeric conversion,
+        the loose-CSV column suffix (``_m3d`` / ``_m3mois``), and the GeoPackage
+        ``daily_values`` ``unit`` label, so the per-cell values and their declared
+        unit can never diverge. The rescale is applied identically to the loose
+        CSV per-direction series and the GeoPackage per-cell net.
     :returns: A :class:`MaskAqBoundaryResult` whose ``entries`` carry one
         per-aquifer-layer borders gdf + layer name, plus the artefact paths
         (loose CSV always when fluxes are non-empty, plus the ``.gpkg`` in
-        GeoPackage mode). The fluxes themselves are written in m³/d.
+        GeoPackage mode). The fluxes are written in the chosen ``unit`` and both
+        output surfaces ship the sign convention (positive = flux into the cell):
+        the loose CSV as a commented header line, the GeoPackage in its
+        ``provenance`` table.
     """
     import numpy as np  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
@@ -1270,7 +1286,22 @@ def run_mask_aq_boundary(
 
     aq_id = _resolve_compartment_id(twin, "AQ")
 
-    from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS  # noqa: PLC0415
+    from HydrologicalTwinAlphaSeries.config.constants import (  # noqa: PLC0415
+        AQ_BOUNDARY_FLUX_SIGN_CONVENTION,
+        AQ_FACE_DIRECTIONS,
+        _VOLUMETRIC_UNIT_CSV_SUFFIX,
+    )
+
+    # Resolve the CSV column suffix from the token here so an unknown unit fails
+    # loudly before any disk write (the L2 rescale verb guards the factor lookup
+    # symmetrically). The token drives suffix + label + factor — one source of
+    # truth, so values and their declared unit can never diverge.
+    if unit not in _VOLUMETRIC_UNIT_CSV_SUFFIX:
+        raise ValueError(
+            f"run_mask_aq_boundary got unsupported unit={unit!r}; expected one of "
+            f"{sorted(_VOLUMETRIC_UNIT_CSV_SUFFIX)}."
+        )
+    csv_suffix = _VOLUMETRIC_UNIT_CSV_SUFFIX[unit]
 
     id_layers = [li.id_layer for li in twin.get_all_layers(aq_id)]
     face_orientations = twin.mask(
@@ -1329,11 +1360,21 @@ def run_mask_aq_boundary(
         cols = {}
         for cell_id, dir_fluxes in flux_resp.fluxes.items():
             for direction, arr in dir_fluxes.items():
-                cols[f"{cell_id}_{direction}_m3d"] = arr * 86400.0
+                # Rescale m³/s → chosen unit via the L2 verb (single source of the
+                # factor; same verb the GeoPackage net path uses). Suffix derives
+                # from the token, so two runs differing only in unit don't collide.
+                cols[f"{cell_id}_{direction}_{csv_suffix}"] = twin.transform(
+                    kind="volumetric_rescale", arr=arr, target_unit=unit
+                )
         csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
         base = _artefact_basename("AQ", "boundary", "flux", syear, eyear)
         csv_path = os.path.join(output_dir, f"{base}.csv")
-        csv_df.to_csv(csv_path)
+        # Ship the sign convention as a commented header line ahead of the data
+        # rows (pandas.read_csv(comment="#") round-trips it cleanly). Sourced from
+        # the one shared constant so the code comment and the file cannot drift.
+        with open(csv_path, "w", newline="") as fh:
+            fh.write(f"# {AQ_BOUNDARY_FLUX_SIGN_CONVENTION}\n")
+            csv_df.to_csv(fh)
         artefacts.append(csv_path)
 
     # GeoPackage mode (opt-in, additive): reuse the generic compartment_bundle
@@ -1353,7 +1394,13 @@ def run_mask_aq_boundary(
     if write_geopackage and flux_resp.fluxes:
         net_by_cell = {
             cell_id: np.asarray(
-                sum(arr * 86400.0 for arr in dir_fluxes.values()), dtype=float
+                sum(
+                    twin.transform(
+                        kind="volumetric_rescale", arr=arr, target_unit=unit
+                    )
+                    for arr in dir_fluxes.values()
+                ),
+                dtype=float,
             )
             for cell_id, dir_fluxes in flux_resp.fluxes.items()
         }
@@ -1390,17 +1437,21 @@ def run_mask_aq_boundary(
             polygon_crs=polygon_crs,
             weighted=False,
             source_run=getattr(twin, "out_caw_directory", "") or "",
+            # Ship the sign convention into every provenance row from the one
+            # shared constant (so the code comment and the .gpkg cannot drift).
+            provenance_extra={"sign_convention": AQ_BOUNDARY_FLUX_SIGN_CONVENTION},
         )
         # The shim carries no ``meta["target_unit"]``, so the assembler leaves
-        # ``unit_override`` empty for ``boundary_flux``; supply it explicitly here
-        # so the daily_values ``unit`` column is populated (net flux in m³/d).
+        # ``unit_override`` empty for ``boundary_flux``; supply the chosen token
+        # explicitly here so the daily_values ``unit`` column matches the rescaled
+        # net values (single source of truth for value + label).
         twin.export(
             kind="geopackage",
             path=bundle.gpkg_path,
             data=bundle.compartment_blocks,
             options={
                 "provenance_rows": bundle.provenance_rows,
-                "unit_override": {"boundary_flux": "m3/d"},
+                "unit_override": {"boundary_flux": unit},
             },
         )
         artefacts.append(bundle.gpkg_path)

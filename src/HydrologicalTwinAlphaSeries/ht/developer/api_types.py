@@ -217,6 +217,9 @@ class AssembleRequest:
     polygon_crs: Any = None
     weighted: bool = False
     source_run: Optional[str] = None
+    # Extra flat columns merged into every provenance row (compartment_bundle),
+    # e.g. the AQ boundary-flux sign convention. None leaves rows unchanged.
+    provenance_extra: Optional[Mapping[str, Any]] = None
     # Inputs for kind="boundary_aq_layers".
     edge_geometries: Optional[Mapping[Any, Any]] = None
     cell_layer_ids: Optional[Mapping[Any, int]] = None
@@ -253,6 +256,8 @@ class TransformRequest:
     areas: Optional[np.ndarray] = None
     aq_inputs: Any = None
     regime: Optional[str] = None
+    # Volumetric token for kind="volumetric_rescale" (e.g. "m3/j", "m3/mois").
+    target_unit: Optional[str] = None
 
 
 @dataclass

@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS 
+from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, _VOLUMETRIC_UNIT_FACTORS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     cells_boundary_faces,
     cells_in_polygon,
@@ -770,6 +770,24 @@ def transform(twin: "HydrologicalTwin", request: TransformRequest) -> Any:
             areas=request.areas,
         )
 
+    if request.kind == "volumetric_rescale":
+        # Scale a raw CaWaQS ``m³/s`` flux array/series to ``request.target_unit``
+        # by the single factor looked up in ``_VOLUMETRIC_UNIT_FACTORS``. This is
+        # the one rescale both AQ-boundary output surfaces (loose CSV per-direction
+        # series + GeoPackage per-cell net) call, so the two can never apply
+        # different factors. ``request.data`` may be any type that broadcasts
+        # against a scalar (np.ndarray, pandas Series, plain list-of-arrays sum) —
+        # the factor multiplication is shape-agnostic. The unknown-token guard
+        # surfaces a token-spelling drift immediately rather than silently
+        # returning unscaled data.
+        if request.target_unit not in _VOLUMETRIC_UNIT_FACTORS:
+            raise ValueError(
+                f"transform(kind='volumetric_rescale') got unknown target_unit="
+                f"{request.target_unit!r}; expected one of "
+                f"{sorted(_VOLUMETRIC_UNIT_FACTORS)}."
+            )
+        return request.data * _VOLUMETRIC_UNIT_FACTORS[request.target_unit]
+
     if request.kind == "criteria":
         bundle_dict = twin._bundle_response_to_dict(request.bundle or request.data)
         metrics = request.metrics
@@ -1093,6 +1111,7 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
                 polygon_crs=request.polygon_crs,
                 weighted=request.weighted,
                 source_run=request.source_run or "",
+                provenance_extra=request.provenance_extra,
             )
         )
         return CompartmentBundleResult(

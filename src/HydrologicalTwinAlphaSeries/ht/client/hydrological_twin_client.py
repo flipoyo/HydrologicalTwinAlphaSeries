@@ -102,12 +102,16 @@ class HydrologicalTwinClient:
         return operations_client.run_mask_hyd_boundary(self._twin, **kwargs)
 
     def mask_aq_boundary(
-        self, *, write_geopackage: bool = False, **kwargs
+        self, *, write_geopackage: bool = False, unit: str = "m3/j", **kwargs
     ) -> MaskAqBoundaryResult:
         # ``write_geopackage`` is broken out so it appears in the public
         # signature; ``False`` keeps today's loose face-flux CSV behaviour and
-        # ``True`` additionally writes the AqBoundary GeoPackage bundle. See
+        # ``True`` additionally writes the AqBoundary GeoPackage bundle. ``unit``
+        # selects the boundary-flux output unit token — ``"m3/j"`` (m³/day,
+        # default, current behaviour) or ``"m3/mois"`` (m³/month, an average-month
+        # rate); it drives the numeric conversion, the loose-CSV column suffix, and
+        # the GeoPackage unit label. See
         # :func:`operations_client.run_mask_aq_boundary` for the two modes.
         return operations_client.run_mask_aq_boundary(
-            self._twin, write_geopackage=write_geopackage, **kwargs
+            self._twin, write_geopackage=write_geopackage, unit=unit, **kwargs
         )

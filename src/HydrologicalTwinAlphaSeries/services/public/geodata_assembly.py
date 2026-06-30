@@ -130,6 +130,7 @@ def build_compartment_bundle(
     polygon_crs: Any,
     weighted: bool,
     source_run: str,
+    provenance_extra: Optional[Mapping[str, Any]] = None,
 ) -> tuple:
     """Shape a per-key block mapping into a GeoPackage-ready bundle.
 
@@ -160,6 +161,10 @@ def build_compartment_bundle(
     :param weighted: whether the run used area-fraction weighting (provenance).
     :param source_run: the originating run directory (``twin.out_caw_directory``),
         passed in so L3 needs no twin handle.
+    :param provenance_extra: optional flat mapping of extra columns merged into
+        every provenance row (e.g. ``{"sign_convention": "..."}`` for the AQ
+        boundary-flux case). Caller-supplied so the shipped wording is sourced
+        from one constant; ``None`` leaves the rows unchanged.
     :returns: the plain tuple ``(gpkg_path, compartment_blocks, provenance_rows,
         unit_override)``. The caller (L2) wraps this tuple into its own typed
         result — L3 never names that type, keeping the import edge downward only.
@@ -176,6 +181,7 @@ def build_compartment_bundle(
         "area_name": area_name,
         "polygon_wkt": polygon.wkt,
         "generated_at": generated_at,
+        **(provenance_extra or {}),
     }
 
     provenance_rows = []

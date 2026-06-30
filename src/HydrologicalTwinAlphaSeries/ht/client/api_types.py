@@ -256,8 +256,13 @@ class MaskAqBoundaryResult:
     :param flux_gdf: Placeholder for a future flux gdf; currently unused
         (the time-series live in the CSV artefact).
     :param artefacts: On-disk artefact paths (one CSV with per-(cell, dir)
-        flux time series in m³/d, when fluxes are non-empty, plus the ``.gpkg``
-        in GeoPackage mode).
+        flux time series in the chosen ``unit`` — ``m³/day`` by default or
+        ``m³/month`` as an average-month rate — when fluxes are non-empty, plus
+        the ``.gpkg`` in GeoPackage mode). Both surfaces ship the sign convention
+        (positive = flux into the cell): the CSV as a commented header line, the
+        GeoPackage in its ``provenance`` table. The CSV column suffix
+        (``_m3d`` / ``_m3mois``) and the GeoPackage ``daily_values`` ``unit``
+        label both follow the same chosen unit token.
     """
 
     entries: List[AqBoundaryLayerEntry] = field(default_factory=list)
