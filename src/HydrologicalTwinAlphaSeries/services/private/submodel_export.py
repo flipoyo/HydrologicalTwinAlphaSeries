@@ -22,7 +22,7 @@ Two writers live here today:
 from __future__ import annotations
 
 import sqlite3
-from typing import Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -71,6 +71,7 @@ def save_area_geopackage(
     compartment_blocks: Mapping[str, CompartmentBlock],
     provenance_rows: Sequence[dict],
     daily_values_unit_override: Optional[Union[str, Mapping[str, str]]] = None,
+    daily_values_faces: Optional[Mapping[Any, str]] = None,
 ) -> None:
     """Persist a transportable multi-compartment GeoPackage for a masked area.
 
@@ -81,9 +82,12 @@ def save_area_geopackage(
     - one ``cells_<compartment>`` vector layer per mesh (e.g.
       ``cells_WATBAL``, ``cells_AQ``), each with columns ``cell_id`` and
       ``geometry`` (and, when that compartment's ``cells_gdf`` already has a
-      ``weight`` column, that column is preserved — the weighted-mask path);
+      ``weight`` or ``faces`` column, that column is preserved — ``weight`` is
+      the weighted-mask path, ``faces`` the AQ-boundary cardinal-direction
+      annotation);
     - a single non-spatial ``daily_values`` table in long form with columns
-      ``compartment``, ``cell_id``, ``date``, ``param``, ``value``, ``unit``.
+      ``compartment``, ``cell_id``, ``date``, ``param``, ``value``, ``unit``
+      (and, when ``daily_values_faces`` is supplied, a ``faces`` column).
       ``cell_id`` is unique only *within* a compartment, so a consumer joins
       ``daily_values`` to the matching ``cells_<compartment>`` layer on the
       pair ``(compartment, cell_id)``;
@@ -104,8 +108,8 @@ def save_area_geopackage(
         values_responses, polygon_totals)}``. For each compartment:
 
         * ``cells_gdf`` — GeoDataFrame with a ``cell_id`` column and
-          geometry, one row per masked cell of that mesh. A ``weight``
-          column, when present, is written into the
+          geometry, one row per masked cell of that mesh. A ``weight`` or
+          ``faces`` column, when present, is written into the
           ``cells_<compartment>`` layer.
         * ``values_responses`` — mapping ``{param: ValuesResponse}``. Each
           ``ValuesResponse`` exposes ``data`` of shape
@@ -124,6 +128,13 @@ def save_area_geopackage(
         ``m3/s`` and Water Height in ``m``); a param absent from the mapping
         falls back to its native unit in ``INTERNAL_VALUES_PARAM_UNITS``.
         ``None`` uses the native lookup for every param.
+    :param daily_values_faces: Optional per-cell ``{cell_id: faces_str}``
+        mapping (comma-separated cardinal directions, e.g. ``"north,west"``)
+        for the AQ-boundary path. When supplied, a ``faces`` column is added to
+        ``daily_values`` by mapping each row's ``cell_id`` through it (cells
+        absent from the mapping get the empty string). When ``None`` (every
+        non-AQ-boundary caller), no ``faces`` column is emitted, so
+        internal-values / HYD ``daily_values`` tables are unchanged.
     """
     from pathlib import Path as _Path  # noqa: PLC0415
 
@@ -145,6 +156,8 @@ def save_area_geopackage(
         cell_cols = ["cell_id"]
         if "weight" in cells_gdf.columns:
             cell_cols.append("weight")
+        if "faces" in cells_gdf.columns:
+            cell_cols.append("faces")
         cell_cols.append("geometry")
         cells_gdf[cell_cols].to_file(
             gpkg_path, driver="GPKG", layer=f"cells_{compartment}"
@@ -207,6 +220,16 @@ def save_area_geopackage(
             columns=["compartment", "cell_id", "date", "param", "value", "unit"]
         )
     )
+
+    # AQ-boundary annotation (absent → omitted): map each row's cell_id to its
+    # comma-separated cardinal directions. Sourced from the same per-cell map
+    # that backs the cells_<compartment> ``faces`` column, so the two surfaces
+    # agree per cell_id. No mapping → no column, leaving internal-values / HYD
+    # daily_values byte-for-byte unchanged.
+    if daily_values_faces is not None:
+        daily_values["faces"] = (
+            daily_values["cell_id"].map(daily_values_faces).fillna("")
+        )
 
     provenance_df = pd.DataFrame(list(provenance_rows))
 

@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -78,14 +78,23 @@ def build_boundary_aq_layers(
     edge_geometries: Mapping[Any, Any],
     cell_layer_ids: Mapping[Any, int],
     crs: Any,
-) -> List[Tuple[int, gpd.GeoDataFrame]]:
+    face_directions: Mapping[Any, Sequence[str]],
+) -> Tuple[List[Tuple[int, gpd.GeoDataFrame]], Dict[Any, str]]:
     """Group AQ boundary edges by aquifer layer into one GeoDataFrame per layer.
 
     Pure shaping: turns the flat per-cell boundary-edge geometry of a
     ``mask(kind="boundary_aq")`` response into a list of ready-to-register
     per-layer GeoDataFrames. Imports nothing from ``ht/`` — every value it needs
-    (``edge_geometries``, ``cell_layer_ids``, ``crs``) arrives as a parameter, so
-    the L3 import edge stays downward only.
+    (``edge_geometries``, ``cell_layer_ids``, ``crs``, ``face_directions``)
+    arrives as a parameter, so the L3 import edge stays downward only.
+
+    Each per-cell row carries a ``faces`` column: the comma-separated cardinal
+    directions on which that cell touches the polygon boundary, in the insertion
+    order returned by ``cells_boundary_faces`` (no alphabetisation), so it matches
+    the loose face-flux CSV's ``{cell_id}_{direction}`` column order. This is the
+    *single* formatting site for the ``faces`` string — the same value is returned
+    in the flat ``{cell_id: faces_str}`` map so the GeoPackage ``daily_values``
+    surface annotates each cell identically (design D1/D5).
 
     :param edge_geometries: ``{cell_id: merged_edge_geometry}`` for every boundary
         cell, as carried by ``BoundaryFluxResponse.edge_geometries``.
@@ -93,14 +102,31 @@ def build_boundary_aq_layers(
         ``BoundaryFluxResponse.cell_layer_ids``. Every key of ``edge_geometries``
         must appear here.
     :param crs: pyproj.CRS or EPSG string the per-layer GeoDataFrames are built in.
-    :returns: An ordered ``[(id_layer, gdf), ...]`` list — one GeoDataFrame per
-        aquifer layer that actually has boundary cells, ascending by ``id_layer``.
-        Each ``gdf`` holds one row per boundary cell of that layer, with a
-        ``cell_id`` column and the cell's merged boundary-edge geometry. Layers
-        with no boundary cells are omitted (the silent skip is a natural property
-        of grouping, not a special case). An empty ``edge_geometries`` yields an
-        empty list (no raise).
+    :param face_directions: ``{cell_id: [direction, ...]}`` (e.g.
+        ``["north", "west"]``) from ``BoundaryFluxResponse.face_directions``. Every
+        key of ``edge_geometries`` must appear here; the directions are joined with
+        commas in the given order (already deduplicated by ``cells_boundary_faces``)
+        to form the ``faces`` string.
+    :returns: A 2-tuple ``(entries, faces_by_cell)``:
+
+        * ``entries`` — an ordered ``[(id_layer, gdf), ...]`` list, one
+          GeoDataFrame per aquifer layer that actually has boundary cells,
+          ascending by ``id_layer``. Each ``gdf`` holds one row per boundary cell
+          of that layer, with a ``cell_id`` column, a ``faces`` column, and the
+          cell's merged boundary-edge geometry. Layers with no boundary cells are
+          omitted (the silent skip is a natural property of grouping, not a special
+          case).
+        * ``faces_by_cell`` — a flat ``{cell_id: faces_str}`` map over every
+          boundary cell, the same string the geometry rows carry, so a caller can
+          annotate the ``daily_values`` surface without re-formatting.
+
+        An empty ``edge_geometries`` yields ``([], {})`` (no raise).
     """
+    faces_by_cell: Dict[Any, str] = {
+        cell_id: ",".join(face_directions[cell_id])
+        for cell_id in edge_geometries
+    }
+
     cells_by_layer: dict = {}
     for cell_id, geometry in edge_geometries.items():
         id_layer = cell_layer_ids[cell_id]
@@ -111,12 +137,15 @@ def build_boundary_aq_layers(
         cell_ids = [cid for cid, _ in cells_by_layer[id_layer]]
         geometries = [geom for _, geom in cells_by_layer[id_layer]]
         gdf = gpd.GeoDataFrame(
-            {"cell_id": cell_ids},
+            {
+                "cell_id": cell_ids,
+                "faces": [faces_by_cell[cid] for cid in cell_ids],
+            },
             geometry=geometries,
             crs=crs,
         )
         entries.append((id_layer, gdf))
-    return entries
+    return entries, faces_by_cell
 
 
 def build_compartment_bundle(

@@ -204,6 +204,8 @@ class AssembleRequest:
     - ``cell_layer_ids`` — ``{cell_id: id_layer}`` (0-based) from the same
       response, tagging each boundary cell with its aquifer layer.
     - ``crs`` — the CRS the per-layer GeoDataFrames are built in.
+    - ``face_directions`` — ``{cell_id: [direction, ...]}`` from the same
+      response, used to format the per-cell ``faces`` cardinal-direction column.
     """
 
     kind: str = "compartment_bundle"
@@ -224,6 +226,7 @@ class AssembleRequest:
     edge_geometries: Optional[Mapping[Any, Any]] = None
     cell_layer_ids: Optional[Mapping[Any, int]] = None
     crs: Any = None
+    face_directions: Optional[Mapping[Any, Any]] = None
 
 
 @dataclass
@@ -600,9 +603,15 @@ class BoundaryAqLayersResult:
 
     ``entries`` is an ordered ``[(id_layer, gdf), ...]`` list — one GeoDataFrame
     per aquifer layer that has boundary cells, ascending by ``id_layer``. Each
-    ``gdf`` carries a ``cell_id`` column and the cells' merged boundary-edge
-    geometry. Layers the polygon does not reach are absent (silent skip); an
-    empty input yields an empty list.
+    ``gdf`` carries a ``cell_id`` column, a ``faces`` cardinal-direction column,
+    and the cells' merged boundary-edge geometry. Layers the polygon does not
+    reach are absent (silent skip); an empty input yields an empty list.
+
+    ``faces_by_cell`` is the flat ``{cell_id: faces_str}`` map over every boundary
+    cell — the same comma-separated cardinal-direction string the geometry rows
+    carry — produced at the single L3 formatting site so a caller can annotate the
+    GeoPackage ``daily_values`` surface without re-formatting (design D5).
     """
 
     entries: List[tuple] = field(default_factory=list)
+    faces_by_cell: Dict[Any, str] = field(default_factory=dict)

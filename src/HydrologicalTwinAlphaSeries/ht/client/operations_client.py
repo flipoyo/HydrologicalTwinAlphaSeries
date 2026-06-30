@@ -1231,34 +1231,40 @@ def run_mask_aq_boundary(
     :param polygon_crs: CRS string for ``polygon``.
     :param syear: Simulation start year.
     :param eyear: Simulation end year.
-    :param output_dir: Directory for the per-(cell, dir) flux CSV.
+    :param output_dir: Directory for the mode-dependent artefact (the per-(cell,
+        dir) flux CSV in default mode, or the ``.gpkg`` in GeoPackage mode).
     :param area_name: Display / filename token for the masked area.
-    :param write_geopackage: Selects the output **mode**:
+    :param write_geopackage: Selects one of two mutually **exclusive** output
+        modes (matching ``run_mask_internal_values`` — the ``.gpkg`` is written
+        *instead of* the loose CSV, never alongside it):
 
-        * ``False`` (default mode): behaves exactly as before — when fluxes
-          are non-empty a single loose per-(cell, direction) face-flux CSV is
-          written (values in the chosen ``unit``) and **no** GeoPackage is
-          produced.
-        * ``True`` (GeoPackage mode): in addition to the loose CSV, a single
-          transportable bundle is written at
-          ``<output_dir>/<area_name>_AqBoundary_<syear>_<eyear>.gpkg`` —
-          one ``cells_AQ_layer<id>`` vector layer **per aquifer layer the
-          polygon reached** (one feature per boundary cell of that layer,
-          carrying its merged boundary-edge geometry and a ``cell_id`` column,
-          geometrically identical to the matching registered QGIS borders
-          layer), a long-form ``daily_values`` table (one row block per layer,
-          ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``) holding
-          **one net daily-flux series per boundary cell** (the per-direction
-          face series summed into a single net series, in the chosen ``unit``,
-          row-aligned to its ``cells_AQ_layer<id>`` layer by ``cell_id``), and a
-          ``provenance`` table (one row per layer block, carrying the sign
+        * ``False`` (default mode): when fluxes are non-empty a single loose
+          per-(cell, direction) face-flux CSV is written (values in the chosen
+          ``unit``) and **no** GeoPackage is produced. This is the only mode that
+          preserves the per-face **gross** detail (each face's own series).
+        * ``True`` (GeoPackage mode): the single transportable bundle is written at
+          ``<output_dir>/<area_name>_AqBoundary_<syear>_<eyear>.gpkg`` as the
+          **sole** artefact — the loose face-flux CSV is **not** written. The
+          bundle holds one ``cells_AQ_layer<id>`` vector layer **per aquifer layer
+          the polygon reached** (one feature per boundary cell of that layer,
+          carrying its merged boundary-edge geometry, a ``cell_id`` column, and a
+          ``faces`` column of comma-separated cardinal directions — e.g.
+          ``"north,west"`` — geometrically identical to the matching registered
+          QGIS borders layer), a long-form ``daily_values`` table (one row block
+          per layer, ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``)
+          holding **one net daily-flux series per boundary cell** (the
+          per-direction face series summed into a single net series, in the chosen
+          ``unit``, row-aligned to its ``cells_AQ_layer<id>`` layer by ``cell_id``)
+          with a matching ``faces`` column annotating which directions contributed,
+          and a ``provenance`` table (one row per layer block, carrying the sign
           convention). The ``.gpkg`` path is appended to
           ``MaskAqBoundaryResult.artefacts``.
 
         The GeoPackage carries the per-cell **net** exchange (a corner cell's
-        faces may have opposite signs, so the row is a net, not a gross); the
-        loose CSV remains the per-face detail record, flat and ``cell_id``-keyed
-        across all layers (it is **not** split per layer).
+        faces may have opposite signs, so the row is a net, not a gross) plus the
+        ``faces`` annotation saying which directions contributed; the per-face
+        gross detail is intentionally not preserved in GeoPackage mode and is
+        available only in default (CSV) mode.
     :param temp_dir: Accepted for signature parity with the other mask
         operations; the GeoPackage path uses ``output_dir`` only, so this is
         currently unused here.
@@ -1273,12 +1279,14 @@ def run_mask_aq_boundary(
         unit can never diverge. The rescale is applied identically to the loose
         CSV per-direction series and the GeoPackage per-cell net.
     :returns: A :class:`MaskAqBoundaryResult` whose ``entries`` carry one
-        per-aquifer-layer borders gdf + layer name, plus the artefact paths
-        (loose CSV always when fluxes are non-empty, plus the ``.gpkg`` in
-        GeoPackage mode). The fluxes are written in the chosen ``unit`` and both
-        output surfaces ship the sign convention (positive = flux into the cell):
-        the loose CSV as a commented header line, the GeoPackage in its
-        ``provenance`` table.
+        per-aquifer-layer borders gdf (each with ``cell_id``, ``faces`` and
+        geometry — produced identically in both modes, so the registered QGIS
+        layers show the cardinal faces regardless of ``write_geopackage``) + layer
+        name, plus the single mode-dependent artefact path: the loose CSV in
+        default mode, or the ``.gpkg`` in GeoPackage mode (never both). The fluxes
+        are written in the chosen ``unit`` and both output surfaces ship the sign
+        convention (positive = flux into the cell): the loose CSV as a commented
+        header line, the GeoPackage in its ``provenance`` table.
     """
     import numpy as np  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
@@ -1344,6 +1352,7 @@ def run_mask_aq_boundary(
         edge_geometries=face_orientations.edge_geometries,
         cell_layer_ids=face_orientations.cell_layer_ids,
         crs=polygon_crs,
+        face_directions=face_orientations.face_directions,
     )
     entries = [
         AqBoundaryLayerEntry(
@@ -1355,7 +1364,12 @@ def run_mask_aq_boundary(
     ]
 
     artefacts = []
-    if flux_resp.fluxes:
+    # Exclusive output mode (design D6): the loose per-(cell, direction) face-flux
+    # CSV is the DEFAULT-mode artefact only. GeoPackage mode writes the .gpkg as
+    # the sole artefact and suppresses this CSV — an XOR matching
+    # run_mask_internal_values. The face-flux fetch above still runs
+    # unconditionally because the GeoPackage net path needs the same data.
+    if flux_resp.fluxes and not write_geopackage:
         os.makedirs(output_dir, exist_ok=True)
         cols = {}
         for cell_id, dir_fluxes in flux_resp.fluxes.items():
@@ -1377,8 +1391,9 @@ def run_mask_aq_boundary(
             csv_df.to_csv(fh)
         artefacts.append(csv_path)
 
-    # GeoPackage mode (opt-in, additive): reuse the generic compartment_bundle
-    # assemble + geopackage export verbs to emit a single transportable bundle.
+    # GeoPackage mode (opt-in, exclusive — design D6): reuse the generic
+    # compartment_bundle assemble + geopackage export verbs to emit a single
+    # transportable bundle as the SOLE artefact (the loose CSV above is suppressed).
     # The ragged ``{cell → {direction → series}}`` flux dict is flattened to one
     # NET daily series per boundary cell (sum over that cell's face directions).
     # The geometry surface is split per aquifer layer: each per-layer gdf (the
@@ -1390,7 +1405,8 @@ def run_mask_aq_boundary(
     # ``cell_id`` order. ``daily_values`` rows follow the block key, so they carry
     # ``compartment="AQ_layer<id>"`` (the per-layer split applies to the flux
     # rows too, keyed by ``cell_id`` within each layer). The empty-boundary guard
-    # mirrors the loose-CSV guard above (no .gpkg when no fluxes).
+    # (no .gpkg when no fluxes) is the GeoPackage-mode counterpart of the
+    # default-mode loose-CSV guard above; together they are an exclusive XOR.
     if write_geopackage and flux_resp.fluxes:
         net_by_cell = {
             cell_id: np.asarray(
@@ -1452,6 +1468,11 @@ def run_mask_aq_boundary(
             options={
                 "provenance_rows": bundle.provenance_rows,
                 "unit_override": {"boundary_flux": unit},
+                # Annotate each daily_values row with its cell's cardinal faces.
+                # The map is produced at the single L3 formatting site (the
+                # assemble verb) and forwarded as-is — L1 builds no dict — so the
+                # geometry and daily_values faces strings agree per cell_id.
+                "daily_values_faces": aq_layers.faces_by_cell,
             },
         )
         artefacts.append(bundle.gpkg_path)

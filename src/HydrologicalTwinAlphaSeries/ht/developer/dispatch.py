@@ -1076,6 +1076,9 @@ def export(twin: "HydrologicalTwin", request: ExportRequest) -> ExportResult:
             request.data,
             request.options["provenance_rows"],
             request.options["unit_override"],
+            # Optional AQ-boundary per-cell faces map; absent for every other
+            # caller, leaving their daily_values tables unchanged.
+            request.options.get("daily_values_faces"),
         )
     else:
         raise ValueError(f"Unknown export kind: {request.kind!r}")
@@ -1090,7 +1093,8 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
     L2-owned :class:`CompartmentBundleResult` so L3 never names the result type.
     ``kind="boundary_aq_layers"`` routes the AQ boundary edges down to
     :func:`build_boundary_aq_layers` and wraps its plain ``[(id_layer, gdf), ...]``
-    list into the L2-owned :class:`BoundaryAqLayersResult`.
+    list — plus the flat per-cell ``{cell_id: faces_str}`` map it now returns —
+    into the L2-owned :class:`BoundaryAqLayersResult`.
     ``assemble`` is shape-only — no disk write happens here.
     """
     from ...services.public.geodata_assembly import (
@@ -1122,11 +1126,14 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
         )
 
     if request.kind == "boundary_aq_layers":
-        entries = build_boundary_aq_layers(
+        entries, faces_by_cell = build_boundary_aq_layers(
             edge_geometries=request.edge_geometries or {},
             cell_layer_ids=request.cell_layer_ids or {},
             crs=request.crs,
+            face_directions=request.face_directions or {},
         )
-        return BoundaryAqLayersResult(entries=entries)
+        return BoundaryAqLayersResult(
+            entries=entries, faces_by_cell=faces_by_cell
+        )
 
     raise ValueError(f"Unknown assemble kind: {request.kind!r}")
