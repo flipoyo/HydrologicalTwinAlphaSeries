@@ -17,6 +17,7 @@ from HydrologicalTwinAlphaSeries.services.private.raw_data_export import (
 )
 
 from .api_types import (
+    AqBoundaryLayerEntry,
     BudgetBarplotResult,
     CompareSimObsResult,
     CompartmentCellsEntry,
@@ -1239,26 +1240,30 @@ def run_mask_aq_boundary(
         * ``True`` (GeoPackage mode): in addition to the loose CSV, a single
           transportable bundle is written at
           ``<output_dir>/<area_name>_AqBoundary_<syear>_<eyear>.gpkg`` —
-          a ``cells_AQ`` vector layer (one feature per boundary cell, carrying
-          that cell's merged boundary-edge geometry and a ``cell_id`` column),
-          a long-form ``daily_values`` table (every row ``compartment="AQ"``,
-          ``param="boundary_flux"``) holding **one net daily-flux series per
-          boundary cell** (the per-direction face series summed into a single
-          net series, in m³/d, row-aligned to ``cells_AQ`` by ``cell_id``), and
-          a one-row ``provenance`` table. The ``.gpkg`` path is appended to
+          one ``cells_AQ_layer<id>`` vector layer **per aquifer layer the
+          polygon reached** (one feature per boundary cell of that layer,
+          carrying its merged boundary-edge geometry and a ``cell_id`` column,
+          geometrically identical to the matching registered QGIS borders
+          layer), a long-form ``daily_values`` table (one row block per layer,
+          ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``) holding
+          **one net daily-flux series per boundary cell** (the per-direction
+          face series summed into a single net series, in m³/d, row-aligned to
+          its ``cells_AQ_layer<id>`` layer by ``cell_id``), and a ``provenance``
+          table (one row per layer block). The ``.gpkg`` path is appended to
           ``MaskAqBoundaryResult.artefacts``.
 
         The GeoPackage carries the per-cell **net** exchange (a corner cell's
         faces may have opposite signs, so the row is a net, not a gross); the
-        loose CSV remains the per-face detail record.
+        loose CSV remains the per-face detail record, flat and ``cell_id``-keyed
+        across all layers (it is **not** split per layer).
     :param temp_dir: Accepted for signature parity with the other mask
         operations; the GeoPackage path uses ``output_dir`` only, so this is
         currently unused here.
-    :returns: AQ boundary-edges gdf + the artefact paths (loose CSV always when
-        fluxes are non-empty, plus the ``.gpkg`` in GeoPackage mode). The
-        fluxes themselves are written in m³/d.
+    :returns: A :class:`MaskAqBoundaryResult` whose ``entries`` carry one
+        per-aquifer-layer borders gdf + layer name, plus the artefact paths
+        (loose CSV always when fluxes are non-empty, plus the ``.gpkg`` in
+        GeoPackage mode). The fluxes themselves are written in m³/d.
     """
-    import geopandas as gpd  # noqa: PLC0415
     import numpy as np  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
     from types import SimpleNamespace  # noqa: PLC0415
@@ -1297,16 +1302,26 @@ def run_mask_aq_boundary(
         face_orientations=face_orientations,
     )
 
-    if face_orientations.edge_geometries:
-        cells_gdf = gpd.GeoDataFrame(
-            {"cell_id": face_orientations.cell_ids},
-            geometry=list(face_orientations.edge_geometries.values()),
-            crs=polygon_crs,
+    # Group the merged boundary edges into one ready-to-register GeoDataFrame per
+    # aquifer layer the polygon reached. The grouping + GeoDataFrame construction
+    # lives in the L2 assemble verb (backed by a pure L3 shaper), so this L1
+    # orchestration builds no GeoDataFrame inline — see the "L1 only orchestrates"
+    # golden rule in CLAUDE.md. The same per-layer gdfs feed both the registered
+    # QGIS layers (below) and the GeoPackage ``cells_AQ_layer<id>`` blocks.
+    aq_layers = twin.assemble(
+        kind="boundary_aq_layers",
+        edge_geometries=face_orientations.edge_geometries,
+        cell_layer_ids=face_orientations.cell_layer_ids,
+        crs=polygon_crs,
+    )
+    entries = [
+        AqBoundaryLayerEntry(
+            id_layer=id_layer,
+            gdf=gdf,
+            layer_name=f"{area_name}_AQ_layer{id_layer}_boundary",
         )
-        cells_layer_name = f"{area_name}_AQ_boundary_edges"
-    else:
-        cells_gdf = None
-        cells_layer_name = None
+        for id_layer, gdf in aq_layers.entries
+    ]
 
     artefacts = []
     if flux_resp.fluxes:
@@ -1324,39 +1339,45 @@ def run_mask_aq_boundary(
     # GeoPackage mode (opt-in, additive): reuse the generic compartment_bundle
     # assemble + geopackage export verbs to emit a single transportable bundle.
     # The ragged ``{cell → {direction → series}}`` flux dict is flattened to one
-    # NET daily series per boundary cell (sum over that cell's face directions),
-    # stacked into a (n_cells, n_days) matrix row-aligned to a one-row-per-cell
-    # cells GDF carrying the merged boundary-edge geometry. The empty-boundary
-    # guard mirrors the loose-CSV guard above (no .gpkg when no fluxes).
+    # NET daily series per boundary cell (sum over that cell's face directions).
+    # The geometry surface is split per aquifer layer: each per-layer gdf (the
+    # SAME object registered as a QGIS layer above) becomes one ``AQ_layer<id>``
+    # block, so the writer emits a ``cells_AQ_layer<id>`` geometry layer per layer
+    # — geometrically identical to the matching QGIS borders layer by
+    # construction. The net-flux matrix for each block is row-aligned to that
+    # layer's gdf by reading the per-cell net series back in the gdf's own
+    # ``cell_id`` order. ``daily_values`` rows follow the block key, so they carry
+    # ``compartment="AQ_layer<id>"`` (the per-layer split applies to the flux
+    # rows too, keyed by ``cell_id`` within each layer). The empty-boundary guard
+    # mirrors the loose-CSV guard above (no .gpkg when no fluxes).
     if write_geopackage and flux_resp.fluxes:
-        cell_ids: list = []
-        geometries: list = []
-        net_rows: list = []
-        # ``edge_geometries`` is keyed per cell on the boundary_aq response
-        # (face_orientations); flux_resp keeps faces separate and carries no
-        # geometry, so the merged per-cell edge geometry is taken from there.
-        for cell_id, dir_fluxes in flux_resp.fluxes.items():
-            net_series = sum(arr * 86400.0 for arr in dir_fluxes.values())
-            net_rows.append(np.asarray(net_series, dtype=float))
-            cell_ids.append(cell_id)
-            geometries.append(face_orientations.edge_geometries[cell_id])
-        net_matrix = np.vstack(net_rows)  # (n_cells, n_days)
-        faces_gdf = gpd.GeoDataFrame(
-            {"cell_id": cell_ids},
-            geometry=geometries,
-            crs=polygon_crs,
-        )
-        # Bare matrix wrapped in a minimal ``.data`` / ``.dates`` duck-type so the
+        net_by_cell = {
+            cell_id: np.asarray(
+                sum(arr * 86400.0 for arr in dir_fluxes.values()), dtype=float
+            )
+            for cell_id, dir_fluxes in flux_resp.fluxes.items()
+        }
+        # Bare matrices wrapped in a minimal ``.data`` / ``.dates`` duck-type so the
         # L3 ``build_compartment_bundle`` (which reads ``response.data`` /
-        # ``response.dates``) can consume it without a new L3 response type.
+        # ``response.dates``) can consume them without a new L3 response type.
         # ``.meta=None`` is supplied because the assembler also reads
         # ``response.meta`` to harvest a per-param unit — leaving it None makes it
         # skip ``boundary_flux`` there, so the explicit unit_override below is the
         # single source of the daily_values ``unit`` column.
-        resp_shim = SimpleNamespace(
-            data=net_matrix, dates=flux_resp.dates, meta=None
-        )
-        compartment_blocks = {"AQ": (faces_gdf, {"boundary_flux": resp_shim}, None)}
+        compartment_blocks = {}
+        for entry in entries:
+            layer_cell_ids = list(entry.gdf["cell_id"])
+            net_matrix = np.vstack(
+                [net_by_cell[cid] for cid in layer_cell_ids]
+            )  # (n_layer_cells, n_days), row-aligned to entry.gdf
+            resp_shim = SimpleNamespace(
+                data=net_matrix, dates=flux_resp.dates, meta=None
+            )
+            compartment_blocks[f"AQ_layer{entry.id_layer}"] = (
+                entry.gdf,
+                {"boundary_flux": resp_shim},
+                None,
+            )
         bundle = twin.assemble(
             kind="compartment_bundle",
             label="AqBoundary",
@@ -1385,8 +1406,7 @@ def run_mask_aq_boundary(
         artefacts.append(bundle.gpkg_path)
 
     return MaskAqBoundaryResult(
-        cells_gdf=cells_gdf,
+        entries=entries,
         flux_gdf=None,
-        layer_names=(cells_layer_name, None),
         artefacts=artefacts,
     )

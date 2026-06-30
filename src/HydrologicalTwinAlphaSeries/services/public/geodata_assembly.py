@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -72,6 +72,51 @@ def assemble_multi_layer_geodataframe(
     result = result[["ID_ABS", "ID_LAY"] + cols + ["geometry"]]
     result = result.sort_values(by=["ID_LAY", "ID_ABS"])
     return result
+
+
+def build_boundary_aq_layers(
+    edge_geometries: Mapping[Any, Any],
+    cell_layer_ids: Mapping[Any, int],
+    crs: Any,
+) -> List[Tuple[int, gpd.GeoDataFrame]]:
+    """Group AQ boundary edges by aquifer layer into one GeoDataFrame per layer.
+
+    Pure shaping: turns the flat per-cell boundary-edge geometry of a
+    ``mask(kind="boundary_aq")`` response into a list of ready-to-register
+    per-layer GeoDataFrames. Imports nothing from ``ht/`` — every value it needs
+    (``edge_geometries``, ``cell_layer_ids``, ``crs``) arrives as a parameter, so
+    the L3 import edge stays downward only.
+
+    :param edge_geometries: ``{cell_id: merged_edge_geometry}`` for every boundary
+        cell, as carried by ``BoundaryFluxResponse.edge_geometries``.
+    :param cell_layer_ids: ``{cell_id: id_layer}`` (0-based) from
+        ``BoundaryFluxResponse.cell_layer_ids``. Every key of ``edge_geometries``
+        must appear here.
+    :param crs: pyproj.CRS or EPSG string the per-layer GeoDataFrames are built in.
+    :returns: An ordered ``[(id_layer, gdf), ...]`` list — one GeoDataFrame per
+        aquifer layer that actually has boundary cells, ascending by ``id_layer``.
+        Each ``gdf`` holds one row per boundary cell of that layer, with a
+        ``cell_id`` column and the cell's merged boundary-edge geometry. Layers
+        with no boundary cells are omitted (the silent skip is a natural property
+        of grouping, not a special case). An empty ``edge_geometries`` yields an
+        empty list (no raise).
+    """
+    cells_by_layer: dict = {}
+    for cell_id, geometry in edge_geometries.items():
+        id_layer = cell_layer_ids[cell_id]
+        cells_by_layer.setdefault(id_layer, []).append((cell_id, geometry))
+
+    entries: List[Tuple[int, gpd.GeoDataFrame]] = []
+    for id_layer in sorted(cells_by_layer):
+        cell_ids = [cid for cid, _ in cells_by_layer[id_layer]]
+        geometries = [geom for _, geom in cells_by_layer[id_layer]]
+        gdf = gpd.GeoDataFrame(
+            {"cell_id": cell_ids},
+            geometry=geometries,
+            crs=crs,
+        )
+        entries.append((id_layer, gdf))
+    return entries
 
 
 def build_compartment_bundle(

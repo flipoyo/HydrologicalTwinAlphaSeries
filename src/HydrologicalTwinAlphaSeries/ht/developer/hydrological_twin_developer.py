@@ -664,12 +664,14 @@ class HydrologicalTwin:
         kind: Union[str, AssembleRequest] = "compartment_bundle",
         request: Optional[AssembleRequest] = None,
         **kwargs: Any,
-    ) -> CompartmentBundleResult:
+    ) -> Any:
         """Shape already-fetched per-key blocks into a serialization-ready payload.
 
         ``assemble`` is the 6th canonical dispatching verb, alongside ``fetch``,
         ``mask``, ``transform``, ``render``, and ``export``. ``kind`` selects a
-        shaping workflow (``"compartment_bundle"`` today). It is **shape-only**:
+        shaping workflow (``"compartment_bundle"`` for a GeoPackage bundle,
+        ``"boundary_aq_layers"`` for per-aquifer-layer borders GeoDataFrames). It
+        is **shape-only**:
         it performs no ``fetch``/``mask``/``transform`` and no disk I/O — the
         returned :class:`CompartmentBundleResult` is written by a subsequent
         ``twin.export(kind="geopackage", ...)`` call.

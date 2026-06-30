@@ -62,6 +62,7 @@ from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _re
 
 from .api_types import (
     AssembleRequest,
+    BoundaryAqLayersResult,
     BoundaryFluxResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
@@ -616,6 +617,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         )
         all_face_directions: Dict[Any, List[str]] = {}
         all_edge_geometries: Dict[Any, Any] = {}
+        cell_layer_ids: Dict[Any, int] = {}
         for lid in layers_to_scan:
             aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, lid)
             # Reproject once into this layer's mesh CRS. All AQ layers of one
@@ -654,10 +656,17 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 unique_dirs = list(dict.fromkeys(dirs))
                 all_face_directions[cid] = unique_dirs
                 all_edge_geometries[cid] = edge_geometries[cid]
+                # ``lid`` is the only scope holding both this cell and its
+                # aquifer layer; record the membership so downstream consumers
+                # (e.g. assemble(kind="boundary_aq_layers")) can split the merged
+                # boundary edges back into one surface per layer. The uniqueness
+                # guard above makes this mapping single-valued by construction.
+                cell_layer_ids[cid] = lid
         return BoundaryFluxResponse(
             cell_ids=list(all_face_directions.keys()),
             face_directions=all_face_directions,
             edge_geometries=all_edge_geometries,
+            cell_layer_ids=cell_layer_ids,
             fluxes={},
             dates=None,
             meta={
@@ -1061,9 +1070,15 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
     Routes ``kind="compartment_bundle"`` down to the pure L3 shaping function
     :func:`build_compartment_bundle`, then wraps its plain 4-tuple into the
     L2-owned :class:`CompartmentBundleResult` so L3 never names the result type.
+    ``kind="boundary_aq_layers"`` routes the AQ boundary edges down to
+    :func:`build_boundary_aq_layers` and wraps its plain ``[(id_layer, gdf), ...]``
+    list into the L2-owned :class:`BoundaryAqLayersResult`.
     ``assemble`` is shape-only — no disk write happens here.
     """
-    from ...services.public.geodata_assembly import build_compartment_bundle
+    from ...services.public.geodata_assembly import (
+        build_boundary_aq_layers,
+        build_compartment_bundle,
+    )
 
     if request.kind == "compartment_bundle":
         gpkg_path, compartment_blocks, provenance_rows, unit_override = (
@@ -1086,5 +1101,13 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
             provenance_rows=provenance_rows,
             unit_override=unit_override,
         )
+
+    if request.kind == "boundary_aq_layers":
+        entries = build_boundary_aq_layers(
+            edge_geometries=request.edge_geometries or {},
+            cell_layer_ids=request.cell_layer_ids or {},
+            crs=request.crs,
+        )
+        return BoundaryAqLayersResult(entries=entries)
 
     raise ValueError(f"Unknown assemble kind: {request.kind!r}")

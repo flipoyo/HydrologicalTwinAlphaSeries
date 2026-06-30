@@ -195,6 +195,15 @@ class AssembleRequest:
     - ``output_dir`` — the directory the composed ``gpkg_path`` lives in.
     - ``source_run`` — a twin-derived value (the caller passes
       ``twin.out_caw_directory``) so L3 needs no upward import.
+
+    For ``kind="boundary_aq_layers"`` (shape-only grouping of AQ boundary edges
+    into one GeoDataFrame per aquifer layer):
+
+    - ``edge_geometries`` — ``{cell_id: merged_edge_geometry}`` from the
+      ``boundary_aq`` response.
+    - ``cell_layer_ids`` — ``{cell_id: id_layer}`` (0-based) from the same
+      response, tagging each boundary cell with its aquifer layer.
+    - ``crs`` — the CRS the per-layer GeoDataFrames are built in.
     """
 
     kind: str = "compartment_bundle"
@@ -208,6 +217,10 @@ class AssembleRequest:
     polygon_crs: Any = None
     weighted: bool = False
     source_run: Optional[str] = None
+    # Inputs for kind="boundary_aq_layers".
+    edge_geometries: Optional[Mapping[Any, Any]] = None
+    cell_layer_ids: Optional[Mapping[Any, int]] = None
+    crs: Any = None
 
 
 @dataclass
@@ -383,11 +396,20 @@ class BoundaryFluxResponse:
     length n_timesteps. Sign convention follows CaWaQS data (positive =
     flux entering the cell). Unit conversion (m³/s → m³/d) is left to
     the caller — the response carries raw m³/s data.
+
+    ``cell_layer_ids`` tags each boundary ``cell_id`` with the 0-based
+    ``id_layer`` of the aquifer layer it belongs to. The ``boundary_aq`` scan
+    visits every layer named in ``id_layers``, and the cross-layer-uniqueness
+    guard ensures each ``cell_id`` appears in exactly one layer, so this mapping
+    is single-valued. It lets downstream consumers split the merged boundary
+    edges back into one surface per aquifer layer. The flux-bearing
+    ``boundary_aq_flux`` mask keys on ``cell_id``/direction and never reads it.
     """
     cell_ids: List[Any] = field(default_factory=list)
     face_directions: Dict[Any, List[str]] = field(default_factory=dict)
     edge_geometries: Dict[Any, Any] = field(default_factory=dict)
     fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
+    cell_layer_ids: Dict[Any, int] = field(default_factory=dict)
     dates: Optional[np.ndarray] = None
     meta: Optional[Dict[str, Any]] = None
 
@@ -559,3 +581,23 @@ class CompartmentBundleResult:
     compartment_blocks: Mapping
     provenance_rows: list
     unit_override: Mapping
+
+
+@dataclass
+class BoundaryAqLayersResult:
+    """Per-aquifer-layer borders payload from ``assemble(kind="boundary_aq_layers")``.
+
+    Constructed at L2 (``dispatch.assemble`` wraps the plain list returned by the
+    pure L3 :func:`build_boundary_aq_layers`) and consumed by L1
+    ``operations_client``. L3 never names this type, so the import edge stays
+    downward only. Shape-only: the GeoDataFrames live in memory, no file is
+    written.
+
+    ``entries`` is an ordered ``[(id_layer, gdf), ...]`` list — one GeoDataFrame
+    per aquifer layer that has boundary cells, ascending by ``id_layer``. Each
+    ``gdf`` carries a ``cell_id`` column and the cells' merged boundary-edge
+    geometry. Layers the polygon does not reach are absent (silent skip); an
+    empty input yields an empty list.
+    """
+
+    entries: List[tuple] = field(default_factory=list)
