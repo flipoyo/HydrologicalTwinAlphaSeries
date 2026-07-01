@@ -502,7 +502,7 @@ def test_cells_boundary_faces_single_inside_cell_four_directions():
     )
     polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only centre cell's centroid (5,5)
 
-    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     assert sorted(boundary_faces[0]) == ["east", "north", "south", "west"]
     # One merged geometry per cell; the 4 faces of the centre cell collapse to
@@ -525,7 +525,7 @@ def test_cells_boundary_faces_excludes_corner_only_neighbours():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(1.1, 1.1, 1.9, 1.9)  # only cell 4 (centre) inside
 
-    boundary_faces, _ = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, _, _ = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     # 4 edge-sharing neighbours; 4 corner-only excluded.
     assert sorted(boundary_faces[4]) == ["east", "north", "south", "west"]
@@ -541,7 +541,7 @@ def test_cells_boundary_faces_all_inside_no_boundary():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(0.0, 0.0, 3.0, 3.0)  # covers everything
 
-    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     # All cells inside → no inside↔outside adjacency → empty result.
     assert boundary_faces == {}
@@ -552,7 +552,7 @@ def test_cells_boundary_faces_empty_mesh():
     mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
     polygon = box(0.0, 0.0, 1.0, 1.0)
 
-    boundary_faces, edge_geometries = cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     assert boundary_faces == {}
     assert edge_geometries == {}
@@ -692,7 +692,7 @@ def test_cells_boundary_faces_refined_t_junction_single_continuous_line():
     # (centroid x = side/2) are outside.
     polygon = box(_CELL * 1.05, _CELL * 0.025, _CELL * 1.95, _CELL * 0.975)
 
-    boundary_faces, edge_geometries = cells_boundary_faces(
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
         mesh, polygon, id_col="cell_id"
     )
 
@@ -705,6 +705,49 @@ def test_cells_boundary_faces_refined_t_junction_single_continuous_line():
     assert geom.length == pytest.approx(_CELL, abs=_SUBMETRE)
     # No hairline gap: the merged line is connected end to end.
     assert shapely.line_merge(geom).geom_type == "LineString"
+
+
+def test_cells_boundary_faces_refined_t_junction_source_is_ext_cell():
+    """Source map (aq-boundary-coarse-cell-flux): the coarse inside cell whose one
+    side abuts several smaller outside cells is EXT_cell (sign -1) on that side,
+    with ``outside_ids`` = every smaller outside neighbour on it."""
+    mesh = _refined_t_junction_mesh()
+    polygon = box(_CELL * 1.05, _CELL * 0.025, _CELL * 1.95, _CELL * 0.975)
+
+    boundary_faces, _edge_geometries, face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # The coarse inside cell 0 borders its three smaller outside neighbours on
+    # its "east" side (the direction the existing merge test asserts).
+    assert boundary_faces[0] == ["east"]
+    src = face_sources[0]["east"]
+    assert src["sign"] == -1
+    assert sorted(src["outside_ids"]) == [1, 2, 3]
+
+
+def test_cells_boundary_faces_fine_inside_source_is_int_cell():
+    """A SMALL inside cell against a LARGER outside neighbour is INT_cell (+1)
+    with empty ``outside_ids`` — its own face is the clean single-sub-face value.
+    (Reuse the T-junction mesh but mask a small cell instead of the coarse one.)"""
+    mesh = _refined_t_junction_mesh()
+    # Mask only the middle small cell (id 2, centroid at x=side/2, y=side/2). Its
+    # east neighbour is the coarse cell 0 (larger), so cell 2's east face is
+    # INT_cell — ties/coarser-neighbour keep the inside cell's own face.
+    polygon = box(
+        _CELL * 0.05, _CELL / 3.0 + _CELL * 0.02,
+        _CELL * 0.95, 2.0 * _CELL / 3.0 - _CELL * 0.02,
+    )
+
+    boundary_faces, _edge_geometries, face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    assert 2 in boundary_faces
+    # Every bordered face of the small inside cell is INT_cell with empty outside.
+    for direction, src in face_sources[2].items():
+        assert src["sign"] == 1, direction
+        assert src["outside_ids"] == [], direction
 
 
 def test_cells_boundary_faces_corner_cell_stays_multiline_per_side():
@@ -724,7 +767,7 @@ def test_cells_boundary_faces_corner_cell_stays_multiline_per_side():
     )
     polygon = box(s * 1.05, s * 1.05, s * 1.95, s * 1.95)  # only centre centroid inside
 
-    boundary_faces, edge_geometries = cells_boundary_faces(
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
         mesh, polygon, id_col="cell_id"
     )
 
@@ -749,7 +792,7 @@ def test_cells_boundary_faces_uniform_grid_geometry_unchanged():
     mesh = _grid_mesh(nx=3, ny=3)
     polygon = box(1.1, 1.1, 1.9, 1.9)  # only centre cell (id 4) inside
 
-    boundary_faces, edge_geometries = cells_boundary_faces(
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
         mesh, polygon, id_col="cell_id"
     )
 
@@ -798,7 +841,7 @@ def test_cells_boundary_faces_rotated_t_junction_is_recovered():
         use_radians=False,
     )
 
-    boundary_faces, edge_geometries = cells_boundary_faces(
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
         mesh, polygon, id_col="cell_id"
     )
 
@@ -831,7 +874,7 @@ def test_cells_boundary_faces_corner_only_touch_rejected_at_scale():
     )
     polygon = box(s * 1.05, s * 1.05, s * 1.95, s * 1.95)  # only cell 0 inside
 
-    boundary_faces, edge_geometries = cells_boundary_faces(
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
         mesh, polygon, id_col="cell_id"
     )
 
@@ -896,7 +939,7 @@ def test_cells_boundary_faces_floor_adapts_between_coarse_and_fine_meshes():
     # still kept — the same refinement T-junction is recovered at both scales.
     for mesh, side in ((coarse, 2000.0), (fine, 100.0)):
         polygon = box(side * 1.05, side * 0.025, side * 1.95, side * 0.975)
-        boundary_faces, edge_geometries = cells_boundary_faces(
+        boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
             mesh, polygon, id_col="cell_id"
         )
         assert boundary_faces[0] == ["east"]

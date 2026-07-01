@@ -159,7 +159,7 @@ def test_3c_recovers_dropped_tjunction_faces(filename, label, expected_floor):
 
     # No corner false-positives: every recovered face is a real shared edge, i.e.
     # its recovered length clears the floor (a corner nub is ≈ 2ε ≪ floor).
-    boundary_faces, edge_geometries = cells_boundary_faces(gdf, polygon, id_col=id_col)
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(gdf, polygon, id_col=id_col)
     assert boundary_faces, f"{label}: expected a non-empty boundary"
     for cell_id, geom in edge_geometries.items():
         assert not geom.is_empty
@@ -197,7 +197,7 @@ def test_8c_axis_aligned_no_regression(filename, label, expected_floor):
         f"(old={old_kept}, new={new_kept})"
     )
 
-    boundary_faces, edge_geometries = cells_boundary_faces(gdf, polygon, id_col=id_col)
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(gdf, polygon, id_col=id_col)
     assert boundary_faces
     for geom in edge_geometries.values():
         assert geom.length >= floor
@@ -234,7 +234,7 @@ def test_dispatch_boundary_aq_contract_on_real_mesh(directory, filename, label):
     polygon = _central_mask(gdf)
     id_col = _id_col(gdf)
 
-    boundary_faces, edge_geometries = cells_boundary_faces(gdf, polygon, id_col=id_col)
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(gdf, polygon, id_col=id_col)
 
     assert boundary_faces, f"{label}: expected a non-empty boundary"
     assert boundary_faces.keys() == edge_geometries.keys()

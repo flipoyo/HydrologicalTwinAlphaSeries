@@ -32,23 +32,28 @@ from HydrologicalTwinAlphaSeries.services.public.temporal import Temporal
 
 # AQ_FACE_DIRECTIONS drives the per-direction face fetch; mirror its keys here.
 from HydrologicalTwinAlphaSeries.config.constants import (
+    AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE,
     AQ_BOUNDARY_FLUX_SIGN_CONVENTION,
     AQ_FACE_DIRECTIONS,
     _VOLUMETRIC_UNIT_FACTORS,
 )
 
 
-def _fake_twin(boundary_cells, edge_geometries, dates, *, fluxes_empty=False):
+def _fake_twin(boundary_cells, edge_geometries, dates, *, fluxes_empty=False,
+               face_sources=None):
     """A fake twin emulating just the surface ``run_mask_aq_boundary`` touches.
 
     - ``mask(kind="boundary_aq")`` → a face-orientation response carrying
       ``cell_ids`` + per-cell merged ``edge_geometries`` + ``face_directions`` +
-      ``cell_layer_ids`` (all cells on layer 0 here — single-layer aquifer).
+      ``cell_layer_ids`` (all cells on layer 0 here — single-layer aquifer) +
+      the optional ``face_sources`` coarse-cell source map (empty by default, so
+      the all-INT_cell tests stay byte-identical to pre-change behaviour).
     - ``fetch(kind="simulation_matrix")`` → a per-direction (n_cells, n_days)
       matrix (rows indexed by ``cell_id - 1``).
     - ``mask(kind="boundary_aq_flux")`` → the ragged ``{cell → {dir → series}}``.
     - ``assemble`` / ``export`` / ``transform`` delegate to the REAL L2 dispatch.
     """
+    face_sources = face_sources or {}
     n_global = max(boundary_cells) if boundary_cells else 0
     directions = list(AQ_FACE_DIRECTIONS.keys())
     # Each boundary cell exchanges across its first available face direction; a
@@ -68,6 +73,7 @@ def _fake_twin(boundary_cells, edge_geometries, dates, *, fluxes_empty=False):
                 face_directions={c: list(d) for c, d in face_directions.items()},
                 edge_geometries=dict(edge_geometries),
                 cell_layer_ids=dict(cell_layer_ids),
+                face_sources={c: dict(s) for c, s in face_sources.items()},
                 fluxes={},
                 dates=None,
                 meta={"kind": "boundary_aq"},
@@ -533,3 +539,146 @@ def test_unsupported_boundary_unit_raises(tmp_path: Path, monkeypatch):
             area_name="basin_A",
             unit="bogus",
         )
+
+
+# ---------------------------------------------------------------------------
+# 6.5 Coarse-cell provenance: outside_ids column + source note (only when an
+# EXT_cell face is present).
+# ---------------------------------------------------------------------------
+
+
+def _setup_coarse(monkeypatch):
+    """Same two-cell fixture, but cell 2's east face is EXT_cell (coarse inside),
+    sourced from smaller outside neighbour id 5; cell 5 stays all-INT_cell."""
+    boundary_cells = [2, 5]
+    edge_geometries = {
+        2: LineString([(0, 0), (0, 1)]),
+        5: LineString([(2, 0), (2, 1)]),
+    }
+    dates = np.array(["2000-01-01", "2000-01-02", "2000-01-03"])
+    # cell 2 east → EXT_cell (-1) sourced from outside cell 5; its west face and
+    # cell 5's faces stay INT_cell (absent → own-face default).
+    face_sources = {2: {"east": {"sign": -1, "outside_ids": [5]}}}
+    twin = _fake_twin(
+        boundary_cells, edge_geometries, dates, face_sources=face_sources
+    )
+    _patch_resolve(monkeypatch)
+    polygon = Polygon([(0, 0), (2, 0), (2, 1), (0, 1)])
+    return twin, polygon, boundary_cells, dates
+
+
+def test_coarse_cell_outside_ids_column_in_gpkg_daily_values(tmp_path, monkeypatch):
+    """Task 6.5 — daily_values carries an ``outside_ids`` column: the coarse cell
+    (EXT_cell) rows are populated with the outside id(s), fine cells are empty."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    assert "outside_ids" in daily.columns
+    # Coarse cell 2: every row tagged with its outside neighbour id.
+    cell2 = daily[daily["cell_id"] == 2]["outside_ids"].unique()
+    assert set(cell2) == {"5"}
+    # Fine cell 5: empty provenance.
+    cell5 = daily[daily["cell_id"] == 5]["outside_ids"].unique()
+    assert set(cell5) == {""}
+
+
+def test_coarse_cell_source_note_in_gpkg_provenance(tmp_path, monkeypatch):
+    """The coarse-cell source note is shipped into the provenance table when an
+    EXT_cell face is present (single-constant discipline)."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        prov = pd.read_sql_query("SELECT * FROM provenance", con)
+
+    assert "coarse_cell_source" in prov.columns
+    assert set(prov["coarse_cell_source"].unique()) == {
+        AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE
+    }
+
+
+def test_coarse_cell_source_note_in_loose_csv_header(tmp_path, monkeypatch):
+    """The loose face-flux CSV header carries the coarse-cell source note (and the
+    per-cell outside_ids mapping) when an EXT_cell face is present."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    result = operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        # default mode → loose CSV
+    )
+
+    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
+    header = "\n".join(
+        ln for ln in Path(csv_path).read_text().splitlines() if ln.startswith("#")
+    )
+    assert AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE in header
+    # The per-cell mapping is self-describing for the coarse cell.
+    assert "outside_ids: 2 <- 5" in header
+
+
+def test_no_coarse_source_omits_outside_ids_column_and_note(tmp_path, monkeypatch):
+    """Regression (task 6.4/6.5) — with no EXT_cell face the ``outside_ids`` column
+    and the coarse-cell note are BOTH absent, keeping the all-INT_cell output
+    byte-identical to pre-change (the default ``_setup`` has no face_sources)."""
+    twin, polygon, _cells, _dates = _setup(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    result = operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+        prov = pd.read_sql_query("SELECT * FROM provenance", con)
+    assert "outside_ids" not in daily.columns
+    assert "coarse_cell_source" not in prov.columns
+
+    # Loose CSV header has the sign convention but NOT the coarse-cell note.
+    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
+    header = "\n".join(
+        ln for ln in Path(csv_path).read_text().splitlines() if ln.startswith("#")
+    )
+    assert AQ_BOUNDARY_FLUX_SIGN_CONVENTION in header
+    assert AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE not in header
