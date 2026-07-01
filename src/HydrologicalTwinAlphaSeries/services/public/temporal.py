@@ -725,3 +725,63 @@ class Temporal:
         print("Done", flush=True)
 
         return df
+
+    # Seconds in one day — the m³/s → m³/day conversion folded into the monthly
+    # sum below. Kept local (not a magic number spread across the method) so the
+    # "per-day volume, then summed over the month" definition reads in one place.
+    _SECONDS_PER_DAY = 86400.0
+
+    def monthly_total_volume(
+        self,
+        arr: np.ndarray,
+        dates: np.ndarray,
+    ) -> (np.ndarray, np.ndarray):
+        """Sum a daily ``m³/s`` series into a calendar-month **total volume** (m³).
+
+        This is the plain per-month ``resample("M").sum()`` that
+        :meth:`aggregate_matrix`'s monthly branch never exposes on its own: that
+        branch is gated behind ``plurianual_agg``, relabels the index to
+        ``'%m-%Y'``, and can collapse to a pluriannual mean — none of which is a
+        single self-contained "volume that crossed this month" total. This method
+        is the dedicated primitive for that quantity, so bending the gated branch
+        (and risking its existing callers) is not needed.
+
+        For each series the monthly value for month *m* is
+        ``Σ_{d ∈ days(m)} value_d × 86400`` (m³): the ``×86400`` m³/s→per-day
+        volume conversion is folded in **before** the sum, so summing over the
+        month's real simulated days naturally honours 28/29/30/31-day months and
+        totals a partial start/end month over only its simulated days (the true
+        volume over the simulated portion, not an error).
+
+        :param arr: Daily series, shape ``(n_days,)`` (a single face series) or
+            ``(n_days, n_series)`` (a column per series). Time is axis 0, aligned
+            row-for-row with ``dates``.
+        :param dates: 1-D array of daily ``datetime64`` (or anything
+            ``pd.to_datetime`` accepts), one per row of ``arr``.
+        :returns: ``(monthly_matrix, monthly_index)`` where ``monthly_matrix`` has
+            the same trailing shape as ``arr`` (``(n_months,)`` for a 1-D input,
+            ``(n_months, n_series)`` for 2-D) and ``monthly_index`` is a 1-D array
+            of stable, parseable ``YYYY-MM`` month labels — one per calendar month
+            present in ``dates``, in ascending order.
+        :rtype: (np.ndarray, np.ndarray)
+        """
+        arr = np.asarray(arr, dtype=float)
+        was_1d = arr.ndim == 1
+        if was_1d:
+            arr = arr[:, np.newaxis]
+
+        index = pd.to_datetime(np.asarray(dates))
+        df = pd.DataFrame(arr * self._SECONDS_PER_DAY, index=index)
+
+        # Plain calendar-month sum — one row per (year, month) actually present,
+        # NO pluriannual collapse and NO '%m-%Y' relabel (cf. aggregate_matrix).
+        monthly = df.resample("M").sum()
+
+        # Stable, parseable month labels (period end → its own year-month), so the
+        # loose CSV and the GeoPackage can be read back without ambiguity.
+        monthly_index = monthly.index.strftime("%Y-%m").to_numpy()
+        monthly_matrix = monthly.to_numpy()
+        if was_1d:
+            monthly_matrix = monthly_matrix[:, 0]
+
+        return monthly_matrix, monthly_index

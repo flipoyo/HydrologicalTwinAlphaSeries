@@ -1250,8 +1250,9 @@ def run_mask_aq_boundary(
           carrying its merged boundary-edge geometry, a ``cell_id`` column, and a
           ``faces`` column of comma-separated cardinal directions — e.g.
           ``"north,west"`` — geometrically identical to the matching registered
-          QGIS borders layer), a long-form ``daily_values`` table (one row block
-          per layer, ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``)
+          QGIS borders layer), a long-form values table (``daily_values`` for the
+          rate tokens, ``monthly_values`` for the ``m3`` monthly-total mode; one
+          row block per layer, ``compartment="AQ_layer<id>"``, ``param="boundary_flux"``)
           holding **one net daily-flux series per boundary cell** (the
           per-direction face series summed into a single net series, in the chosen
           ``unit``, row-aligned to its ``cells_AQ_layer<id>`` layer by ``cell_id``)
@@ -1270,14 +1271,28 @@ def run_mask_aq_boundary(
         currently unused here.
     :param unit: Output unit token for the boundary face fluxes (default
         ``"m3/j"``, preserving the prior ``m³/day`` behaviour). Accepted tokens:
-        ``"m3/j"`` (``m³/day``; raw CaWaQS ``m³/s`` × 86400) and ``"m3/mois"``
-        (``m³/month``, an *average-month* flow **rate** = raw × 2_629_800, **not**
-        a calendar re-aggregation — the time axis stays one row per simulated
-        day). The token is the single source of truth for the numeric conversion,
-        the loose-CSV column suffix (``_m3d`` / ``_m3mois``), and the GeoPackage
-        ``daily_values`` ``unit`` label, so the per-cell values and their declared
-        unit can never diverge. The rescale is applied identically to the loose
-        CSV per-direction series and the GeoPackage per-cell net.
+
+        * ``"m3/j"`` (``m³/day``; a flow **rate** = raw CaWaQS ``m³/s`` × 86400);
+        * ``"m3/mois"`` (``m³/month``, an *average-month* flow **rate** = raw ×
+          2_629_800) — both rate tokens are pure magnitude rescales that keep the
+          time axis at one row per simulated day (**not** a calendar re-aggregation);
+        * ``"m3"`` (``m³``, a calendar-month total **VOLUME**) — this token
+          re-bins the time axis daily→monthly and emits one row per ``(year,
+          month)`` holding the total volume that crossed during that month (Σ over
+          the month's simulated days of ``daily_m³/s × 86400``). The daily→monthly
+          sum is done by the L2 ``temporal_aggregate`` verb this function calls
+          (never inline here — CLAUDE.md "L1 only orchestrates"); a partial first
+          or last month totals only its simulated days.
+
+        The token is the single source of truth for the numeric conversion/
+        aggregation, the loose-CSV column suffix (``_m3d`` / ``_m3mois`` /
+        ``_m3month``), the GeoPackage values-table name (``daily_values`` /
+        ``monthly_values``) and its ``unit`` label, **and** the
+        time-axis grid (daily for rate tokens, monthly ``YYYY-MM`` for ``m3``), so
+        the per-cell values, their declared unit and their date index can never
+        diverge. The conversion/aggregation is applied identically to the loose
+        CSV per-direction series and the GeoPackage per-cell net (both go through
+        the same ``_flux_series`` helper), so the two surfaces can never disagree.
     :returns: A :class:`MaskAqBoundaryResult` whose ``entries`` carry one
         per-aquifer-layer borders gdf (each with ``cell_id``, ``faces`` and
         geometry — produced identically in both modes, so the registered QGIS
@@ -1295,6 +1310,8 @@ def run_mask_aq_boundary(
     aq_id = _resolve_compartment_id(twin, "AQ")
 
     from HydrologicalTwinAlphaSeries.config.constants import (  # noqa: PLC0415
+        AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE,
+        AQ_BOUNDARY_FLUX_MONTHLY_VOLUME_SEMANTICS,
         AQ_BOUNDARY_FLUX_SIGN_CONVENTION,
         AQ_FACE_DIRECTIONS,
         _VOLUMETRIC_UNIT_CSV_SUFFIX,
@@ -1310,6 +1327,37 @@ def run_mask_aq_boundary(
             f"{sorted(_VOLUMETRIC_UNIT_CSV_SUFFIX)}."
         )
     csv_suffix = _VOLUMETRIC_UNIT_CSV_SUFFIX[unit]
+
+    # The token also decides the TIME AXIS, not just the magnitude: the rate
+    # tokens (``m3/j`` / ``m3/mois``) are scalar rescales that keep the daily grid;
+    # the ``m3`` token is a calendar-month total VOLUME that re-bins daily→monthly.
+    # ``aggregating`` gates that one branch once, here, so the two flux-build sites
+    # below (loose CSV + GeoPackage net) can never re-bin differently.
+    aggregating = unit == "m3"
+
+    def _flux_series(arr):
+        """Convert ONE daily per-direction ``m³/s`` series to the chosen unit.
+
+        Returns ``(values, index)`` — the transformed series and the date index
+        it lives on. For rate tokens this is the scalar ``volumetric_rescale`` on
+        the unchanged daily index (``flux_resp.dates``); for ``m3`` it is the L2
+        ``temporal_aggregate`` verb, which re-bins to monthly and hands back its
+        own ``YYYY-MM`` index. Both branches only *call* a lower-layer verb and
+        pick which returned index to persist — no ``×86400``, grouping or
+        month-length arithmetic lives here (CLAUDE.md "L1 only orchestrates").
+        """
+        if aggregating:
+            return twin.transform(
+                kind="temporal_aggregate",
+                arr=arr,
+                dates=flux_resp.dates,
+                frequency="monthly",
+                agg_dimension="sum",
+            )
+        return (
+            twin.transform(kind="volumetric_rescale", arr=arr, target_unit=unit),
+            flux_resp.dates,
+        )
 
     id_layers = [li.id_layer for li in twin.get_all_layers(aq_id)]
     face_orientations = twin.mask(
@@ -1353,6 +1401,10 @@ def run_mask_aq_boundary(
         cell_layer_ids=face_orientations.cell_layer_ids,
         crs=polygon_crs,
         face_directions=face_orientations.face_directions,
+        # Same L3 formatting pass also emits the per-cell coarse-cell provenance
+        # (``outside_ids_by_cell``) from the boundary_aq source map, so L1 forwards
+        # it into the GeoPackage below without shaping any string itself.
+        face_sources=face_orientations.face_sources,
     )
     entries = [
         AqBoundaryLayerEntry(
@@ -1363,6 +1415,14 @@ def run_mask_aq_boundary(
         for id_layer, gdf in aq_layers.entries
     ]
 
+    # True IFF at least one boundary face was sourced from smaller outside
+    # neighbours (an EXT_cell coarse-inside face → non-empty ``outside_ids``).
+    # Gates whether the coarse-cell source note is shipped into the two provenance
+    # surfaces below (CSV header + GeoPackage provenance row), so the note appears
+    # only when a value actually came from an outside neighbour. The per-cell
+    # ``outside_ids`` strings themselves are L3-formatted (aq_layers), not here.
+    has_coarse_source = any(aq_layers.outside_ids_by_cell.values())
+
     artefacts = []
     # Exclusive output mode (design D6): the loose per-(cell, direction) face-flux
     # CSV is the DEFAULT-mode artefact only. GeoPackage mode writes the .gpkg as
@@ -1372,22 +1432,38 @@ def run_mask_aq_boundary(
     if flux_resp.fluxes and not write_geopackage:
         os.makedirs(output_dir, exist_ok=True)
         cols = {}
+        # For the ``m3`` token every column carries the SAME monthly index (all
+        # per-direction series are aggregated over the same ``flux_resp.dates``);
+        # capture it once for the DataFrame index. For rate tokens it stays the
+        # daily ``flux_resp.dates`` — either way it comes back from ``_flux_series``
+        # so the index and the values can never disagree on the time grid.
+        row_index = flux_resp.dates
         for cell_id, dir_fluxes in flux_resp.fluxes.items():
             for direction, arr in dir_fluxes.items():
-                # Rescale m³/s → chosen unit via the L2 verb (single source of the
-                # factor; same verb the GeoPackage net path uses). Suffix derives
+                # Transform m³/s → chosen unit via the L2 verb (single source; the
+                # SAME ``_flux_series`` the GeoPackage net path uses). Suffix derives
                 # from the token, so two runs differing only in unit don't collide.
-                cols[f"{cell_id}_{direction}_{csv_suffix}"] = twin.transform(
-                    kind="volumetric_rescale", arr=arr, target_unit=unit
-                )
-        csv_df = pd.DataFrame(cols, index=pd.Index(flux_resp.dates, name="date"))
+                series, row_index = _flux_series(arr)
+                cols[f"{cell_id}_{direction}_{csv_suffix}"] = series
+        csv_df = pd.DataFrame(cols, index=pd.Index(row_index, name="date"))
         base = _artefact_basename("AQ", "boundary", "flux", syear, eyear)
         csv_path = os.path.join(output_dir, f"{base}.csv")
         # Ship the sign convention as a commented header line ahead of the data
         # rows (pandas.read_csv(comment="#") round-trips it cleanly). Sourced from
         # the one shared constant so the code comment and the file cannot drift.
+        # When any face was sourced as EXT_cell (a coarse-inside side read from
+        # smaller outside neighbours), add the coarse-cell source note plus the
+        # per-cell ``outside_ids`` mapping so a ``<cell>_<dir>`` column holding a
+        # negated outside sum is self-describing (design D6). Both extra lines are
+        # sourced from the same L3-formatted map / shared constant, never inline
+        # text, so the header and the file cannot drift.
         with open(csv_path, "w", newline="") as fh:
             fh.write(f"# {AQ_BOUNDARY_FLUX_SIGN_CONVENTION}\n")
+            if has_coarse_source:
+                fh.write(f"# {AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE}\n")
+                for cid, out_ids in aq_layers.outside_ids_by_cell.items():
+                    if out_ids:
+                        fh.write(f"# outside_ids: {cid} <- {out_ids}\n")
             csv_df.to_csv(fh)
         artefacts.append(csv_path)
 
@@ -1408,18 +1484,22 @@ def run_mask_aq_boundary(
     # (no .gpkg when no fluxes) is the GeoPackage-mode counterpart of the
     # default-mode loose-CSV guard above; together they are an exclusive XOR.
     if write_geopackage and flux_resp.fluxes:
-        net_by_cell = {
-            cell_id: np.asarray(
-                sum(
-                    twin.transform(
-                        kind="volumetric_rescale", arr=arr, target_unit=unit
-                    )
-                    for arr in dir_fluxes.values()
-                ),
-                dtype=float,
-            )
-            for cell_id, dir_fluxes in flux_resp.fluxes.items()
-        }
+        # Per-cell net = sum over that cell's face directions of the SAME
+        # per-direction series the loose CSV builds via ``_flux_series``. For the
+        # ``m3`` token each per-direction series is already a monthly total, and
+        # sum-of-monthly-sums = monthly-sum-of-the-net, so summing the aggregated
+        # series is the correct net monthly volume (order is immaterial). The
+        # shared time index (daily for rate tokens, monthly ``YYYY-MM`` for ``m3``)
+        # comes back from ``_flux_series`` so the net values and the persisted
+        # index can never disagree on the grid.
+        net_by_cell = {}
+        flux_index = flux_resp.dates
+        for cell_id, dir_fluxes in flux_resp.fluxes.items():
+            net = None
+            for arr in dir_fluxes.values():
+                series, flux_index = _flux_series(arr)
+                net = series if net is None else net + series
+            net_by_cell[cell_id] = np.asarray(net, dtype=float)
         # Bare matrices wrapped in a minimal ``.data`` / ``.dates`` duck-type so the
         # L3 ``build_compartment_bundle`` (which reads ``response.data`` /
         # ``response.dates``) can consume them without a new L3 response type.
@@ -1432,9 +1512,12 @@ def run_mask_aq_boundary(
             layer_cell_ids = list(entry.gdf["cell_id"])
             net_matrix = np.vstack(
                 [net_by_cell[cid] for cid in layer_cell_ids]
-            )  # (n_layer_cells, n_days), row-aligned to entry.gdf
+            )  # (n_layer_cells, n_periods), row-aligned to entry.gdf
+            # ``dates=`` carries the monthly ``YYYY-MM`` index for ``m3`` and the
+            # daily index otherwise — the writer stamps it onto the values-table
+            # date column, so monthly rows are labelled by their month.
             resp_shim = SimpleNamespace(
-                data=net_matrix, dates=flux_resp.dates, meta=None
+                data=net_matrix, dates=flux_index, meta=None
             )
             compartment_blocks[f"AQ_layer{entry.id_layer}"] = (
                 entry.gdf,
@@ -1454,8 +1537,27 @@ def run_mask_aq_boundary(
             weighted=False,
             source_run=getattr(twin, "out_caw_directory", "") or "",
             # Ship the sign convention into every provenance row from the one
-            # shared constant (so the code comment and the .gpkg cannot drift).
-            provenance_extra={"sign_convention": AQ_BOUNDARY_FLUX_SIGN_CONVENTION},
+            # shared constant (so the code comment and the .gpkg cannot drift). For
+            # the ``m3`` monthly-total mode, also ship the volume/partial-month
+            # semantics (design D6) so the ``monthly_values`` rows stay
+            # self-describing — again from a single shared constant, not inline text.
+            provenance_extra={
+                "sign_convention": AQ_BOUNDARY_FLUX_SIGN_CONVENTION,
+                **(
+                    {"boundary_flux_semantics": AQ_BOUNDARY_FLUX_MONTHLY_VOLUME_SEMANTICS}
+                    if aggregating
+                    else {}
+                ),
+                # Ship the coarse-cell source note into every provenance row only
+                # when a coarse-inside face was actually sourced from smaller
+                # outside neighbours (design D6). Same single-constant discipline
+                # as the sign convention, so the .gpkg and the code cannot drift.
+                **(
+                    {"coarse_cell_source": AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE}
+                    if has_coarse_source
+                    else {}
+                ),
+            },
         )
         # The shim carries no ``meta["target_unit"]``, so the assembler leaves
         # ``unit_override`` empty for ``boundary_flux``; supply the chosen token
@@ -1473,6 +1575,17 @@ def run_mask_aq_boundary(
                 # assemble verb) and forwarded as-is — L1 builds no dict — so the
                 # geometry and daily_values faces strings agree per cell_id.
                 "daily_values_faces": aq_layers.faces_by_cell,
+                # Same L3-formatted provenance for coarse cells: the comma-joined
+                # smaller-outside-neighbour ids a coarse cell's value was sourced
+                # from (empty for fine/equal cells), forwarded as-is so the
+                # daily_values ``outside_ids`` column is self-describing (design D6).
+                "daily_values_outside_ids": aq_layers.outside_ids_by_cell,
+                # In the monthly-total (``m3``) mode the values table holds one
+                # row per calendar month, not per day, so name it accordingly;
+                # the daily-grid tokens keep the L3 default ``daily_values``.
+                **(
+                    {"values_table_name": "monthly_values"} if aggregating else {}
+                ),
             },
         )
         artefacts.append(bundle.gpkg_path)

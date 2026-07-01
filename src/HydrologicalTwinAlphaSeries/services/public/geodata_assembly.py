@@ -79,7 +79,8 @@ def build_boundary_aq_layers(
     cell_layer_ids: Mapping[Any, int],
     crs: Any,
     face_directions: Mapping[Any, Sequence[str]],
-) -> Tuple[List[Tuple[int, gpd.GeoDataFrame]], Dict[Any, str]]:
+    face_sources: Optional[Mapping[Any, Mapping[str, Mapping[str, Any]]]] = None,
+) -> Tuple[List[Tuple[int, gpd.GeoDataFrame]], Dict[Any, str], Dict[Any, str]]:
     """Group AQ boundary edges by aquifer layer into one GeoDataFrame per layer.
 
     Pure shaping: turns the flat per-cell boundary-edge geometry of a
@@ -107,7 +108,14 @@ def build_boundary_aq_layers(
         key of ``edge_geometries`` must appear here; the directions are joined with
         commas in the given order (already deduplicated by ``cells_boundary_faces``)
         to form the ``faces`` string.
-    :returns: A 2-tuple ``(entries, faces_by_cell)``:
+    :param face_sources: Optional ``{cell_id: {direction: {"sign", "outside_ids"}}}``
+        from ``BoundaryFluxResponse.face_sources``. When given, this is the single
+        formatting site for the per-cell ``outside_ids`` coarse-cell provenance
+        string: for each cell, the ids of the smaller outside neighbours across all
+        of that cell's ``EXT_cell`` (``sign == -1``) faces are joined with commas
+        (in face-then-neighbour order, deduplicated); a cell with no ``EXT_cell``
+        face maps to the empty string. ``None`` yields an all-empty map.
+    :returns: A 3-tuple ``(entries, faces_by_cell, outside_ids_by_cell)``:
 
         * ``entries`` — an ordered ``[(id_layer, gdf), ...]`` list, one
           GeoDataFrame per aquifer layer that actually has boundary cells,
@@ -119,13 +127,33 @@ def build_boundary_aq_layers(
         * ``faces_by_cell`` — a flat ``{cell_id: faces_str}`` map over every
           boundary cell, the same string the geometry rows carry, so a caller can
           annotate the ``daily_values`` surface without re-formatting.
+        * ``outside_ids_by_cell`` — a flat ``{cell_id: outside_ids_str}`` map over
+          every boundary cell (comma-joined smaller-outside-neighbour ids for
+          coarse cells, empty otherwise), so a caller can annotate the
+          ``daily_values`` coarse-cell provenance column without re-formatting.
 
-        An empty ``edge_geometries`` yields ``([], {})`` (no raise).
+        An empty ``edge_geometries`` yields ``([], {}, {})`` (no raise).
     """
     faces_by_cell: Dict[Any, str] = {
         cell_id: ",".join(face_directions[cell_id])
         for cell_id in edge_geometries
     }
+    # Single formatting site for the coarse-cell provenance string, mirroring
+    # ``faces_by_cell``. Join the smaller-outside-neighbour ids of every EXT_cell
+    # (sign == -1) face of a cell, in face-then-neighbour order, deduplicated so a
+    # neighbour shared across two of a corner cell's coarse sides is listed once;
+    # a cell with no EXT_cell face gets "". No ``face_sources`` → all empty.
+    sources = face_sources or {}
+    outside_ids_by_cell: Dict[Any, str] = {}
+    for cell_id in edge_geometries:
+        ids: List[str] = []
+        for src in sources.get(cell_id, {}).values():
+            if src.get("sign") == -1:
+                for b in src.get("outside_ids", []):
+                    b_str = str(b)
+                    if b_str not in ids:
+                        ids.append(b_str)
+        outside_ids_by_cell[cell_id] = ",".join(ids)
 
     cells_by_layer: dict = {}
     for cell_id, geometry in edge_geometries.items():
@@ -145,7 +173,7 @@ def build_boundary_aq_layers(
             crs=crs,
         )
         entries.append((id_layer, gdf))
-    return entries, faces_by_cell
+    return entries, faces_by_cell, outside_ids_by_cell
 
 
 def build_compartment_bundle(

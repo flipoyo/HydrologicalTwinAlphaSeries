@@ -27,6 +27,7 @@ from shapely.geometry import LineString, Polygon
 from HydrologicalTwinAlphaSeries.ht.client import operations_client as operations
 from HydrologicalTwinAlphaSeries.ht.developer import dispatch
 from HydrologicalTwinAlphaSeries.ht.developer.api_types import BoundaryFluxResponse
+from HydrologicalTwinAlphaSeries.services.public.temporal import Temporal
 
 
 # AQ_FACE_DIRECTIONS drives the per-direction face fetch; mirror its keys here.
@@ -104,6 +105,11 @@ def _fake_twin(boundary_cells, edge_geometries, dates, *, fluxes_empty=False):
         mask=fake_mask,
         fetch=fake_fetch,
         get_all_layers=lambda aq_id: [SimpleNamespace(id_layer=0)],
+        # Real L3 Temporal so the ``m3`` monthly-total path (transform(
+        # kind="temporal_aggregate") → twin.temporal.monthly_total_volume) runs
+        # against the genuine primitive, matching the assemble/export/transform
+        # "delegate to the real dispatch" philosophy of this fixture.
+        temporal=Temporal(),
     )
     # assemble/export/transform delegate to the REAL dispatch — the twin handle is
     # unused by the compartment_bundle / geopackage / volumetric_rescale L3 paths,
@@ -369,6 +375,50 @@ def test_monthly_unit_rescales_values_and_keeps_time_axis(tmp_path: Path, monkey
     np.testing.assert_allclose(corner, (3.0 + 13.0) * factor)
 
 
+def test_monthly_total_volume_writes_monthly_values_table(tmp_path: Path, monkeypatch):
+    """``unit="m3"`` re-bins daily→calendar-month and persists the totals in a
+    ``monthly_values`` table (NOT ``daily_values``), so the table name matches
+    what the rows actually hold (one month-total per boundary cell)."""
+    twin, polygon, boundary_cells, dates = _setup(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        unit="m3",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        table_names = set(
+            pd.read_sql_query(
+                "SELECT name FROM sqlite_master WHERE type='table'", con
+            )["name"]
+        )
+        monthly = pd.read_sql_query("SELECT * FROM monthly_values", con)
+
+    # The values table is renamed for this mode; the daily name must be absent.
+    assert "monthly_values" in table_names
+    assert "daily_values" not in table_names
+
+    # All 3 fixture days fall in 2000-01, so the axis re-bins to ONE month row
+    # per boundary cell, labelled by its year-month and stamped unit "m3".
+    assert len(monthly) == len(boundary_cells)
+    assert set(monthly["unit"].unique()) == {"m3"}
+    assert set(monthly["date"].astype(str)) == {"2000-01"}
+
+    # Corner cell 2 (two faces, raw net 3+13 m³/s) totals over its 3 simulated
+    # days: (3+13) × 86400 × 3.
+    corner = monthly[monthly["cell_id"] == 2]["value"].to_numpy()
+    np.testing.assert_allclose(corner, (3.0 + 13.0) * 86400.0 * len(dates))
+
+
 # ---------------------------------------------------------------------------
 # 5.3 Agreement: GeoPackage per-cell net == sum of loose-CSV per-direction cols
 # ---------------------------------------------------------------------------
@@ -454,10 +504,20 @@ def test_every_boundary_unit_resolves_factor_and_csv_suffix():
         _VOLUMETRIC_UNIT_FACTORS,
     )
 
-    # The AQ boundary path accepts exactly the tokens with a CSV suffix; each
-    # must also resolve a numeric factor (guards spelling drift across the maps).
+    # The AQ boundary path accepts exactly the tokens with a CSV suffix. The RATE
+    # tokens are scalar rescales, so each must also resolve a numeric factor
+    # (guards spelling drift across the maps). The one AGGREGATING token, ``m3``
+    # (calendar-month total volume), is a daily→monthly SUM, not a scalar rescale,
+    # so it deliberately carries a suffix but NO factor (design D5); asserting its
+    # absence here pins that intentional split so a stray factor is not added.
     for token in _VOLUMETRIC_UNIT_CSV_SUFFIX:
-        assert token in _VOLUMETRIC_UNIT_FACTORS, token
+        if token == "m3":
+            assert token not in _VOLUMETRIC_UNIT_FACTORS, (
+                "m3 aggregates (Σ daily×86400 per month); it must NOT have a "
+                "scalar factor in _VOLUMETRIC_UNIT_FACTORS."
+            )
+        else:
+            assert token in _VOLUMETRIC_UNIT_FACTORS, token
 
 
 def test_unsupported_boundary_unit_raises(tmp_path: Path, monkeypatch):

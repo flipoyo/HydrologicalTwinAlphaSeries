@@ -403,7 +403,7 @@ def cells_boundary_faces(
     aq_mesh_gdf: gpd.GeoDataFrame,
     polygon: Any,
     id_col: Union[str, int],
-) -> Tuple[Dict[Any, List[str]], Dict[Any, Any]]:
+) -> Tuple[Dict[Any, List[str]], Dict[Any, Any], Dict[Any, Dict[str, Dict[str, Any]]]]:
     """Identify boundary cells with cardinal-direction face labels.
 
     A boundary cell is an interior cell (centroid inside the polygon) that
@@ -431,22 +431,40 @@ def cells_boundary_faces(
     corner nub). A corner-only touch falls below the floor and is rejected; a
     real face of any orientation is kept.
 
+    **Per-face flux source (refined-mesh coarse-cell correction).** CaWaQS stores
+    exactly one finite-difference flux per cardinal face per cell, so a coarse
+    inside cell's single side-flux is the *blended* net over every neighbour on
+    that side. The third return value, ``face_sources``, tells a downstream flux
+    read where to source each face: for a side where the inside cell is
+    smaller-or-equal to its outside neighbour(s) the inside cell's own face is a
+    clean single-sub-face value (``sign=+1``, ``INT_cell``); for a side where the
+    inside cell is *strictly coarser* the own face is a blend and must instead be
+    read from the smaller outside neighbours' opposing faces (``sign=-1``,
+    ``EXT_cell``, ``outside_ids`` = those smaller outside cells). Ties resolve to
+    the inside cell (``+1``). The size comparison reuses the same
+    ``cell_geom.area`` vs ``neigh_geom.area`` test :func:`_shared_face` already
+    performs. Only ``outside_set`` cells (centroid-outside) are candidates here,
+    so a smaller *inside* neighbour on the same side never enters ``outside_ids``.
+
     :param aq_mesh_gdf: GeoDataFrame of aquifer mesh cells (polygon geometries)
     :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
     :param id_col: Column name (or integer position) to read cell ids from.
-    :return: ``(boundary_faces, edge_geometries)`` where ``boundary_faces`` is
-        ``{cell_id: ["east"|"west"|"south"|"north", ...]}`` — one entry per
-        boundary cell, each value the list of flux-face directions for that
-        cell (a corner cell can have two faces) — and ``edge_geometries`` is
-        ``{cell_id: geometry}``, the shared face edge(s) for that cell merged
-        into a single geometry. Collinear sub-edges on one side (a refinement
-        T-junction, where several smaller outside cells abut one side) fuse into
-        a single continuous ``LineString``; a corner cell bordering two
-        perpendicular sides stays a ``MultiLineString`` with one line per side.
-        Both dicts share the same keys so callers can align them 1:1.
+    :return: ``(boundary_faces, edge_geometries, face_sources)`` where
+        ``boundary_faces`` is ``{cell_id: ["east"|"west"|"south"|"north", ...]}``
+        — one entry per boundary cell, each value the list of flux-face
+        directions for that cell (a corner cell can have two faces) —
+        ``edge_geometries`` is ``{cell_id: geometry}``, the shared face edge(s)
+        for that cell merged into a single geometry, and ``face_sources`` is
+        ``{cell_id: {direction: {"sign": +1|-1, "outside_ids": [id, ...]}}}``,
+        the per-(cell, direction) flux-source map described above. Collinear
+        sub-edges on one side (a refinement T-junction, where several smaller
+        outside cells abut one side) fuse into a single continuous
+        ``LineString``; a corner cell bordering two perpendicular sides stays a
+        ``MultiLineString`` with one line per side. All three dicts share the
+        same keys so callers can align them 1:1.
     """
     if aq_mesh_gdf.empty:
-        return {}, {}
+        return {}, {}, {}
 
     col_name = _resolve_id_col(aq_mesh_gdf, id_col)
     geometries = list(aq_mesh_gdf.geometry.values)
@@ -457,7 +475,7 @@ def cells_boundary_faces(
     interior_positions = [i for i, x in enumerate(inside_mask) if x]
 
     if not interior_positions:
-        return {}, {}
+        return {}, {}, {}
 
     outside_set = {ids[i] for i, x in enumerate(inside_mask) if not x}
     tree = shapely.STRtree(geometries)
@@ -477,6 +495,15 @@ def cells_boundary_faces(
     # cell stay separate (they must NOT fuse, even though they touch at the shared
     # corner vertex — see the merge step below).
     edge_parts: Dict[Tuple[Any, str], List[Any]] = {}
+    # Per-(cell_id, direction) flux source. ``sign`` starts +1 (INT_cell: read the
+    # inside cell's own face) and flips to -1 the moment a *strictly smaller*
+    # outside neighbour is seen on that side (EXT_cell: the inside cell is coarser,
+    # so its own face is a blend and must be sourced from the smaller outside
+    # neighbours' opposing faces). ``outside_ids`` collects exactly those smaller
+    # outside neighbours. All outside sub-cells on a refined side are smaller
+    # together, so any one strict-smaller test classifies the side; equal-size or
+    # coarser outside neighbours leave the side INT_cell (ties → inside, D1).
+    face_source_parts: Dict[Tuple[Any, str], Dict[str, Any]] = {}
 
     for inside_pos in interior_positions:
         cell_id = ids[inside_pos]
@@ -518,6 +545,19 @@ def cells_boundary_faces(
                 cell_faces.append(face)
             edge_parts.setdefault((cell_id, face), []).append(shared)
 
+            # Classify this side's flux source. The inside cell is coarser than
+            # this outside neighbour IFF its area is strictly larger; equal-size
+            # (tie) and larger-neighbour cases keep the side reading the inside
+            # cell's own face (sign +1). ``neigh_id`` is in ``outside_set`` by the
+            # guard above, so a smaller *inside* neighbour on the same side is
+            # never eligible for ``outside_ids`` (task 2.3).
+            src = face_source_parts.setdefault(
+                (cell_id, face), {"sign": 1, "outside_ids": []}
+            )
+            if cell_geom.area > neigh_geom.area:
+                src["sign"] = -1
+                src["outside_ids"].append(neigh_id)
+
     # Merge each cell's sub-edges into one geometry per cell, fusing *per side*.
     # Same-side (collinear) sub-edges of a refinement T-junction are line-merged
     # into one continuous ``LineString``; the per-side lines of a corner cell are
@@ -547,4 +587,10 @@ def cells_boundary_faces(
                 [g for line in lines for g in _as_linestrings(line)]
             )
 
-    return boundary_faces, edge_geometries
+    # Nest the per-(cell, direction) source parts into the response shape
+    # ``{cell_id: {direction: {"sign": ±1, "outside_ids": [...]}}}``.
+    face_sources: Dict[Any, Dict[str, Dict[str, Any]]] = {}
+    for (cell_id, face), src in face_source_parts.items():
+        face_sources.setdefault(cell_id, {})[face] = src
+
+    return boundary_faces, edge_geometries, face_sources

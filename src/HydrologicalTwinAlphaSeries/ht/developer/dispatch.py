@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, _VOLUMETRIC_UNIT_FACTORS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS
+from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, OPPOSITE_FACE, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, _VOLUMETRIC_UNIT_FACTORS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     cells_boundary_faces,
     cells_in_polygon,
@@ -617,6 +617,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         )
         all_face_directions: Dict[Any, List[str]] = {}
         all_edge_geometries: Dict[Any, Any] = {}
+        all_face_sources: Dict[Any, Dict[str, Dict[str, Any]]] = {}
         cell_layer_ids: Dict[Any, int] = {}
         for lid in layers_to_scan:
             aq_mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, lid)
@@ -633,7 +634,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             )
             request.polygon_crs = aq_mesh_gdf.crs
             id_col = _resolve_cell_id_col(twin, request.id_compartment)
-            boundary_faces, edge_geometries = cells_boundary_faces(
+            boundary_faces, edge_geometries, face_sources = cells_boundary_faces(
                 aq_mesh_gdf, request.polygon, id_col=id_col
             )
             for cid, dirs in boundary_faces.items():
@@ -656,6 +657,12 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 unique_dirs = list(dict.fromkeys(dirs))
                 all_face_directions[cid] = unique_dirs
                 all_edge_geometries[cid] = edge_geometries[cid]
+                # Per-(cell, direction) flux-source map from the same L3 pass:
+                # which side reads the inside cell's own face (INT_cell, +1) vs.
+                # the negated sum of smaller outside neighbours (EXT_cell, -1).
+                # Accumulated cross-layer under the same uniqueness guard so it
+                # stays single-valued per cell; ``boundary_aq_flux`` consumes it.
+                all_face_sources[cid] = face_sources.get(cid, {})
                 # ``lid`` is the only scope holding both this cell and its
                 # aquifer layer; record the membership so downstream consumers
                 # (e.g. assemble(kind="boundary_aq_layers")) can split the merged
@@ -667,6 +674,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             face_directions=all_face_directions,
             edge_geometries=all_edge_geometries,
             cell_layer_ids=cell_layer_ids,
+            face_sources=all_face_sources,
             fluxes={},
             dates=None,
             meta={
@@ -696,6 +704,11 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "(the boundary_aq response) to be passed via MaskRequest."
             )
         boundary_faces = request.face_orientations.face_directions
+        # Per-(cell, direction) flux-source map from the boundary_aq pass. Absent
+        # or empty (e.g. an equal-resolution mesh with no coarse-inside side, or a
+        # boundary_aq response built before this field existed) → every face falls
+        # through to the INT_cell own-face read below, exactly today's behaviour.
+        face_sources = request.face_orientations.face_sources or {}
 
         if request.face_responses is None:
             raise ValueError(
@@ -719,12 +732,33 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
         # pass above); we deduplicate again here so this branch does not depend
         # on the caller having done so, and so the per-direction series is read
         # from CaWaQS exactly once (no silent dict-key overwrite, no double-read).
+        # Per-(cell, direction) source switch (refined-mesh coarse-cell fix). For
+        # each bordered direction exactly one of two mutually exclusive reads is
+        # performed — never both, so no face is double-counted:
+        #   INT_cell (+1): the inside cell is smaller-or-equal on this side, its
+        #       own face flux is a clean single-sub-face value → read
+        #       ``face_data[dir][cell_id - 1]`` (unchanged from prior behaviour).
+        #   EXT_cell (-1): the inside cell is coarser on this side, its own face is
+        #       a *blended* net, so it is NOT read; instead sum the OPPOSITE face
+        #       of each smaller outside neighbour and negate (outside → convention
+        #       flip): ``-Σ_b face_data[OPPOSITE_FACE[dir]][b - 1]``. Outside cells
+        #       index the CaWaQS matrix by ``id - 1``, the same absolute-cell-id
+        #       convention as inside cells (see the id_abs project note).
+        # A missing per-face source entry defaults to the INT_cell own-face read.
         fluxes: Dict[Any, Dict[str, np.ndarray]] = {}
         for cell_id, directions in boundary_faces.items():
-            fluxes[cell_id] = {
-                direction: face_data[direction][cell_id - 1, :]
-                for direction in dict.fromkeys(directions)
-            }
+            cell_sources = face_sources.get(cell_id, {})
+            cell_fluxes: Dict[str, np.ndarray] = {}
+            for direction in dict.fromkeys(directions):
+                src = cell_sources.get(direction)
+                if src is not None and src.get("sign") == -1:
+                    opp = OPPOSITE_FACE[direction]
+                    cell_fluxes[direction] = -sum(
+                        face_data[opp][b - 1, :] for b in src["outside_ids"]
+                    )
+                else:
+                    cell_fluxes[direction] = face_data[direction][cell_id - 1, :]
+            fluxes[cell_id] = cell_fluxes
 
         return BoundaryFluxResponse(
             cell_ids=sorted(boundary_faces.keys()),
@@ -787,6 +821,39 @@ def transform(twin: "HydrologicalTwin", request: TransformRequest) -> Any:
                 f"{sorted(_VOLUMETRIC_UNIT_FACTORS)}."
             )
         return request.data * _VOLUMETRIC_UNIT_FACTORS[request.target_unit]
+
+    if request.kind == "temporal_aggregate":
+        # Calendar-month total-volume aggregation for the AQ boundary-flux ``m3``
+        # token: re-bin a daily ``m³/s`` series into one row per (year, month),
+        # each value = Σ over the month's simulated days of ``daily × 86400`` (m³).
+        # This is the aggregating counterpart to ``volumetric_rescale`` above — it
+        # is the ONE aggregation both AQ-boundary output surfaces (loose-CSV
+        # per-direction series + GeoPackage per-cell net) call, so the two can
+        # never re-bin differently. It routes downward only (L2 → the L3
+        # ``Temporal`` primitive on ``twin.temporal``), adds no ``qgis``/``PyQt5``
+        # import, and does no data-handling itself: the ×86400, the calendar
+        # grouping and the month-length arithmetic all live in the L3 primitive.
+        #
+        # Only ``freq="monthly"`` + ``how="sum"`` are in scope (design D1/D4); the
+        # request carries them as ``frequency`` / ``agg_dimension``. Guard both so
+        # an unsupported combination fails loudly rather than silently ignoring a
+        # caller's intent.
+        if request.frequency not in ("monthly", "Monthly"):
+            raise ValueError(
+                "transform(kind='temporal_aggregate') only supports "
+                f"frequency='monthly'; got {request.frequency!r}."
+            )
+        if request.agg_dimension != "sum":
+            raise ValueError(
+                "transform(kind='temporal_aggregate') only supports "
+                f"agg_dimension='sum'; got {request.agg_dimension!r}."
+            )
+        # Returns ``(monthly_matrix, monthly_index)`` — the monthly totals plus a
+        # parseable ``YYYY-MM`` month index the caller persists as the time axis.
+        return twin.temporal.monthly_total_volume(
+            arr=request.data,
+            dates=request.dates,
+        )
 
     if request.kind == "criteria":
         bundle_dict = twin._bundle_response_to_dict(request.bundle or request.data)
@@ -1079,6 +1146,18 @@ def export(twin: "HydrologicalTwin", request: ExportRequest) -> ExportResult:
             # Optional AQ-boundary per-cell faces map; absent for every other
             # caller, leaving their daily_values tables unchanged.
             request.options.get("daily_values_faces"),
+            # Optional AQ-boundary coarse-cell provenance map ({cell_id:
+            # outside_ids_str}); absent for every other caller, so no
+            # ``outside_ids`` column is emitted for them.
+            daily_values_outside_ids=request.options.get("daily_values_outside_ids"),
+            # Optional values-table name override; absent for every caller
+            # except the AQ-boundary monthly-total mode (which passes
+            # "monthly_values"), so the L3 default "daily_values" stands.
+            **(
+                {"values_table_name": request.options["values_table_name"]}
+                if "values_table_name" in request.options
+                else {}
+            ),
         )
     else:
         raise ValueError(f"Unknown export kind: {request.kind!r}")
@@ -1126,14 +1205,17 @@ def assemble(twin: "HydrologicalTwin", request: AssembleRequest) -> Any:
         )
 
     if request.kind == "boundary_aq_layers":
-        entries, faces_by_cell = build_boundary_aq_layers(
+        entries, faces_by_cell, outside_ids_by_cell = build_boundary_aq_layers(
             edge_geometries=request.edge_geometries or {},
             cell_layer_ids=request.cell_layer_ids or {},
             crs=request.crs,
             face_directions=request.face_directions or {},
+            face_sources=request.face_sources or {},
         )
         return BoundaryAqLayersResult(
-            entries=entries, faces_by_cell=faces_by_cell
+            entries=entries,
+            faces_by_cell=faces_by_cell,
+            outside_ids_by_cell=outside_ids_by_cell,
         )
 
     raise ValueError(f"Unknown assemble kind: {request.kind!r}")

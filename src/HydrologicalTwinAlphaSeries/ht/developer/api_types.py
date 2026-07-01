@@ -206,6 +206,9 @@ class AssembleRequest:
     - ``crs`` — the CRS the per-layer GeoDataFrames are built in.
     - ``face_directions`` — ``{cell_id: [direction, ...]}`` from the same
       response, used to format the per-cell ``faces`` cardinal-direction column.
+    - ``face_sources`` — ``{cell_id: {direction: {"sign", "outside_ids"}}}`` from
+      the same response, used to format the per-cell ``outside_ids`` coarse-cell
+      provenance column (empty for cells with no ``EXT_cell`` face).
     """
 
     kind: str = "compartment_bundle"
@@ -227,6 +230,7 @@ class AssembleRequest:
     cell_layer_ids: Optional[Mapping[Any, int]] = None
     crs: Any = None
     face_directions: Optional[Mapping[Any, Any]] = None
+    face_sources: Optional[Mapping[Any, Any]] = None
 
 
 @dataclass
@@ -412,12 +416,25 @@ class BoundaryFluxResponse:
     is single-valued. It lets downstream consumers split the merged boundary
     edges back into one surface per aquifer layer. The flux-bearing
     ``boundary_aq_flux`` mask keys on ``cell_id``/direction and never reads it.
+
+    ``face_sources`` is the per-(cell, direction) flux-source map produced by the
+    boundary face detection: ``{cell_id: {direction: {"sign": +1 | -1,
+    "outside_ids": [id, ...]}}}``. ``sign=+1`` (``INT_cell``, empty
+    ``outside_ids``) means read the inside cell's own face flux for that
+    direction; ``sign=-1`` (``EXT_cell``) means the inside cell is coarser on that
+    side, so its own face is a *blended* net and the flux is instead the negated
+    sum of the ``outside_ids`` smaller outside neighbours' opposing faces (see the
+    coarse-cell correction in ``dispatch.mask(kind="boundary_aq_flux")``).
+    ``boundary_aq`` populates it and threads it to ``boundary_aq_flux``. It
+    defaults to an empty mapping, so an equal-resolution mesh (all ``INT_cell``)
+    or any existing construction without it reduces to prior own-face behaviour.
     """
     cell_ids: List[Any] = field(default_factory=list)
     face_directions: Dict[Any, List[str]] = field(default_factory=dict)
     edge_geometries: Dict[Any, Any] = field(default_factory=dict)
     fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
     cell_layer_ids: Dict[Any, int] = field(default_factory=dict)
+    face_sources: Dict[Any, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     dates: Optional[np.ndarray] = None
     meta: Optional[Dict[str, Any]] = None
 
@@ -611,7 +628,15 @@ class BoundaryAqLayersResult:
     cell — the same comma-separated cardinal-direction string the geometry rows
     carry — produced at the single L3 formatting site so a caller can annotate the
     GeoPackage ``daily_values`` surface without re-formatting (design D5).
+
+    ``outside_ids_by_cell`` is the flat ``{cell_id: outside_ids_str}`` map over
+    every boundary cell — comma-joined ids of the smaller outside neighbours a
+    coarse cell's flux was sourced from (across all that cell's ``EXT_cell``
+    faces), empty for a cell whose faces are all ``INT_cell`` — produced at the
+    same single L3 formatting site so the GeoPackage ``daily_values`` coarse-cell
+    provenance column is self-describing without L1 re-formatting (design D6).
     """
 
     entries: List[tuple] = field(default_factory=list)
     faces_by_cell: Dict[Any, str] = field(default_factory=dict)
+    outside_ids_by_cell: Dict[Any, str] = field(default_factory=dict)

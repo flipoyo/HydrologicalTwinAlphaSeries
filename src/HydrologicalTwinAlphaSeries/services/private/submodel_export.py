@@ -72,6 +72,8 @@ def save_area_geopackage(
     provenance_rows: Sequence[dict],
     daily_values_unit_override: Optional[Union[str, Mapping[str, str]]] = None,
     daily_values_faces: Optional[Mapping[Any, str]] = None,
+    daily_values_outside_ids: Optional[Mapping[Any, str]] = None,
+    values_table_name: str = "daily_values",
 ) -> None:
     """Persist a transportable multi-compartment GeoPackage for a masked area.
 
@@ -135,6 +137,20 @@ def save_area_geopackage(
         absent from the mapping get the empty string). When ``None`` (every
         non-AQ-boundary caller), no ``faces`` column is emitted, so
         internal-values / HYD ``daily_values`` tables are unchanged.
+    :param daily_values_outside_ids: Optional per-cell
+        ``{cell_id: outside_ids_str}`` mapping (comma-joined ids of the smaller
+        outside neighbours a coarse boundary cell's flux was sourced from, empty
+        for a fine/equal cell) for the AQ-boundary path. When supplied, an
+        ``outside_ids`` column is added to ``daily_values`` the same way as
+        ``daily_values_faces`` (cells absent from the mapping get the empty
+        string), making a coarse-cell value self-describing. When ``None``, no
+        column is emitted and other callers' tables are unchanged.
+    :param values_table_name: SQL table name for the long-form values table.
+        Defaults to ``"daily_values"`` — the correct label for every daily-grid
+        caller (internal values, HYD, and the AQ-boundary daily/average-rate
+        modes). The AQ-boundary calendar-month total-volume mode passes
+        ``"monthly_values"`` instead, because its rows are one-per-month totals,
+        not daily values, so the table name matches what the rows actually hold.
     """
     from pathlib import Path as _Path  # noqa: PLC0415
 
@@ -231,11 +247,20 @@ def save_area_geopackage(
             daily_values["cell_id"].map(daily_values_faces).fillna("")
         )
 
+    # AQ-boundary coarse-cell provenance (absent → omitted): comma-joined ids of
+    # the smaller outside neighbours a coarse cell's flux was sourced from, empty
+    # for fine/equal cells. Same map-and-fill pattern as ``faces`` so the two
+    # annotation columns stay consistent; no mapping → no column.
+    if daily_values_outside_ids is not None:
+        daily_values["outside_ids"] = (
+            daily_values["cell_id"].map(daily_values_outside_ids).fillna("")
+        )
+
     provenance_df = pd.DataFrame(list(provenance_rows))
 
     with sqlite3.connect(gpkg_path) as con:
         daily_values.to_sql(
-            "daily_values", con, if_exists="replace", index=False
+            values_table_name, con, if_exists="replace", index=False
         )
         for table_name, df in polygon_total_tables.items():
             df.to_sql(table_name, con, if_exists="replace", index=False)
