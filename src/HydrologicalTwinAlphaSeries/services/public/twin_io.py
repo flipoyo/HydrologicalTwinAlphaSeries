@@ -23,7 +23,7 @@ What belongs here
 What does NOT belong here
 -------------------------
 - Heavy computation (``compute_*``, ``aggregate_*``, ``_build_*_gdf``,
-  ``extract_area``, ``apply_*``) → L2 ``ht/developer/handlers.py``.
+  ``apply_*``) → L2 ``ht/developer/handlers.py``.
 - Rendering (``render_*``) → L2 ``ht/developer/handlers.py``.
 - ``if request.kind == "X":`` ladders → L2 ``ht/developer/dispatch.py``.
 - Lifecycle state transitions or gatekeeping → L2

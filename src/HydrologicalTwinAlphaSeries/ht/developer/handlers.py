@@ -6,7 +6,7 @@ This module holds the *handlers*: module-level functions that perform the
 heavy hydrological work invoked by ``dispatch.py``. Each takes a
 ``HydrologicalTwin`` instance (named ``twin``) as first argument, plus
 whatever request-specific parameters the dispatch branch passes through.
-Handlers call into ``services/`` (``Renderer``, ``Operator``, ``Extractor``,
+Handlers call into ``services/`` (``Renderer``, ``Operator``,
 ``Comparator``) and into ``services/public/twin_io.py`` to read twin state.
 
 What belongs here
@@ -17,7 +17,6 @@ What belongs here
 - ``_build_watbal_spatial_gdf``, ``_build_effective_rainfall_gdf``,
   ``_build_aq_spatial_gdf``, ``_build_aquifer_outcropping``
 - ``_prepare_sim_obs_data``
-- ``extract_area``
 - ``apply_temporal_operator``, ``apply_spatial_average``
 - ``render_budget_barplot``, ``render_hydrological_regime``,
   ``render_aq_flux_diagram``
@@ -66,7 +65,7 @@ from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
 from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
-from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Extractor, Operator
+from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
 
 from .api_types import (
@@ -807,92 +806,6 @@ def render_aq_flux_diagram(
         )
 
     return [str(mass_balance_path), str(flux_path), str(html_path)]
-
-
-def extract_area(
-    twin: "HydrologicalTwin",
-    id_compartment: int,
-    outtype: str,
-    param: str,
-    syear: int,
-    eyear: int,
-    cell_ids: Optional[np.ndarray] = None,
-    spatial_operator: Optional[str] = None,
-    id_layer: int = 0,
-    cutsdate: Optional[str] = None,
-    cutedate: Optional[str] = None,
-    output_csv_path: Optional[Union[str, Path]] = None,
-    **operator_kwargs: Any,
-) -> ValuesResponse:
-    """Extract simulated values for specific cells (area subset)."""
-    comp = twin.get_compartment(id_compartment)
-
-    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
-    # no DTO-returning ``twin.read_values`` method. Unpack it here.
-    full_data, full_dates = read_values(
-        twin=twin,
-        id_compartment=id_compartment,
-        outtype=outtype,
-        param=param,
-        syear=syear,
-        eyear=eyear,
-        id_layer=id_layer,
-        cutsdate=cutsdate,
-        cutedate=cutedate,
-    )
-
-    subset_data = Extractor().apply_spatial_mask(
-        data=full_data,
-        cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
-        compartment=comp,
-        spatial_operator=spatial_operator,
-        spatial_manager=Spatial(),
-        **operator_kwargs
-    )
-
-    csv_path: Optional[Path] = None
-    if output_csv_path is not None:
-        suffix = f"_{spatial_operator}" if spatial_operator else "_area"
-        csv_path = Path(
-            output_csv_path +
-            f"/{comp.compartment}_{param}_{outtype}_{syear}-{eyear}{suffix}.csv"
-        )
-
-        n_cells = subset_data.shape[0]
-        if cell_ids is not None:
-            header = 'Date\t' + '\t'.join([f'Cell_{cid}' for cid in cell_ids])
-        else:
-            header = 'Date\t' + '\t'.join([f'Cell_{i}' for i in range(n_cells)])
-
-        with open(csv_path, 'w') as f:
-            f.write(header + '\n')
-            for t, date in enumerate(full_dates):
-                date_str = str(date)[:10]
-                row_data = '\t'.join(f'{val:.6f}' for val in subset_data[:, t])
-                f.write(f'{date_str}\t{row_data}\n')
-
-    meta = {
-        "id_compartment": id_compartment,
-        "outtype": outtype,
-        "param": param,
-        "syear": syear,
-        "eyear": eyear,
-        "id_layer": id_layer,
-        "n_cells": subset_data.shape[0],
-    }
-
-    if spatial_operator:
-        meta["spatial_operator"] = spatial_operator
-        meta["operator_kwargs"] = operator_kwargs
-    elif cell_ids is not None:
-        meta["cell_ids"] = cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids
-
-    return ValuesResponse(
-        data=subset_data,
-        dates=full_dates,
-        csv_path=csv_path,
-        meta=meta,
-    )
 
 
 def apply_temporal_operator(

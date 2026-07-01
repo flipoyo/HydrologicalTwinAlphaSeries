@@ -22,7 +22,7 @@ What does NOT belong here
   objects with sharp signatures.
 - State-gate checks (``_require_state``) → stay in the facade.
 - The actual computation (``compute_*``, ``_build_*_gdf``,
-  ``extract_area``, ``render_*``) → ``handlers.py``.
+  ``render_*``) → ``handlers.py``.
 - Reads over twin state (``read_*``, ``get_*``, ``_resolve_*``) →
   ``services/public/twin_io.py``.
 - The 4 non-dispatching verbs (``configure``, ``load``, ``describe``,
@@ -472,24 +472,13 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 clipped_geometries=clipped_geoms,
             )
 
-        # NOTE: this branch (target_unit is None) is NOT reached by the mask
-        # dialog, which always sends a unit token. It still carries the same
-        # 1-based-id / 0-based-row mismatch as the converted branch above:
-        # ``extract_area`` forwards ``cell_ids`` straight to
-        # ``apply_spatial_mask`` (0-based positional lookup) AND reuses them as
-        # CSV/meta labels, so it can't be fixed by a flat -1 here without
-        # corrupting the labels — it needs a separate labels arg. Left as-is
-        # for now since it's out of scope for the internal-values fix.
-        return twin.extract_area(
-            id_compartment=request.id_compartment,
-            outtype=request.outtype,
-            param=request.param,
-            syear=request.syear,
-            eyear=request.eyear,
-            cell_ids=np.asarray(resolved_cell_ids, dtype=np.intp),
-            id_layer=request.id_layer,
-            cutsdate=request.cutsdate,
-            cutedate=request.cutedate,
+        # target_unit is None: the dialog always sends a unit token, so this is
+        # never reached in the normal workflow. The former fall-through here
+        # called ``extract_area`` (now deleted — it was dead code and carried an
+        # unfixed 1-based-id / 0-based-row mismatch). Require a unit explicitly
+        # rather than silently take an untested path.
+        raise ValueError(
+            "mask(kind='area_values') requires a non-None 'target_unit'."
         )
 
     if request.kind == "polygon_cells":
