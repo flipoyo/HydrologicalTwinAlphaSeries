@@ -368,7 +368,12 @@ def _build_aq_spatial_gdf(
     """Extract, aggregate, and assemble an AQ spatial map GeoDataFrame."""
     comp_info = twin.get_compartment_info(id_compartment)
 
-    response = twin.read_values(
+    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
+    # no DTO-returning ``twin.read_values`` method (unlike ``read_observations``
+    # / ``read_watbal_converted``). Unpack it here, matching ``dispatch.py`` and
+    # ``twin_io.read_watbal_converted``.
+    sim_matrix, sim_dates = read_values(
+        twin=twin,
         id_compartment=id_compartment, outtype=outtype, param=param,
         syear=syear, eyear=eyear,
         id_layer=-9999,
@@ -376,7 +381,7 @@ def _build_aq_spatial_gdf(
     )
 
     agg_df = twin.aggregate_for_map(
-        data=response.data, dates=response.dates,
+        data=sim_matrix, dates=sim_dates,
         agg=agg, frequency=frequency,
         pluriannual=pluriannual, year_end_month=8,
         # Label the aggregated columns by MATRIX ROW order, not gdf order: the
@@ -384,7 +389,7 @@ def _build_aq_spatial_gdf(
         # ``i + 1``. The mesh gdf need not be ``Id_ABS``-sorted, so labelling by
         # ``getCellIdVector()`` / gdf order would mis-map columns. The
         # multi-layer assembly's ``.loc[id_abs]`` then selects the right rows.
-        cell_ids=np.arange(1, response.data.shape[0] + 1),
+        cell_ids=np.arange(1, sim_matrix.shape[0] + 1),
     )
 
     crs = layers[0].crs if layers else None
@@ -822,7 +827,10 @@ def extract_area(
     """Extract simulated values for specific cells (area subset)."""
     comp = twin.get_compartment(id_compartment)
 
-    full_response = twin.read_values(
+    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
+    # no DTO-returning ``twin.read_values`` method. Unpack it here.
+    full_data, full_dates = read_values(
+        twin=twin,
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
@@ -834,7 +842,7 @@ def extract_area(
     )
 
     subset_data = Extractor().apply_spatial_mask(
-        data=full_response.data,
+        data=full_data,
         cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
         compartment=comp,
         spatial_operator=spatial_operator,
@@ -858,7 +866,7 @@ def extract_area(
 
         with open(csv_path, 'w') as f:
             f.write(header + '\n')
-            for t, date in enumerate(full_response.dates):
+            for t, date in enumerate(full_dates):
                 date_str = str(date)[:10]
                 row_data = '\t'.join(f'{val:.6f}' for val in subset_data[:, t])
                 f.write(f'{date_str}\t{row_data}\n')
@@ -881,7 +889,7 @@ def extract_area(
 
     return ValuesResponse(
         data=subset_data,
-        dates=full_response.dates,
+        dates=full_dates,
         csv_path=csv_path,
         meta=meta,
     )
