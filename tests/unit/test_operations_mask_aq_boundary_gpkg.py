@@ -210,8 +210,9 @@ def test_geopackage_mode_writes_bundle(tmp_path: Path, monkeypatch):
     gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
     assert gpkg_path.exists()
     assert str(gpkg_path) in result.artefacts
-    # Loose CSV still written (additive, not exclusive).
-    assert any(p.endswith(".csv") for p in result.artefacts)
+    # GeoPackage mode is EXCLUSIVE (design D6): the .gpkg is the sole artefact and
+    # the loose per-direction CSV is suppressed.
+    assert not any(p.endswith(".csv") for p in result.artefacts)
 
     cells = gpd.read_file(str(gpkg_path), layer="cells_AQ_layer0")
     assert len(cells) == len(boundary_cells)
@@ -364,21 +365,21 @@ def test_monthly_unit_rescales_values_and_keeps_time_axis(tmp_path: Path, monkey
     factor = _VOLUMETRIC_UNIT_FACTORS["m3/mois"]
     assert factor == 2_629_800.0
 
-    # CSV: monthly suffix + rescaled values + one row per simulated day.
-    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
-    df = _read_csv_cols(csv_path)
-    assert all(col.endswith("_m3mois") for col in df.columns)
-    assert "2_east_m3mois" in df.columns
-    np.testing.assert_allclose(df["2_east_m3mois"].to_numpy(), 3.0 * factor)
-    assert len(df) == len(dates)  # no calendar re-binning
+    # GeoPackage mode is exclusive: no loose CSV, all output in the .gpkg.
+    assert not any(p.endswith(".csv") for p in result.artefacts)
 
-    # GeoPackage: net rescaled by the same factor + unit label stamped.
+    # GeoPackage: net rescaled by the same factor, unit label stamped, and the
+    # daily time axis kept (no calendar re-binning for a rate token).
     gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
     with sqlite3.connect(str(gpkg_path)) as con:
         daily = pd.read_sql_query("SELECT * FROM daily_values", con)
     assert set(daily["unit"].unique()) == {"m3/mois"}
     corner = daily[daily["cell_id"] == 2]["value"].unique()
     np.testing.assert_allclose(corner, (3.0 + 13.0) * factor)
+    # One row per simulated day per boundary cell — the rate token does not re-bin.
+    assert set(daily[daily["cell_id"] == 2]["date"].astype(str)) == set(
+        pd.Index(dates).astype(str)
+    )
 
 
 def test_monthly_total_volume_writes_monthly_values_table(tmp_path: Path, monkeypatch):
@@ -426,12 +427,16 @@ def test_monthly_total_volume_writes_monthly_values_table(tmp_path: Path, monkey
 
 
 # ---------------------------------------------------------------------------
-# 5.3 Agreement: GeoPackage per-cell net == sum of loose-CSV per-direction cols
+# 5.3 GeoPackage per-cell net == sum over that cell's face directions
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("unit", ["m3/j", "m3/mois"])
-def test_gpkg_net_equals_sum_of_csv_directions_per_cell(tmp_path, monkeypatch, unit):
+def test_gpkg_net_equals_sum_of_directions_per_cell(tmp_path, monkeypatch, unit):
+    """GeoPackage mode is exclusive (no CSV), so the "net = sum over a cell's
+    faces" invariant is checked directly against the .gpkg. The fixture gives
+    cell 2 two faces (raw 3 + 13 m³/s) and cell 5 one face (raw 6 m³/s); the op
+    rescales each per-direction m³/s series by the token factor before summing."""
     twin, polygon, boundary_cells, _dates = _setup(monkeypatch)
     output_dir = tmp_path / "OUTPUTS"
 
@@ -447,22 +452,22 @@ def test_gpkg_net_equals_sum_of_csv_directions_per_cell(tmp_path, monkeypatch, u
         write_geopackage=True,
     )
 
-    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
-    df = _read_csv_cols(csv_path)
+    # Exclusive contract: the .gpkg is the sole artefact, no loose CSV.
+    assert not any(p.endswith(".csv") for p in result.artefacts)
+
+    factor = _VOLUMETRIC_UNIT_FACTORS[unit]
+    # Raw per-cell net (sum over faces) in m³/s, mirroring the _fake_twin fixture.
+    raw_net_by_cell = {2: 3.0 + 13.0, 5: 6.0}
+
     gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
     with sqlite3.connect(str(gpkg_path)) as con:
         daily = pd.read_sql_query("SELECT * FROM daily_values", con)
 
     for cid in boundary_cells:
-        csv_net = sum(
-            df[col].to_numpy()
-            for col in df.columns
-            if col.startswith(f"{cid}_")
-        )
         gpkg_net = (
             daily[daily["cell_id"] == cid].sort_values("date")["value"].to_numpy()
         )
-        np.testing.assert_allclose(gpkg_net, csv_net)
+        np.testing.assert_allclose(gpkg_net, raw_net_by_cell[cid] * factor)
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +475,10 @@ def test_gpkg_net_equals_sum_of_csv_directions_per_cell(tmp_path, monkeypatch, u
 # ---------------------------------------------------------------------------
 
 
-def test_sign_convention_in_csv_header_and_gpkg_provenance(tmp_path: Path, monkeypatch):
+def test_sign_convention_in_gpkg_provenance(tmp_path: Path, monkeypatch):
+    """In GeoPackage mode (exclusive — no CSV) the sign convention is shipped into
+    every provenance row from the shared constant, so the .gpkg and the code
+    cannot drift."""
     twin, polygon, _cells, _dates = _setup(monkeypatch)
     output_dir = tmp_path / "OUTPUTS"
 
@@ -485,11 +493,8 @@ def test_sign_convention_in_csv_header_and_gpkg_provenance(tmp_path: Path, monke
         write_geopackage=True,
     )
 
-    # CSV: first line is a commented header carrying the exact constant.
-    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
-    first_line = Path(csv_path).read_text().splitlines()[0]
-    assert first_line.startswith("#")
-    assert AQ_BOUNDARY_FLUX_SIGN_CONVENTION in first_line
+    # Exclusive contract: the .gpkg is the sole artefact, no loose CSV.
+    assert not any(p.endswith(".csv") for p in result.artefacts)
 
     # GeoPackage provenance: every row carries the same constant.
     gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
@@ -668,17 +673,12 @@ def test_no_coarse_source_omits_outside_ids_column_and_note(tmp_path, monkeypatc
         write_geopackage=True,
     )
 
+    # GeoPackage mode is exclusive: the .gpkg is the sole artefact, no loose CSV.
+    assert not any(p.endswith(".csv") for p in result.artefacts)
+
     gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
     with sqlite3.connect(str(gpkg_path)) as con:
         daily = pd.read_sql_query("SELECT * FROM daily_values", con)
         prov = pd.read_sql_query("SELECT * FROM provenance", con)
     assert "outside_ids" not in daily.columns
     assert "coarse_cell_source" not in prov.columns
-
-    # Loose CSV header has the sign convention but NOT the coarse-cell note.
-    csv_path = next(p for p in result.artefacts if p.endswith(".csv"))
-    header = "\n".join(
-        ln for ln in Path(csv_path).read_text().splitlines() if ln.startswith("#")
-    )
-    assert AQ_BOUNDARY_FLUX_SIGN_CONVENTION in header
-    assert AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE not in header

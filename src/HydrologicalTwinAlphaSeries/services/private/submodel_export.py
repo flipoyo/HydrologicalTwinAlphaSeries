@@ -154,6 +154,12 @@ def save_area_geopackage(
     """
     from pathlib import Path as _Path  # noqa: PLC0415
 
+    # The assemble step only *composes* ``gpkg_path``; disk side effects are the
+    # writer's responsibility (see build_compartment_bundle's docstring). Ensure
+    # the output directory exists before sqlite tries to open the file, else the
+    # first ``to_file`` fails with "unable to open database file".
+    _Path(gpkg_path).parent.mkdir(parents=True, exist_ok=True)
+
     # Ensure the "silent overwrite" contract: GeoPandas.to_file with driver=
     # "GPKG" appends layers by default, leaving stale layers from prior runs
     # in place. Removing the file first guarantees a clean bundle.

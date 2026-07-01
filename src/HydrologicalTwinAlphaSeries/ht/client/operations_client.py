@@ -1579,7 +1579,15 @@ def run_mask_aq_boundary(
                 # smaller-outside-neighbour ids a coarse cell's value was sourced
                 # from (empty for fine/equal cells), forwarded as-is so the
                 # daily_values ``outside_ids`` column is self-describing (design D6).
-                "daily_values_outside_ids": aq_layers.outside_ids_by_cell,
+                # Gated by ``has_coarse_source`` exactly like the CSV header line and
+                # the provenance ``coarse_cell_source`` note above, so the three
+                # surfaces stay consistent: with no EXT_cell face the column is
+                # omitted, keeping all-INT_cell output unchanged.
+                **(
+                    {"daily_values_outside_ids": aq_layers.outside_ids_by_cell}
+                    if has_coarse_source
+                    else {}
+                ),
                 # In the monthly-total (``m3``) mode the values table holds one
                 # row per calendar month, not per day, so name it accordingly;
                 # the daily-grid tokens keep the L3 default ``daily_values``.
