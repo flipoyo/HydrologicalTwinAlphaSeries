@@ -63,6 +63,7 @@ from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
     assemble_multi_layer_geodataframe,
     assemble_single_layer_geodataframe,
 )
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Extractor, Operator
@@ -120,7 +121,12 @@ def _prepare_sim_obs_data(
                 context="observations vs mesh spatial linkage",
             )
 
-    sim_response = twin.read_values(
+    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
+    # no DTO-returning ``twin.read_values`` method (unlike ``read_observations``
+    # / ``read_watbal_converted``). Unpack it here, matching ``dispatch.py`` and
+    # ``twin_io.read_watbal_converted``.
+    sim_matrix, sim_dates = read_values(
+        twin=twin,
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
@@ -137,13 +143,12 @@ def _prepare_sim_obs_data(
         eyear=simedate,
     )
 
-    sim_dates = sim_response.dates
     obs_dates = obs_response.dates
 
     obs_points_data = []
     if comp.obs is not None:
         for i, obs_point in enumerate(comp.obs.obs_points):
-            sim_vals = sim_response.data[obs_point.id_cell - 1, :]
+            sim_vals = sim_matrix[obs_point.id_cell - 1, :]
             if i < obs_response.data.shape[0]:
                 obs_vals = obs_response.data[i, :]
             else:
@@ -211,7 +216,7 @@ def _prepare_sim_obs_data(
     ext_points_data = []
     if comp.extraction is not None:
         for ext_point in comp.extraction.ext_point:
-            sim_vals = sim_response.data[ext_point.id_cell - 1, :]
+            sim_vals = sim_matrix[ext_point.id_cell - 1, :]
             ext_points_data.append({
                 'name': ext_point.name,
                 'id_cell': ext_point.id_cell,

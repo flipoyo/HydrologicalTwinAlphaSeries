@@ -70,3 +70,45 @@ in `run_mask_internal_values`) with pure GeoDataFrame *assembly* (gpd join +
 weight column — a services-layer op, no twin / no dispatch).
 - **Fix:** keep the `twin.*` selection inline in `run_mask_internal_values`;
   extract the pure geopandas assembly into `services/`.
+
+### 6. Latent `twin.read_values(...)` calls — the method does not exist
+`handlers.py` calls `twin.read_values(...)` in **two** places that expect a
+DTO with `.data` / `.dates`:
+- `_build_aq_spatial_gdf` (`handlers.py:367`)
+- `extract_area` (`handlers.py:821`)
+
+But `HydrologicalTwin` has **no** `read_values` method (confirmed at runtime:
+`hasattr(HydrologicalTwin, "read_values") is False`; MRO is only
+`HydrologicalTwin → HTPersistenceMixin → object`). The L3 primitive
+`services/public/twin_io.py::read_values` returns a **raw `(sim_matrix, dates)`
+tuple**, not a DTO. These two call sites will raise `AttributeError` the moment
+their paths run (AQ spatial map, extract-area); they are simply not exercised in
+the current workflow. `_prepare_sim_obs_data` had the same bug and is now fixed
+by unpacking the raw tuple (matching `dispatch.py:105` and
+`twin_io.read_watbal_converted`).
+- **Fix (short-term):** change both sites to unpack the raw tuple —
+  `sim_matrix, dates = read_values(twin=twin, ...)` — and use `sim_matrix` /
+  `dates` instead of `response.data` / `response.dates`.
+- **Fix (structural):** decide whether L2 should expose a DTO-returning
+  `read_values` method (a real `ValuesResponse` wrapper, like
+  `read_watbal_converted`) so all handlers share one calling convention, OR make
+  every handler unpack the raw tuple. Today it is inconsistent: some paths
+  assumed a method that was removed. Tie this to #7 below.
+
+### 7. Thin the L2 pass-through delegators — but keep the gate
+`hydrological_twin_developer.py` carries ~40 near-identical two-line delegators
+of the shape `from ...services.public import twin_io; return twin_io.f(self, ...)`
+(e.g. `read_observations`, `get_layer_info`, `has_observations`, every `_build_*`,
+every `render_*`). The repetition is real boilerplate and worth removing.
+- **Do NOT** "connect the frontend directly to `services/`" to remove them: that
+  makes callers reach past the L2 entry gate into L3 leaves, which is exactly the
+  "reaching around the gate" bug the architecture forbids, and it dissolves the
+  `ExploreData → Client` network seam we want to keep for the future server.
+- **Distinction that drives the refactor:** a method that only *forwards* is
+  boilerplate (could be generated from a declarative `name → service fn` table,
+  or `__getattr__` delegation for pure pass-throughs); a method that *guarantees
+  a contract* (arg coercion, `_require_state`, DTO wrapping) is architecture and
+  must stay explicit. The DTO-wrapping seam is what makes callers able to trust
+  a return type — losing it silently is precisely what caused #6.
+- **First step when picked up:** sort the ~40 methods into "pure forward" vs
+  "shapes something". That sort is the whole design.
