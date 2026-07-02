@@ -6,7 +6,7 @@ This module holds the *handlers*: module-level functions that perform the
 heavy hydrological work invoked by ``dispatch.py``. Each takes a
 ``HydrologicalTwin`` instance (named ``twin``) as first argument, plus
 whatever request-specific parameters the dispatch branch passes through.
-Handlers call into ``services/`` (``Renderer``, ``Operator``, ``Extractor``,
+Handlers call into ``services/`` (``Renderer``, ``Operator``,
 ``Comparator``) and into ``services/public/twin_io.py`` to read twin state.
 
 What belongs here
@@ -17,7 +17,6 @@ What belongs here
 - ``_build_watbal_spatial_gdf``, ``_build_effective_rainfall_gdf``,
   ``_build_aq_spatial_gdf``, ``_build_aquifer_outcropping``
 - ``_prepare_sim_obs_data``
-- ``extract_area``
 - ``apply_temporal_operator``, ``apply_spatial_average``
 - ``render_budget_barplot``, ``render_hydrological_regime``,
   ``render_aq_flux_diagram``
@@ -63,9 +62,10 @@ from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
     assemble_multi_layer_geodataframe,
     assemble_single_layer_geodataframe,
 )
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
-from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Extractor, Operator
+from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Operator
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
 
 from .api_types import (
@@ -120,7 +120,12 @@ def _prepare_sim_obs_data(
                 context="observations vs mesh spatial linkage",
             )
 
-    sim_response = twin.read_values(
+    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
+    # no DTO-returning ``twin.read_values`` method (unlike ``read_observations``
+    # / ``read_watbal_converted``). Unpack it here, matching ``dispatch.py`` and
+    # ``twin_io.read_watbal_converted``.
+    sim_matrix, sim_dates = read_values(
+        twin=twin,
         id_compartment=id_compartment,
         outtype=outtype,
         param=param,
@@ -137,13 +142,12 @@ def _prepare_sim_obs_data(
         eyear=simedate,
     )
 
-    sim_dates = sim_response.dates
     obs_dates = obs_response.dates
 
     obs_points_data = []
     if comp.obs is not None:
         for i, obs_point in enumerate(comp.obs.obs_points):
-            sim_vals = sim_response.data[obs_point.id_cell - 1, :]
+            sim_vals = sim_matrix[obs_point.id_cell - 1, :]
             if i < obs_response.data.shape[0]:
                 obs_vals = obs_response.data[i, :]
             else:
@@ -211,7 +215,7 @@ def _prepare_sim_obs_data(
     ext_points_data = []
     if comp.extraction is not None:
         for ext_point in comp.extraction.ext_point:
-            sim_vals = sim_response.data[ext_point.id_cell - 1, :]
+            sim_vals = sim_matrix[ext_point.id_cell - 1, :]
             ext_points_data.append({
                 'name': ext_point.name,
                 'id_cell': ext_point.id_cell,
@@ -363,7 +367,12 @@ def _build_aq_spatial_gdf(
     """Extract, aggregate, and assemble an AQ spatial map GeoDataFrame."""
     comp_info = twin.get_compartment_info(id_compartment)
 
-    response = twin.read_values(
+    # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
+    # no DTO-returning ``twin.read_values`` method (unlike ``read_observations``
+    # / ``read_watbal_converted``). Unpack it here, matching ``dispatch.py`` and
+    # ``twin_io.read_watbal_converted``.
+    sim_matrix, sim_dates = read_values(
+        twin=twin,
         id_compartment=id_compartment, outtype=outtype, param=param,
         syear=syear, eyear=eyear,
         id_layer=-9999,
@@ -371,7 +380,7 @@ def _build_aq_spatial_gdf(
     )
 
     agg_df = twin.aggregate_for_map(
-        data=response.data, dates=response.dates,
+        data=sim_matrix, dates=sim_dates,
         agg=agg, frequency=frequency,
         pluriannual=pluriannual, year_end_month=8,
         # Label the aggregated columns by MATRIX ROW order, not gdf order: the
@@ -379,7 +388,7 @@ def _build_aq_spatial_gdf(
         # ``i + 1``. The mesh gdf need not be ``Id_ABS``-sorted, so labelling by
         # ``getCellIdVector()`` / gdf order would mis-map columns. The
         # multi-layer assembly's ``.loc[id_abs]`` then selects the right rows.
-        cell_ids=np.arange(1, response.data.shape[0] + 1),
+        cell_ids=np.arange(1, sim_matrix.shape[0] + 1),
     )
 
     crs = layers[0].crs if layers else None
@@ -797,89 +806,6 @@ def render_aq_flux_diagram(
         )
 
     return [str(mass_balance_path), str(flux_path), str(html_path)]
-
-
-def extract_area(
-    twin: "HydrologicalTwin",
-    id_compartment: int,
-    outtype: str,
-    param: str,
-    syear: int,
-    eyear: int,
-    cell_ids: Optional[np.ndarray] = None,
-    spatial_operator: Optional[str] = None,
-    id_layer: int = 0,
-    cutsdate: Optional[str] = None,
-    cutedate: Optional[str] = None,
-    output_csv_path: Optional[Union[str, Path]] = None,
-    **operator_kwargs: Any,
-) -> ValuesResponse:
-    """Extract simulated values for specific cells (area subset)."""
-    comp = twin.get_compartment(id_compartment)
-
-    full_response = twin.read_values(
-        id_compartment=id_compartment,
-        outtype=outtype,
-        param=param,
-        syear=syear,
-        eyear=eyear,
-        id_layer=id_layer,
-        cutsdate=cutsdate,
-        cutedate=cutedate,
-    )
-
-    subset_data = Extractor().apply_spatial_mask(
-        data=full_response.data,
-        cell_ids=cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids,
-        compartment=comp,
-        spatial_operator=spatial_operator,
-        spatial_manager=Spatial(),
-        **operator_kwargs
-    )
-
-    csv_path: Optional[Path] = None
-    if output_csv_path is not None:
-        suffix = f"_{spatial_operator}" if spatial_operator else "_area"
-        csv_path = Path(
-            output_csv_path +
-            f"/{comp.compartment}_{param}_{outtype}_{syear}-{eyear}{suffix}.csv"
-        )
-
-        n_cells = subset_data.shape[0]
-        if cell_ids is not None:
-            header = 'Date\t' + '\t'.join([f'Cell_{cid}' for cid in cell_ids])
-        else:
-            header = 'Date\t' + '\t'.join([f'Cell_{i}' for i in range(n_cells)])
-
-        with open(csv_path, 'w') as f:
-            f.write(header + '\n')
-            for t, date in enumerate(full_response.dates):
-                date_str = str(date)[:10]
-                row_data = '\t'.join(f'{val:.6f}' for val in subset_data[:, t])
-                f.write(f'{date_str}\t{row_data}\n')
-
-    meta = {
-        "id_compartment": id_compartment,
-        "outtype": outtype,
-        "param": param,
-        "syear": syear,
-        "eyear": eyear,
-        "id_layer": id_layer,
-        "n_cells": subset_data.shape[0],
-    }
-
-    if spatial_operator:
-        meta["spatial_operator"] = spatial_operator
-        meta["operator_kwargs"] = operator_kwargs
-    elif cell_ids is not None:
-        meta["cell_ids"] = cell_ids.tolist() if isinstance(cell_ids, np.ndarray) else cell_ids
-
-    return ValuesResponse(
-        data=subset_data,
-        dates=full_response.dates,
-        csv_path=csv_path,
-        meta=meta,
-    )
 
 
 def apply_temporal_operator(
