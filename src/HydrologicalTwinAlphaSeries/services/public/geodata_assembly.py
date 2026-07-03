@@ -80,7 +80,12 @@ def build_boundary_aq_layers(
     crs: Any,
     face_directions: Mapping[Any, Sequence[str]],
     face_sources: Optional[Mapping[Any, Mapping[str, Mapping[str, Any]]]] = None,
-) -> Tuple[List[Tuple[int, gpd.GeoDataFrame]], Dict[Any, str], Dict[Any, str]]:
+) -> Tuple[
+    List[Tuple[int, gpd.GeoDataFrame]],
+    Dict[Any, str],
+    Dict[Any, str],
+    Dict[Any, Dict[str, Any]],
+]:
     """Group AQ boundary edges by aquifer layer into one GeoDataFrame per layer.
 
     Pure shaping: turns the flat per-cell boundary-edge geometry of a
@@ -115,7 +120,8 @@ def build_boundary_aq_layers(
         of that cell's ``EXT_cell`` (``sign == -1``) faces are joined with commas
         (in face-then-neighbour order, deduplicated); a cell with no ``EXT_cell``
         face maps to the empty string. ``None`` yields an all-empty map.
-    :returns: A 3-tuple ``(entries, faces_by_cell, outside_ids_by_cell)``:
+    :returns: A 4-tuple
+        ``(entries, faces_by_cell, outside_ids_by_cell, face_slots_by_cell)``:
 
         * ``entries`` — an ordered ``[(id_layer, gdf), ...]`` list, one
           GeoDataFrame per aquifer layer that actually has boundary cells,
@@ -123,7 +129,10 @@ def build_boundary_aq_layers(
           of that layer, with a ``cell_id`` column, a ``faces`` column, and the
           cell's merged boundary-edge geometry. Layers with no boundary cells are
           omitted (the silent skip is a natural property of grouping, not a special
-          case).
+          case). The seven per-face-structure columns are deliberately NOT attached
+          to these gdfs — that keeps the registered QGIS borders layer clean; the
+          GeoPackage writer attaches them from ``face_slots_by_cell`` at write time
+          (design D7 placement (b)).
         * ``faces_by_cell`` — a flat ``{cell_id: faces_str}`` map over every
           boundary cell, the same string the geometry rows carry, so a caller can
           annotate the ``daily_values`` surface without re-formatting.
@@ -131,8 +140,18 @@ def build_boundary_aq_layers(
           every boundary cell (comma-joined smaller-outside-neighbour ids for
           coarse cells, empty otherwise), so a caller can annotate the
           ``daily_values`` coarse-cell provenance column without re-formatting.
+        * ``face_slots_by_cell`` — a per-cell ``{cell_id: {column: value}}`` map
+          spreading each cell's face structure across the seven fixed columns
+          ``n_faces`` + ``faceN_orient`` / ``faceN_outid`` for N ∈ {1, 2, 3}.
+          ``faceN_orient`` is the Nth entry of ``face_directions[cell]`` (slots
+          past ``n_faces`` blank); ``faceN_outid`` is the comma-joined
+          smaller-outside ids of that face **only** when its source is ``EXT_cell``
+          (``sign == -1``), blank otherwise. Produced at this single L3 formatting
+          site (design D1/D2/D4) so a caller can annotate both the GeoPackage
+          geometry layer and the ``daily_values`` table from one map, with no
+          re-formatting and no risk of the two surfaces disagreeing.
 
-        An empty ``edge_geometries`` yields ``([], {}, {})`` (no raise).
+        An empty ``edge_geometries`` yields ``([], {}, {}, {})`` (no raise).
     """
     faces_by_cell: Dict[Any, str] = {
         cell_id: ",".join(face_directions[cell_id])
@@ -155,6 +174,46 @@ def build_boundary_aq_layers(
                         ids.append(b_str)
         outside_ids_by_cell[cell_id] = ",".join(ids)
 
+    # Per-face structure spread across the seven fixed columns (design D1/D2/D4).
+    # Same single formatting site as ``faces``/``outside_ids`` above, reading the
+    # un-collapsed ``face_sources`` so ``faceN_outid`` can be tied to its own face
+    # (the flat ``outside_ids_by_cell`` has already lost that split). Slot N is the
+    # Nth entry of ``face_directions[cell]``; ``faceN_outid`` is filled only for an
+    # EXT_cell (``sign == -1``) face — the comma-joined smaller-outside ids of that
+    # face — and blank for INT_cell (``sign == +1``) faces and unused slots.
+    def _face_slots(cell_id: Any) -> Dict[str, Any]:
+        dirs = list(face_directions[cell_id])
+        n_faces = len(dirs)
+        # A boundary cell borders at most 3 cardinal sides (a 4-faced cell would
+        # be an isolated island, not a boundary cell — design D6). Surface any
+        # violation rather than silently dropping the 4th face in the 3-slot grid.
+        if n_faces > 3:
+            raise AssertionError(
+                f"boundary cell {cell_id!r} reports {n_faces} faces "
+                f"({dirs}); a boundary cell can border at most 3 cardinal "
+                "sides (design D6)."
+            )
+        cell_sources = sources.get(cell_id, {})
+        slots: Dict[str, Any] = {"n_faces": n_faces}
+        for n in range(1, 4):
+            if n <= n_faces:
+                direction = dirs[n - 1]
+                src = cell_sources.get(direction, {})
+                if src.get("sign") == -1:
+                    outid = ",".join(str(b) for b in src.get("outside_ids", []))
+                else:
+                    outid = ""
+                slots[f"face{n}_orient"] = direction
+                slots[f"face{n}_outid"] = outid
+            else:
+                slots[f"face{n}_orient"] = ""
+                slots[f"face{n}_outid"] = ""
+        return slots
+
+    face_slots_by_cell: Dict[Any, Dict[str, Any]] = {
+        cell_id: _face_slots(cell_id) for cell_id in edge_geometries
+    }
+
     cells_by_layer: dict = {}
     for cell_id, geometry in edge_geometries.items():
         id_layer = cell_layer_ids[cell_id]
@@ -173,7 +232,7 @@ def build_boundary_aq_layers(
             crs=crs,
         )
         entries.append((id_layer, gdf))
-    return entries, faces_by_cell, outside_ids_by_cell
+    return entries, faces_by_cell, outside_ids_by_cell, face_slots_by_cell
 
 
 def build_compartment_bundle(

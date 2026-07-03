@@ -45,6 +45,22 @@ INTERNAL_VALUES_PARAM_UNITS: dict[str, str] = {
 # Backwards-compatible alias — the lookup is now compartment-agnostic.
 WATBAL_PARAM_UNITS = INTERNAL_VALUES_PARAM_UNITS
 
+# The seven fixed AQ-boundary per-face-structure column names, in canonical
+# order (design D8, Open Question Q1: short snake_case for OGR safety and to
+# match ``cell_id`` / ``outside_ids``). Single source of truth for the spelling
+# and order used on BOTH the geometry layer and the values table, so the two
+# surfaces cannot drift. Keys of each ``daily_values_face_slots`` cell-map are
+# expected to be exactly these names.
+FACE_SLOT_COLUMNS: Tuple[str, ...] = (
+    "n_faces",
+    "face1_orient",
+    "face1_outid",
+    "face2_orient",
+    "face2_outid",
+    "face3_orient",
+    "face3_outid",
+)
+
 
 def save_area_values_npy(npy_path: str, data: np.ndarray) -> None:
     """Persist the raw per-cell value array for a masked area to ``npy_path``.
@@ -73,6 +89,7 @@ def save_area_geopackage(
     daily_values_unit_override: Optional[Union[str, Mapping[str, str]]] = None,
     daily_values_faces: Optional[Mapping[Any, str]] = None,
     daily_values_outside_ids: Optional[Mapping[Any, str]] = None,
+    daily_values_face_slots: Optional[Mapping[Any, Mapping[str, Any]]] = None,
     values_table_name: str = "daily_values",
 ) -> None:
     """Persist a transportable multi-compartment GeoPackage for a masked area.
@@ -86,10 +103,14 @@ def save_area_geopackage(
       ``geometry`` (and, when that compartment's ``cells_gdf`` already has a
       ``weight`` or ``faces`` column, that column is preserved — ``weight`` is
       the weighted-mask path, ``faces`` the AQ-boundary cardinal-direction
-      annotation);
+      annotation; and, when ``daily_values_face_slots`` is supplied, the seven
+      AQ-boundary per-face-structure columns ``n_faces`` + ``faceN_orient`` /
+      ``faceN_outid``);
     - a single non-spatial ``daily_values`` table in long form with columns
       ``compartment``, ``cell_id``, ``date``, ``param``, ``value``, ``unit``
-      (and, when ``daily_values_faces`` is supplied, a ``faces`` column).
+      (and, when ``daily_values_faces`` is supplied, a ``faces`` column; when
+      ``daily_values_face_slots`` is supplied, the seven per-face-structure
+      columns too).
       ``cell_id`` is unique only *within* a compartment, so a consumer joins
       ``daily_values`` to the matching ``cells_<compartment>`` layer on the
       pair ``(compartment, cell_id)``;
@@ -145,6 +166,22 @@ def save_area_geopackage(
         ``daily_values_faces`` (cells absent from the mapping get the empty
         string), making a coarse-cell value self-describing. When ``None``, no
         column is emitted and other callers' tables are unchanged.
+    :param daily_values_face_slots: Optional per-cell
+        ``{cell_id: {column: value}}`` mapping spreading each boundary cell's
+        face structure across the seven fixed columns ``n_faces`` +
+        ``faceN_orient`` / ``faceN_outid`` (N ∈ {1, 2, 3}), produced once at the
+        L3 formatting site (``build_boundary_aq_layers``). When supplied, those
+        seven columns are added to BOTH each ``cells_<compartment>`` geometry
+        layer (mapped through the layer's ``cell_id``) and the values table
+        (mapped through each row's ``cell_id``), filled from the same map so the
+        two surfaces agree per cell. ``faceN_orient`` is the Nth bordered
+        cardinal direction (blank past ``n_faces``); ``faceN_outid`` holds the
+        comma-joined smaller-outside ids only for that face's ``EXT_cell``
+        (coarse-inside) source, blank otherwise. Cells absent from the map get
+        ``n_faces == 0`` and empty strings (a safety default — boundary cells are
+        always present). When ``None`` (every non-AQ-boundary caller), none of
+        the seven columns are emitted, so internal-values / HYD geometry layers
+        and ``daily_values`` tables are byte-for-byte unchanged.
     :param values_table_name: SQL table name for the long-form values table.
         Defaults to ``"daily_values"`` — the correct label for every daily-grid
         caller (internal values, HYD, and the AQ-boundary daily/average-rate
@@ -180,6 +217,23 @@ def save_area_geopackage(
             cell_cols.append("weight")
         if "faces" in cells_gdf.columns:
             cell_cols.append("faces")
+        # AQ-boundary per-face structure (design D5/D7 placement (b)): the entries
+        # gdf is deliberately kept clean (only cell_id/faces/geometry) so the
+        # registered QGIS borders layer never carries these columns; the writer
+        # attaches them here from the SAME ``daily_values_face_slots`` map that
+        # feeds the values table, so the geometry layer and daily_values agree per
+        # cell. Copy first so the caller's gdf (also the registered QGIS layer) is
+        # left untouched. Absent → no columns, geometry layer byte-for-byte
+        # unchanged for every non-AQ-boundary caller.
+        if daily_values_face_slots is not None:
+            cells_gdf = cells_gdf.copy()
+            for col in FACE_SLOT_COLUMNS:
+                cells_gdf[col] = cells_gdf["cell_id"].map(
+                    lambda cid, _c=col: daily_values_face_slots.get(cid, {}).get(
+                        _c, 0 if _c == "n_faces" else ""
+                    )
+                )
+            cell_cols.extend(FACE_SLOT_COLUMNS)
         cell_cols.append("geometry")
         cells_gdf[cell_cols].to_file(
             gpkg_path, driver="GPKG", layer=f"cells_{compartment}"
@@ -261,6 +315,24 @@ def save_area_geopackage(
         daily_values["outside_ids"] = (
             daily_values["cell_id"].map(daily_values_outside_ids).fillna("")
         )
+
+    # AQ-boundary per-face structure (absent → omitted): spread each cell's face
+    # structure across the seven fixed columns from the SAME map that fed the
+    # cells_<compartment> geometry layer above, so a reader working from
+    # daily_values alone can filter by face structure without joining back to
+    # geometry (design D3), and the two surfaces cannot disagree (design D5). One
+    # ``.map`` per column, same map-and-fill idiom as ``faces`` / ``outside_ids``;
+    # a cell absent from the map falls back to ``n_faces == 0`` / blank strings
+    # (a safety default — boundary cells are always present). No map → no column,
+    # leaving internal-values / HYD daily_values byte-for-byte unchanged.
+    if daily_values_face_slots is not None:
+        for col in FACE_SLOT_COLUMNS:
+            default = 0 if col == "n_faces" else ""
+            daily_values[col] = daily_values["cell_id"].map(
+                lambda cid, _c=col, _d=default: daily_values_face_slots.get(
+                    cid, {}
+                ).get(_c, _d)
+            )
 
     provenance_df = pd.DataFrame(list(provenance_rows))
 

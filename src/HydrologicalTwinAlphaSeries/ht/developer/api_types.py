@@ -635,8 +635,17 @@ class BoundaryAqLayersResult:
     faces), empty for a cell whose faces are all ``INT_cell`` — produced at the
     same single L3 formatting site so the GeoPackage ``daily_values`` coarse-cell
     provenance column is self-describing without L1 re-formatting (design D6).
+
+    ``face_slots_by_cell`` is the per-cell ``{cell_id: {column: value}}`` map
+    spreading each boundary cell's face structure across the seven fixed columns
+    ``n_faces`` + ``faceN_orient`` / ``faceN_outid`` (N ∈ {1, 2, 3}). Produced at
+    the same single L3 formatting site (design D1/D2/D4) so L1 can forward it
+    unchanged into ``twin.export(kind="geopackage", ...)`` as
+    ``daily_values_face_slots``, from which the writer materialises the seven
+    columns on both the geometry layer and the values table (design D5/D7).
     """
 
     entries: List[tuple] = field(default_factory=list)
     faces_by_cell: Dict[Any, str] = field(default_factory=dict)
     outside_ids_by_cell: Dict[Any, str] = field(default_factory=dict)
+    face_slots_by_cell: Dict[Any, Dict[str, Any]] = field(default_factory=dict)

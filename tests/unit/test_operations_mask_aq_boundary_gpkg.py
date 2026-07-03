@@ -682,3 +682,219 @@ def test_no_coarse_source_omits_outside_ids_column_and_note(tmp_path, monkeypatc
         prov = pd.read_sql_query("SELECT * FROM provenance", con)
     assert "outside_ids" not in daily.columns
     assert "coarse_cell_source" not in prov.columns
+
+
+# ---------------------------------------------------------------------------
+# Per-face structure columns (aq-boundary-per-face-columns): the seven fixed
+# n_faces + faceN_orient / faceN_outid columns on both the geometry layer and
+# the values table of the AQ-boundary GeoPackage.
+# ---------------------------------------------------------------------------
+
+# The seven columns in canonical order (mirrors submodel_export.FACE_SLOT_COLUMNS).
+_FACE_SLOT_COLUMNS = [
+    "n_faces",
+    "face1_orient",
+    "face1_outid",
+    "face2_orient",
+    "face2_outid",
+    "face3_orient",
+    "face3_outid",
+]
+
+
+def test_face_slot_columns_mixed_cell_in_gpkg(tmp_path, monkeypatch):
+    """Task 5.1 — the mixed cell (cell 2: east EXT_cell → outid '5', west INT_cell
+    → blank) carries the expected seven per-face structure values in daily_values.
+
+    The ``_setup_coarse`` fixture gives cell 2 ``face_directions=['east','west']``
+    with only its east face EXT_cell (sign -1, outside id 5); its west face and all
+    of cell 5's faces stay INT_cell — exactly the spec's mixed-cell scenario.
+    """
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    for col in _FACE_SLOT_COLUMNS:
+        assert col in daily.columns
+
+    # Cell 2: two faces — east EXT_cell (outid '5'), west INT_cell (blank).
+    cell2 = daily[daily["cell_id"] == 2].iloc[0]
+    assert cell2["n_faces"] == 2
+    assert cell2["face1_orient"] == "east"
+    assert cell2["face1_outid"] == "5"
+    assert cell2["face2_orient"] == "west"
+    assert cell2["face2_outid"] == ""
+    assert cell2["face3_orient"] == ""
+    assert cell2["face3_outid"] == ""
+
+
+def test_face_slot_columns_slots_past_n_faces_blank(tmp_path, monkeypatch):
+    """Task 5.2 — the 1-face cell (cell 5: only an east face) leaves face2_* /
+    face3_* blank in daily_values."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    cell5 = daily[daily["cell_id"] == 5].iloc[0]
+    assert cell5["n_faces"] == 1
+    assert cell5["face1_orient"] == "east"
+    assert cell5["face1_outid"] == ""       # cell 5 is INT_cell
+    assert cell5["face2_orient"] == ""
+    assert cell5["face2_outid"] == ""
+    assert cell5["face3_orient"] == ""
+    assert cell5["face3_outid"] == ""
+
+
+def test_face_slot_columns_geometry_layer_values_table_parity(tmp_path, monkeypatch):
+    """Task 5.3 — a cell's seven structure values agree between its
+    ``cells_AQ_layer0`` geometry row and its ``daily_values`` rows."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    cells = gpd.read_file(str(gpkg_path), layer="cells_AQ_layer0")
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    # The geometry layer carries all seven columns.
+    for col in _FACE_SLOT_COLUMNS:
+        assert col in cells.columns
+
+    for cid in cells["cell_id"]:
+        geo_row = cells[cells["cell_id"] == cid].iloc[0]
+        daily_rows = daily[daily["cell_id"] == cid]
+        # Every daily row of a cell repeats the same structure (denormalised, D3).
+        for col in _FACE_SLOT_COLUMNS:
+            assert daily_rows[col].nunique() == 1
+            # str() both sides: the geometry layer may store n_faces as int64 and
+            # the values table via a Python-object map — compare on value, not dtype.
+            assert str(daily_rows.iloc[0][col]) == str(geo_row[col])
+
+
+def test_registered_qgis_layer_carries_only_faces(tmp_path, monkeypatch):
+    """Task 5.4 — the registered per-layer entries gdf carries only cell_id /
+    faces / geometry (none of the seven columns), while the in-.gpkg geometry
+    layer does carry them (design D7 (b))."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    result = operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    # The registered QGIS borders layers travel on the result as per-layer entries.
+    assert result.entries, "expected registered per-layer entries"
+    for entry in result.entries:
+        assert set(entry.gdf.columns) == {"cell_id", "faces", "geometry"}
+        for col in _FACE_SLOT_COLUMNS:
+            assert col not in entry.gdf.columns
+
+    # ...but the geometry layer inside the .gpkg DOES carry the seven columns.
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    cells = gpd.read_file(str(gpkg_path), layer="cells_AQ_layer0")
+    for col in _FACE_SLOT_COLUMNS:
+        assert col in cells.columns
+
+
+def test_non_aq_boundary_export_has_no_face_slot_columns(tmp_path):
+    """Task 5.5 — an internal-values GeoPackage (save_area_geopackage called with
+    no ``daily_values_face_slots``) carries none of the seven columns, on either
+    the geometry layer or the values table."""
+    from shapely.geometry import box
+
+    from HydrologicalTwinAlphaSeries.ht import ValuesResponse
+    from HydrologicalTwinAlphaSeries.services.private.submodel_export import (
+        save_area_geopackage,
+    )
+
+    cells_gdf = gpd.GeoDataFrame(
+        {"cell_id": [10, 11]},
+        geometry=[box(0, 0, 1, 1), box(1, 0, 2, 1)],
+        crs="EPSG:2154",
+    )
+    dates = np.array(["2000-01-01", "2000-01-02"])
+    resp = ValuesResponse(data=np.arange(4.0).reshape(2, 2), dates=dates)
+    blocks = {"WATBAL": (cells_gdf, {"rain": resp}, None)}
+    prov = [{"compartment": "WATBAL", "params": "[\"rain\"]", "weighted": False}]
+    gpkg_path = tmp_path / "internal.gpkg"
+
+    save_area_geopackage(str(gpkg_path), blocks, prov)  # no face-slot map
+
+    cells = gpd.read_file(str(gpkg_path), layer="cells_WATBAL")
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+    for col in _FACE_SLOT_COLUMNS:
+        assert col not in cells.columns
+        assert col not in daily.columns
+
+
+def test_ogr_accepts_the_seven_snake_case_column_names(tmp_path, monkeypatch):
+    """Task 5.6 — open the written .gpkg and read the geometry-layer column names
+    back; OGR must accept all seven snake_case names without truncation/rejection
+    (design D8 / OGR-limit risk)."""
+    twin, polygon, _cells, _dates = _setup_coarse(monkeypatch)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_aq_boundary(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        area_name="basin_A",
+        write_geopackage=True,
+    )
+
+    gpkg_path = output_dir / "basin_A_AqBoundary_2000_2000.gpkg"
+    # Read the geometry-layer schema straight back from OGR (via geopandas).
+    cells = gpd.read_file(str(gpkg_path), layer="cells_AQ_layer0")
+    for col in _FACE_SLOT_COLUMNS:
+        # Exact, untruncated name present.
+        assert col in cells.columns

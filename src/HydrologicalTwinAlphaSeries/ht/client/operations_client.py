@@ -1575,6 +1575,16 @@ def run_mask_aq_boundary(
                 # assemble verb) and forwarded as-is — L1 builds no dict — so the
                 # geometry and daily_values faces strings agree per cell_id.
                 "daily_values_faces": aq_layers.faces_by_cell,
+                # Per-face structure spread across the seven fixed columns
+                # (n_faces + faceN_orient / faceN_outid). Produced at the same
+                # single L3 formatting site and forwarded as-is — L1 builds no
+                # dict (golden rule; design D5) — so the writer materialises the
+                # seven columns identically on the geometry layer and daily_values.
+                # Passed unconditionally like ``daily_values_faces`` (every
+                # boundary cell has a face structure); the whole block is already
+                # gated by ``write_geopackage and flux_resp.fluxes``, so it fires
+                # only when boundary cells exist.
+                "daily_values_face_slots": aq_layers.face_slots_by_cell,
                 # Same L3-formatted provenance for coarse cells: the comma-joined
                 # smaller-outside-neighbour ids a coarse cell's value was sourced
                 # from (empty for fine/equal cells), forwarded as-is so the
