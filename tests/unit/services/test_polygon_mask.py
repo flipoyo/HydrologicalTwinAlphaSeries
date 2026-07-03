@@ -491,8 +491,8 @@ def test_cells_boundary_faces_single_inside_cell_four_directions():
     cells = {
         0: box(4.0, 4.0, 6.0, 6.0),  # centre, inside polygon
         1: box(4.0, 6.0, 6.0, 8.0),  # north neighbour (dy>0 → "north")
-        2: box(2.0, 4.0, 4.0, 6.0),  # west neighbour  (dx<0 → "east")
-        3: box(6.0, 4.0, 8.0, 6.0),  # east neighbour  (dx>0 → "west")
+        2: box(2.0, 4.0, 4.0, 6.0),  # west neighbour  (dx<0 → "west")
+        3: box(6.0, 4.0, 8.0, 6.0),  # east neighbour  (dx>0 → "east")
         4: box(4.0, 2.0, 6.0, 4.0),  # south neighbour (dy<0 → "south")
     }
     mesh = gpd.GeoDataFrame(
@@ -608,8 +608,8 @@ def test_cells_boundary_faces_refined_t_junction_single_continuous_line():
         mesh, polygon, id_col="cell_id"
     )
 
-    # The big cell faces its three west neighbours on one side → "east" once.
-    assert boundary_faces[0] == ["east"]
+    # The big cell faces its three west neighbours on one side → "west" once.
+    assert boundary_faces[0] == ["west"]
     geom = edge_geometries[0]
     # The three collinear sub-edges fuse into ONE continuous line spanning the
     # full shared side (length ≈ side), not a gappy MultiLineString of 3 parts.
@@ -631,9 +631,9 @@ def test_cells_boundary_faces_refined_t_junction_source_is_ext_cell():
     )
 
     # The coarse inside cell 0 borders its three smaller outside neighbours on
-    # its "east" side (the direction the existing merge test asserts).
-    assert boundary_faces[0] == ["east"]
-    src = face_sources[0]["east"]
+    # its "west" side (the direction the existing merge test asserts).
+    assert boundary_faces[0] == ["west"]
+    src = face_sources[0]["west"]
     assert src["sign"] == -1
     assert sorted(src["outside_ids"]) == [1, 2, 3]
 
@@ -683,7 +683,7 @@ def test_cells_boundary_faces_corner_cell_stays_multiline_per_side():
         mesh, polygon, id_col="cell_id"
     )
 
-    assert sorted(boundary_faces[0]) == ["east", "south"]
+    assert sorted(boundary_faces[0]) == ["south", "west"]
     geom = edge_geometries[0]
     assert isinstance(geom, MultiLineString)
     assert len(geom.geoms) == 2  # one line per bordered side, kept distinct
@@ -759,7 +759,7 @@ def test_cells_boundary_faces_rotated_t_junction_is_recovered():
 
     # The face is detected (not dropped) and a non-empty line is returned.
     assert 0 in boundary_faces
-    assert boundary_faces[0] == ["east"]
+    assert boundary_faces[0] == ["west"]
     geom = edge_geometries[0]
     assert not geom.is_empty
     assert geom.geom_type in ("LineString", "MultiLineString")
@@ -854,5 +854,5 @@ def test_cells_boundary_faces_floor_adapts_between_coarse_and_fine_meshes():
         boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
             mesh, polygon, id_col="cell_id"
         )
-        assert boundary_faces[0] == ["east"]
+        assert boundary_faces[0] == ["west"]
         assert edge_geometries[0].length == pytest.approx(side, abs=1.0)
