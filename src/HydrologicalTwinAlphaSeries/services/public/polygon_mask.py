@@ -536,7 +536,7 @@ def cells_boundary_faces(
             dx = neigh_geom.centroid.x - cell_cx
             dy = neigh_geom.centroid.y - cell_cy
             if abs(dx) >= abs(dy):
-                face = "east" if dx < 0 else "west"
+                face = "west" if dx < 0 else "east"
             else:
                 face = "south" if dy < 0 else "north"
 
