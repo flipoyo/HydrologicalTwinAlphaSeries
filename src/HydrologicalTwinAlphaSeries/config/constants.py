@@ -79,7 +79,7 @@ paramRecs = {
     # record index in the binary (cf. temporal.decode_and_cache, enumerate).
     # Record 0 = "water_height", record 1 = "water_level"; both are lengths in
     # metres, so the length conversion path treats either as a raw m pass-through.
-    # The DialogMask Water Height checkbox wires record 0 ("water_height").
+    # The DialogMask Water Height checkbox wires record 1 ("water_level").
     "HYD_H": ["water_height", "water_level"],
     "AQ_H": ["piezhead"],
     "AQ_MB": [

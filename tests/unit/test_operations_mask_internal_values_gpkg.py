@@ -556,7 +556,7 @@ def test_run_mask_internal_values_hyd_reaches_per_spec_units(tmp_path: Path, mon
         polygon_crs="EPSG:2154",
         specs=[
             ("HYD", "Q", "discharge", "m3/s"),
-            ("HYD", "H", "water_height", "m"),
+            ("HYD", "H", "water_level", "m"),
         ],
         syear=2000,
         eyear=2000,
@@ -581,7 +581,7 @@ def test_run_mask_internal_values_hyd_reaches_per_spec_units(tmp_path: Path, mon
     # Each spec keeps its own unit token in daily_values.
     units_by_param = daily.groupby("param")["unit"].unique()
     assert units_by_param["discharge"].tolist() == ["m3/s"]
-    assert units_by_param["water_height"].tolist() == ["m"]
+    assert units_by_param["water_level"].tolist() == ["m"]
 
 
 def test_run_mask_internal_values_weighted_true_does_not_push_length_spec_into_guard(
@@ -601,7 +601,7 @@ def test_run_mask_internal_values_weighted_true_does_not_push_length_spec_into_g
         polygon_crs="EPSG:2154",
         specs=[
             ("HYD", "Q", "discharge", "m3/s"),     # volumetric → may be weighted
-            ("HYD", "H", "water_height", "m"),     # length → must be unweighted
+            ("HYD", "H", "water_level", "m"),      # length → must be unweighted
         ],
         syear=2000,
         eyear=2000,
