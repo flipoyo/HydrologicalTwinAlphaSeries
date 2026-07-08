@@ -105,12 +105,20 @@ def _resolve_hyd_mesh_gdf(
     outcropping equivalent) but for a single HYD layer. Used by ``mask()`` HYD
     branches so polygon selection yields ``ID_ABS`` directly with
     ``id_col="id_abs"``.
+
+    The returned gdf carries **both** ids per candidate cell: the internal
+    ``id_abs`` (the selection / matrix-lookup key) and the user-facing ``id_gis``
+    (the id the user's own reach layer carries — the relabel source at output
+    time). ``id_gis`` rides along unused by selection; it lets the output
+    ``ID_ABS → ID_GIS`` relabel be a column swap rather than a corresp re-read.
+    For AQ/WATBAL and the HYD-missing-corresp fallback ``id_gis == id_abs``.
     """
     compartment = get_compartment(twin, id_compartment)
     layer = compartment.mesh.mesh[id_layer]
     return gpd.GeoDataFrame(
         {
             "id_abs": [cell.id_abs for cell in layer.layer],
+            "id_gis": [cell.id_gis for cell in layer.layer],
             "geometry": [cell.geometry for cell in layer.layer],
         },
         crs=layer.crs,

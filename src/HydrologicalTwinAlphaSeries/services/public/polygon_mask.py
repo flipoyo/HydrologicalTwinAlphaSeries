@@ -221,7 +221,6 @@ def reaches_in_polygon_carachterisation(
         "crossing_geometries": [],
         "crossing_ids":        [],
         "signs":               {},
-        "weights":             {},
         "clipped_geometries":  {},
         "internal_and_boundary_ids": [],
     }
@@ -237,7 +236,6 @@ def reaches_in_polygon_carachterisation(
     crossing_geometries: List[Any] = []
     crossing_ids: List[Any] = []
     signs: Dict[Any, int] = {}
-    weights: Dict[Any, float] = {}
     # Per-reach geometry clipped to the polygon — for a fully-internal reach
     # this is the whole reach; for a boundary reach it is the inside segment.
     # We always clip (nicer to display, and it is the same intersection used
@@ -260,10 +258,6 @@ def reaches_in_polygon_carachterisation(
         # (= inside length / total length), mirroring the area-fraction logic
         # in cells_in_polygon_weighted.
         inside_part = polygon.intersection(geom)
-        total_length = geom.length
-        weights[cell_id] = (
-            inside_part.length / total_length if total_length > 0 else 0.0
-        )
         clipped_geometries[cell_id] = inside_part
 
         if f_in and t_in:
@@ -290,7 +284,6 @@ def reaches_in_polygon_carachterisation(
         "crossing_geometries": crossing_geometries,
         "crossing_ids":        crossing_ids,
         "signs":               signs,
-        "weights":             weights,
         "clipped_geometries":  clipped_geometries,
         "internal_and_boundary_ids": internal_and_boundary_ids,
     }

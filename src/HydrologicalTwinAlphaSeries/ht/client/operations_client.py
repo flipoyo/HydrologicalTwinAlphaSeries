@@ -1059,13 +1059,22 @@ def _build_cells_gdf(
         # different set and break alignment). Reaches carry NO length-fraction
         # weight, so ``response.weights`` is None here and no ``weight`` column is
         # emitted — each reach contributes its raw value.
-        meta_cell_ids = list((response.meta or {}).get("cell_ids", []))
+        #
+        # cell_id is emitted as the user-facing GIS id (design D4 Option A): the
+        # dispatcher put a row-aligned ``cell_gis_ids`` in meta beside ``cell_ids``
+        # (ABS). This is a value substitution, not a lookup — no DataFrame logic in
+        # L1 (golden rule). When the corresp file is missing id_gis == id_abs, so
+        # the fallback to cell_ids below is a no-op.
+        meta = response.meta or {}
+        meta_cell_gis_ids = meta.get("cell_gis_ids")
+        if meta_cell_gis_ids is None:
+            meta_cell_gis_ids = meta.get("cell_ids", [])
         clipped = (
             response.clipped_geometries
             if response.clipped_geometries is not None
             else []
         )
-        df = pd.DataFrame({"cell_id": meta_cell_ids})
+        df = pd.DataFrame({"cell_id": list(meta_cell_gis_ids)})
         return gpd.GeoDataFrame(df, geometry=list(clipped), crs=mesh_gdf.crs)
 
     if resolution == "outcropping":

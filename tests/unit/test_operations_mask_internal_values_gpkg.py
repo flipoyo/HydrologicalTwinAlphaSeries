@@ -619,6 +619,160 @@ def test_run_mask_internal_values_weighted_true_does_not_push_length_spec_into_g
 
 
 # ---------------------------------------------------------------------------
+# HYD ID_ABS → ID_GIS relabel (change: mask-hyd-id-gis-relabel)
+# ---------------------------------------------------------------------------
+
+
+def _hyd_relabel_twin_and_polygon(with_gis_ids: bool):
+    """Fake twin emulating the HYD reaches path with the relabel wired in.
+
+    ``area_values`` returns the same shape the real dispatch now returns for a
+    HYD reaches mask: ``meta["cell_ids"]`` are the internal ABS ids (used to
+    slice the matrix), and ``meta["cell_gis_ids"]`` are the row-aligned
+    user-facing GIS ids. When ``with_gis_ids`` is False the response omits
+    ``cell_gis_ids`` entirely — the missing-corresp fallback, where the ids in
+    play are already GIS ids and no relabel key is threaded.
+    """
+    abs_ids = [5, 6]              # internal ABS ids (matrix row labels)
+    gis_ids = [101, 202]         # user's reach ids (GIS)
+    clipped = [LineString([(0, 0), (1, 0)]), LineString([(1, 0), (1.5, 0)])]
+    mesh_gdf = gpd.GeoDataFrame(
+        {"reach_id": abs_ids},
+        geometry=[LineString([(0, 0), (2, 0)]), LineString([(1, 0), (3, 0)])],
+        crs="EPSG:2154",
+    )
+    dates = np.array(["2000-01-01", "2000-01-02", "2000-01-03", "2000-01-04"])
+
+    def fake_mask(kind, **kwargs):
+        if kind == "area_values":
+            param = kwargs["param"]
+            data = np.full((len(abs_ids), len(dates)), float(hash(param) % 1000))
+            meta = {
+                "cell_ids": list(abs_ids),
+                "target_unit": kwargs.get("target_unit"),
+                "resolution": kwargs.get("resolution"),
+            }
+            if with_gis_ids:
+                meta["cell_gis_ids"] = list(gis_ids)
+            return ValuesResponse(
+                data=data,
+                dates=dates,
+                meta=meta,
+                clipped_geometries=list(clipped),
+            )
+        raise ValueError(f"unexpected mask kind: {kind!r}")
+
+    twin = _attach_assemble_export(
+        SimpleNamespace(mask=fake_mask, out_caw_directory="/tmp/fake_out_caw")
+    )
+    polygon = Polygon([(0, 0), (3, 0), (3, 1), (0, 1)])
+    return twin, polygon, mesh_gdf, abs_ids, gis_ids
+
+
+def test_hyd_mask_emits_gis_id_as_cell_id(tmp_path: Path, monkeypatch):
+    """The registered HYD cells gdf's cell_id is the user's GIS reach id, NOT
+    the internal ABS id (spec: HYD internal-values cell_id shows the GIS id)."""
+    twin, polygon, mesh_gdf, abs_ids, gis_ids = _hyd_relabel_twin_and_polygon(
+        with_gis_ids=True
+    )
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("HYD", "Q", "discharge", "m3/s")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(tmp_path / "OUTPUTS"),
+        temp_dir=str(tmp_path / "TEMP"),
+        area_name="basin_A",
+        weighted=False,
+    )
+
+    hyd_entry = next(e for e in result.entries if e.compartment == "HYD")
+    # cell_id is the GIS id (101, 202), not the ABS id (5, 6).
+    assert list(hyd_entry.gdf["cell_id"]) == gis_ids
+    assert list(hyd_entry.gdf["cell_id"]) != abs_ids
+
+
+def test_hyd_gpkg_geometry_and_daily_values_join_survives_relabel(
+    tmp_path: Path, monkeypatch
+):
+    """The single most important correctness check (design D5): inside the
+    written .gpkg, the cells_HYD geometry layer's cell_id and the
+    daily_values rows tagged compartment=='HYD' both carry the GIS id, and the
+    join on (compartment, cell_id) is non-empty and row-complete."""
+    twin, polygon, mesh_gdf, _abs_ids, gis_ids = _hyd_relabel_twin_and_polygon(
+        with_gis_ids=True
+    )
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+    output_dir = tmp_path / "OUTPUTS"
+
+    operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("HYD", "Q", "discharge", "m3/s")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(output_dir),
+        temp_dir=str(tmp_path / "TEMP"),
+        area_name="basin_A",
+        write_geopackage=True,
+        weighted=False,
+    )
+
+    gpkg_path = output_dir / "basin_A_InternalValues_2000_2000.gpkg"
+    cells_hyd = gpd.read_file(str(gpkg_path), layer="cells_HYD")
+    with sqlite3.connect(str(gpkg_path)) as con:
+        daily = pd.read_sql_query("SELECT * FROM daily_values", con)
+
+    hyd_daily = daily[daily["compartment"] == "HYD"]
+
+    # Both surfaces carry the GIS id.
+    assert set(cells_hyd["cell_id"]) == set(gis_ids)
+    assert set(hyd_daily["cell_id"]) == set(gis_ids)
+
+    # The (compartment, cell_id) join is non-empty and row-complete: every HYD
+    # daily_values cell_id resolves to a geometry, and no cell is orphaned.
+    geom_ids = set(cells_hyd["cell_id"])
+    assert set(hyd_daily["cell_id"]) <= geom_ids
+    assert set(hyd_daily["cell_id"]) == geom_ids  # no reach dropped by the relabel
+    assert len(hyd_daily) == len(gis_ids) * 4    # 2 reaches × 4 days
+
+
+def test_hyd_mask_relabel_is_noop_without_gis_ids_in_meta(
+    tmp_path: Path, monkeypatch
+):
+    """Fallback (missing corresp / no cell_gis_ids in meta): _build_cells_gdf
+    falls back to cell_ids, so the emitted cell_id equals the ABS id — which in
+    the real fallback IS the GIS id (id_gis == id_abs). Output is unchanged
+    from the pre-relabel behaviour."""
+    twin, polygon, mesh_gdf, abs_ids, _gis_ids = _hyd_relabel_twin_and_polygon(
+        with_gis_ids=False
+    )
+    _patch_twin_helpers(monkeypatch, mesh_gdf)
+
+    result = operations.run_mask_internal_values(
+        twin,
+        polygon=polygon,
+        polygon_crs="EPSG:2154",
+        specs=[("HYD", "Q", "discharge", "m3/s")],
+        syear=2000,
+        eyear=2000,
+        output_dir=str(tmp_path / "OUTPUTS"),
+        temp_dir=str(tmp_path / "TEMP"),
+        area_name="basin_A",
+        weighted=False,
+    )
+
+    hyd_entry = next(e for e in result.entries if e.compartment == "HYD")
+    # No cell_gis_ids → falls back to cell_ids (the raw ids, == GIS in fallback).
+    assert list(hyd_entry.gdf["cell_id"]) == abs_ids
+
+
+# ---------------------------------------------------------------------------
 # unit selector (caller-selectable m3/s | m3/j)
 # ---------------------------------------------------------------------------
 

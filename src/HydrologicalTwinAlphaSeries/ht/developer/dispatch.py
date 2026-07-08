@@ -368,6 +368,10 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
 
         weights: Optional[np.ndarray] = None
         clipped_geoms: Optional[List[Any]] = None
+        # Row-aligned user-facing GIS ids for the HYD reaches branch (design D4
+        # Option A). Stays None everywhere else — AQ/WATBAL already emit the GIS
+        # id as their cell_id, so meta["cell_gis_ids"] is only populated for HYD.
+        resolved_cell_gis_ids: Optional[List[Any]] = None
         if request.polygon is not None:
             # Resolution selector for AQ internal-values specs request the cross-layer outcropping mesh keyed on the global ``id_abs``;
             if request.resolution == "outcropping":
@@ -410,6 +414,15 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 clipped_geoms = [
                     reach_info["clipped_geometries"][cid]
                     for cid in resolved_cell_ids
+                ]
+                # Relabel source: map each selected id_abs to the user-facing
+                # id_gis carried on the same mesh_gdf rows (design D4 Option A).
+                # Row-aligned with resolved_cell_ids by construction — both are
+                # driven off the same id ordering. For the HYD missing-corresp
+                # fallback id_gis == id_abs, so this is a natural no-op there.
+                abs_to_gis = dict(zip(mesh_gdf["id_abs"], mesh_gdf["id_gis"]))
+                resolved_cell_gis_ids = [
+                    abs_to_gis[cid] for cid in resolved_cell_ids
                 ]
             elif request.weighted and request.target_unit in _VOLUMETRIC_UNITS:
                 triples = cells_in_polygon_weighted(
@@ -477,6 +490,14 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 "target_unit": request.target_unit,
                 "weighted": bool(request.weighted),
                 "cell_ids": list(resolved_cell_ids),
+                # User-facing GIS ids, row-aligned with cell_ids. Populated only
+                # on the HYD reaches branch (None otherwise); L1 uses it to
+                # relabel the emitted cell_id from ID_ABS to ID_GIS (design D4).
+                "cell_gis_ids": (
+                    list(resolved_cell_gis_ids)
+                    if resolved_cell_gis_ids is not None
+                    else None
+                ),
             }
             return ValuesResponse(
                 data=subset_data,
