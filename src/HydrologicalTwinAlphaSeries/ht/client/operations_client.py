@@ -839,12 +839,19 @@ def run_mask_internal_values(
         # WATBAL keeps the single-layer path → byte-identical (design D2).
         resolution = "outcropping" if comp == "AQ" else "reaches" if comp == "HYD" else "single_layer"
         # Area-fraction weighting only has a physical meaning on volumetric
-        # data; a length unit (Water Height in m/cm) can never be weighted, and
-        # the reaches path computes its own length-fraction weights internally
-        # regardless of this flag. Force the per-spec weighting off for length
-        # units so a single dialog-wide "weighted" tick does not push m/cm into
-        # the volumetric guard in dispatch.
-        spec_weighted = weighted and unit not in _LENGTH_UNITS
+        # data; a length unit (Water Height in m/cm) can never be weighted.
+        # Force the per-spec weighting off for length units so a single
+        # dialog-wide "weighted" tick does not push m/cm into the volumetric
+        # guard in dispatch. HYD reaches are UNWEIGHTED by design (each reach
+        # contributes its raw value, no length-fraction scaling), so force it
+        # off there too — this keeps _build_cells_gdf on the unweighted reaches
+        # branch (no weight column) and matches dispatch, which also drops the
+        # weights for reaches.
+        spec_weighted = (
+            weighted
+            and unit not in _LENGTH_UNITS
+            and resolution != "reaches"
+        )
         response = twin.mask(
             kind="area_values",
             id_compartment=comp_id,
@@ -1045,24 +1052,20 @@ def _build_cells_gdf(
         return gpd.GeoDataFrame(df, geometry=list(clipped), crs=mesh_gdf.crs)
 
     if resolution == "reaches":
-        # HYD reaches (unweighted): the dispatcher already selected the
-        # internal + boundary reaches and produced row-aligned weights and
-        # boundary-clipped geometries. Reuse them directly so the cells gdf
-        # matches the area-values rows (the centroid ``polygon_cells`` fallback
-        # below would re-select a different set and break alignment).
+        # HYD reaches (unweighted by design): the dispatcher already selected the
+        # internal + boundary reaches and produced row-aligned boundary-clipped
+        # geometries. Reuse them directly so the cells gdf matches the area-values
+        # rows (the centroid ``polygon_cells`` fallback below would re-select a
+        # different set and break alignment). Reaches carry NO length-fraction
+        # weight, so ``response.weights`` is None here and no ``weight`` column is
+        # emitted — each reach contributes its raw value.
         meta_cell_ids = list((response.meta or {}).get("cell_ids", []))
-        weights = response.weights if response.weights is not None else []
         clipped = (
             response.clipped_geometries
             if response.clipped_geometries is not None
             else []
         )
-        df = pd.DataFrame(
-            {
-                "cell_id": meta_cell_ids,
-                "weight": list(weights),
-            }
-        )
+        df = pd.DataFrame({"cell_id": meta_cell_ids})
         return gpd.GeoDataFrame(df, geometry=list(clipped), crs=mesh_gdf.crs)
 
     if resolution == "outcropping":

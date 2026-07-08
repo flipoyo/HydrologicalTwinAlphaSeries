@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, OPPOSITE_FACE, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, _VOLUMETRIC_UNIT_FACTORS, module_caw, _PARAM_NON_VOLUMETRIC_UNITS
+from HydrologicalTwinAlphaSeries.config.constants import AQ_FACE_DIRECTIONS, OPPOSITE_FACE, _LENGTH_UNITS, _LENGTH_UNIT_FACTORS, _VOLUMETRIC_UNITS, _VOLUMETRIC_UNIT_FACTORS, module_caw, reversed_module_caw, _PARAM_NON_VOLUMETRIC_UNITS
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
     cells_boundary_faces,
     cells_in_polygon,
@@ -58,7 +58,7 @@ from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
 )
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import reproject_polygon_to_match
-from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf
+from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values, _resolve_cell_id_col, _resolve_mesh_gdf, _resolve_hyd_mesh_gdf
 
 from .api_types import (
     AssembleRequest,
@@ -87,7 +87,6 @@ from .api_types import (
 
 if TYPE_CHECKING:
     from .hydrological_twin_developer import HydrologicalTwin  # noqa: F401
-
 
 
 def fetch(twin: "HydrologicalTwin", request: FetchRequest) -> Any:
@@ -374,9 +373,20 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             if request.resolution == "outcropping":
                 mesh_gdf = twin._build_outcropping_mesh_gdf(request.id_compartment)
                 id_col = "id_abs"
-            # Resolution selector for HYD internal values has to follow thereaches mesh 
+            # HYD (reaches): the raw GIS gdf carries untranslated GIS ids, but the
+            # downstream ``resolved_cell_ids - 1`` matrix lookup needs absolute
+            # CaWaQS ids. Build the mesh from Cell objects so its id column is the
+            # already-translated ``id_abs`` (mapped once via HYD_corresp_file.txt at
+            # mesh-build time — no corresp re-read here).
+            elif request.id_compartment == reversed_module_caw["HYD"]:
+                mesh_gdf = _resolve_hyd_mesh_gdf(
+                    twin, request.id_compartment, request.id_layer
+                )
+                id_col = "id_abs"
+            # WATBAL / other: layer-0 ``id == id_abs`` already, so the raw gdf +
+            # configured id column is correct as-is.
             else:
-                mesh_gdf = _resolve_mesh_gdf(twin,request.id_compartment, request.id_layer)
+                mesh_gdf = _resolve_mesh_gdf(twin, request.id_compartment, request.id_layer)
                 id_col = _resolve_cell_id_col(twin, request.id_compartment)
             request.polygon = reproject_polygon_to_match(
                 request.polygon,
@@ -385,18 +395,18 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
                 context="mask(kind='area_values')",
             )
             if request.resolution == "reaches":
-                # HYD reaches: select internal + boundary-crossing reaches. Call
-                # the characterisation once, then materialise ids / weights /
-                # clipped geometries in the SAME order so the three stay
-                # row-aligned for the downstream cells-gdf assembly.
+                # HYD reaches are UNWEIGHTED by design: each selected reach
+                # contributes its RAW value with no length-fraction scaling. Force
+                # ``weighted`` off so the data-multiply gate below is skipped and
+                # meta/response report ``weighted=False`` consistently; ``weights``
+                # stays None (never built) so no weight column is emitted
+                # downstream. We still materialise the polygon-clipped inside
+                # geometry, row-aligned with the ids, for display.
+                request.weighted = False
                 reach_info = reaches_in_polygon_carachterisation(
                     mesh_gdf, request.polygon, id_col
                 )
                 resolved_cell_ids = reach_info["internal_and_boundary_ids"]
-                weights = np.asarray(
-                    [reach_info["weights"][cid] for cid in resolved_cell_ids],
-                    dtype=np.float64,
-                )
                 clipped_geoms = [
                     reach_info["clipped_geometries"][cid]
                     for cid in resolved_cell_ids
@@ -508,7 +518,7 @@ def mask(twin: "HydrologicalTwin", request: MaskRequest) -> Any:
             mesh_gdf.crs,
             context="mask(kind='polygon_cells')",
         )
-        id_col = _resolve_cell_id_col(twin,request.id_compartment)
+        id_col = _resolve_cell_id_col(twin, request.id_compartment)
         cell_ids = cells_in_polygon(mesh_gdf, request.polygon, id_col=id_col)
         return CellSelectionResponse(
             cell_ids=list(cell_ids),

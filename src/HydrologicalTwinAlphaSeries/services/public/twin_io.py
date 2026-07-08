@@ -85,6 +85,39 @@ def _resolve_mesh_gdf(
     layer_name = compartment.mesh.layers_gis_name[id_layer]
     return compartment.mesh.layer_gdfs[layer_name]
 
+
+def _resolve_hyd_mesh_gdf(
+    twin: "HydrologicalTwin", id_compartment: int, id_layer: int = 0
+) -> gpd.GeoDataFrame:
+    """Return the HYD layer mesh built from ``Cell`` objects, keyed on ``id_abs``.
+
+    Unlike ``_resolve_mesh_gdf`` (which returns the raw GIS GeoDataFrame whose
+    id column still carries the untranslated GIS id for HYD), this builds the
+    mesh from the compartment's ``Cell`` objects so the id column is the
+    absolute CaWaQS matrix id (``ID_ABS``). ``cell.id_abs`` was mapped from the
+    GIS id through ``HYD_corresp_file.txt`` once at mesh-build time
+    (``Mesh.buildLayer`` → ``Mesh._assign_global_ids``), so **no corresp file is
+    re-read here** — the translation is already paid.
+
+    The geometry is byte-identical to the raw gdf (both come from the same
+    ``row.geometry`` at build time), so containment / length-fraction weights
+    are unchanged. Mirrors ``handlers._build_outcropping_mesh_gdf`` (the AQ
+    outcropping equivalent) but for a single HYD layer. Used by ``mask()`` HYD
+    branches so polygon selection yields ``ID_ABS`` directly with
+    ``id_col="id_abs"``.
+    """
+    compartment = get_compartment(twin, id_compartment)
+    layer = compartment.mesh.mesh[id_layer]
+    return gpd.GeoDataFrame(
+        {
+            "id_abs": [cell.id_abs for cell in layer.layer],
+            "geometry": [cell.geometry for cell in layer.layer],
+        },
+        crs=layer.crs,
+        geometry="geometry",
+    )
+
+
 def _resolve_cell_id_col(twin: "HydrologicalTwin", id_compartment: int) -> Union[str, int]:
     """Return the cell-id column (name or integer position) configured for a compartment.
 
