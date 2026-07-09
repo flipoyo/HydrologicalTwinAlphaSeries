@@ -1,3 +1,17 @@
+"""Backend-owned domain and CaWaQS-binary-format constants.
+
+Ownership rule: this file owns facts about *what CaWaQS is* —
+the binary record layouts, the compartment/module taxonomy, the observation
+schema, physical units. UI-only constants (Qt widget names, display labels,
+file-dialog defaults, form field types) belong to the QGIS layer in
+``cawaqsviz/paramaters.py`` and must never be mirrored here.
+
+Test before adding a constant: "would this still be meaningful if this module
+ran on another machine, with no QGIS?" If no, it belongs in the frontend.
+
+This module must remain importable without QGIS or PyQt5.
+"""
+
 module_caw = {
     1: "AQ",
     2: "HYD",
@@ -18,20 +32,6 @@ out_caw_folder = {
 
 out_caw_folder_by_name = {
     module_caw[k]: v for k, v in out_caw_folder.items()
-}
-
-ids_mesh = {
-    1: [1],
-    2: [2],
-    3: [3],
-    4: [4],
-}
-
-mesh_to_compartment = {
-    1: 1,
-    2: 2,
-    3: 3,
-    4: 4,
 }
 
 obs_types = {
@@ -69,17 +69,12 @@ paramRecs = {
         "inf",
         "etr",
         "direct_sout",
-        "stockruiss",
         "stocksoil",
         "stockinf",
+        "stockruiss",
         "error",
     ],
     "HYD_Q": ["discharge"],
-    # HYD_H holds nbRecs=2 records; the param's index in this list is its
-    # record index in the binary (cf. temporal.decode_and_cache, enumerate).
-    # Record 0 = "water_height", record 1 = "water_level"; both are lengths in
-    # metres, so the length conversion path treats either as a raw m pass-through.
-    # The DialogMask Water Height checkbox wires record 0 ("water_height").
     "HYD_H": ["water_height", "water_level"],
     "AQ_H": ["piezhead"],
     "AQ_MB": [
