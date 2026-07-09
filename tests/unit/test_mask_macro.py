@@ -57,7 +57,7 @@ def test_mask_rejects_unexpected_kwargs_alongside_request():
 
 
 # ---------------------------------------------------------------------------
-# S1 — kind="area_values" wraps extract_area()
+# S1 — kind="area_values" requires a target_unit
 # ---------------------------------------------------------------------------
 
 
@@ -74,27 +74,13 @@ def _area_values_kwargs(**overrides):
     return base
 
 
-def test_mask_area_values_with_cell_ids_delegates_to_extract_area(monkeypatch):
+def test_mask_area_values_with_cell_ids_without_unit_raises(monkeypatch):
+    # The no-target_unit path (formerly delegating to the now-deleted
+    # extract_area) is gone: area_values now requires a unit token.
     twin = _twin_in_loaded_state()
-    captured = {}
-    expected_response = ValuesResponse(data=np.zeros((3, 365)), dates=np.arange(365))
 
-    def fake_extract_area(**kwargs):
-        captured.update(kwargs)
-        return expected_response
-
-    monkeypatch.setattr(twin, "extract_area", fake_extract_area)
-
-    response = twin.mask(**_area_values_kwargs(cell_ids=[1, 2, 3]))
-
-    assert response is expected_response
-    assert captured["id_compartment"] == 1
-    assert captured["outtype"] == "MB"
-    assert captured["param"] == "rain"
-    assert captured["syear"] == 2000
-    assert captured["eyear"] == 2001
-    assert captured["id_layer"] == 0
-    np.testing.assert_array_equal(captured["cell_ids"], np.array([1, 2, 3]))
+    with pytest.raises(ValueError, match="requires a non-None 'target_unit'"):
+        twin.mask(**_area_values_kwargs(cell_ids=[1, 2, 3]))
 
 
 def test_mask_area_values_with_both_cell_ids_and_polygon_raises():
@@ -214,23 +200,15 @@ def test_mask_polygon_cells_no_polygon_crs_skips_validation(monkeypatch):
     assert isinstance(response, CellSelectionResponse)
 
 
-def test_mask_area_values_with_polygon_resolves_cells_then_delegates(monkeypatch):
+def test_mask_area_values_with_polygon_without_unit_raises(monkeypatch):
+    # Cells resolve from the polygon, but with no target_unit the dispatcher
+    # falls through to the ValueError (the former extract_area arm is deleted).
     mesh = _grid_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 1,2,4,5
-    captured = {}
-    expected_response = ValuesResponse(data=np.zeros((4, 365)), dates=np.arange(365))
 
-    def fake_extract_area(**kwargs):
-        captured.update(kwargs)
-        return expected_response
-
-    monkeypatch.setattr(twin, "extract_area", fake_extract_area)
-
-    response = twin.mask(**_area_values_kwargs(polygon=polygon))
-
-    assert response is expected_response
-    np.testing.assert_array_equal(sorted(captured["cell_ids"].tolist()), [1, 2, 4, 5])
+    with pytest.raises(ValueError, match="requires a non-None 'target_unit'"):
+        twin.mask(**_area_values_kwargs(polygon=polygon))
 
 
 def test_mask_area_values_with_polygon_crs_mismatch_reprojects(monkeypatch):
@@ -263,7 +241,7 @@ def _make_full_mesh_values_response(n_cells: int, n_timesteps: int = 4) -> Value
 
 
 def test_mask_area_values_target_unit_routes_through_read_watbal_converted(monkeypatch):
-    """target_unit set: dispatcher must call read_watbal_converted (not extract_area)."""
+    """target_unit set: dispatcher routes through read_watbal_converted."""
     mesh = _grid_mesh()  # 9 cells, ids 1..9
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     captured = {}
@@ -273,11 +251,6 @@ def test_mask_area_values_target_unit_routes_through_read_watbal_converted(monke
         return _make_full_mesh_values_response(n_cells=9)
 
     monkeypatch.setattr(twin, "read_watbal_converted", fake_read_watbal_converted)
-
-    def fail_extract_area(**_kw):
-        raise AssertionError("extract_area must not be called when target_unit is set")
-
-    monkeypatch.setattr(twin, "extract_area", fail_extract_area)
 
     polygon = box(0.1, 0.1, 1.9, 1.9)  # cells 1, 2, 4, 5 (positions 0,1,3,4)
 
@@ -347,11 +320,14 @@ def test_mask_area_values_unweighted_leaves_response_fields_none(monkeypatch):
     """weighted=False (default): weights + clipped_geometries are None even on the polygon path."""
     mesh = _grid_mesh()
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
-    expected = ValuesResponse(data=np.zeros((4, 5)), dates=np.arange(5))
-    monkeypatch.setattr(twin, "extract_area", lambda **_kw: expected)
+    monkeypatch.setattr(
+        twin,
+        "read_watbal_converted",
+        lambda **_kw: _make_full_mesh_values_response(n_cells=9),
+    )
 
     polygon = box(0.1, 0.1, 1.9, 1.9)
-    response = twin.mask(**_area_values_kwargs(polygon=polygon))
+    response = twin.mask(**_area_values_kwargs(polygon=polygon, target_unit="m3/j"))
 
     assert response.weights is None
     assert response.clipped_geometries is None

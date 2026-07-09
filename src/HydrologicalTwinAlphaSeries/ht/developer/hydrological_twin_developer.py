@@ -1094,30 +1094,6 @@ class HydrologicalTwin:
         from ...services.public import twin_io
         return twin_io.has_observations(self, id_compartment)
 
-    def extract_area(
-        self,
-        id_compartment: int,
-        outtype: str,
-        param: str,
-        syear: int,
-        eyear: int,
-        cell_ids: Optional[np.ndarray] = None,
-        spatial_operator: Optional[str] = None,
-        id_layer: int = 0,
-        cutsdate: Optional[str] = None,
-        cutedate: Optional[str] = None,
-        output_csv_path: Optional[Union[str, Path]] = None,
-        **operator_kwargs: Any,
-    ) -> ValuesResponse:
-        """Extract simulated values for specific cells (area subset)."""
-        from . import handlers
-        return handlers.extract_area(
-            self, id_compartment, outtype, param, syear, eyear,
-            cell_ids=cell_ids, spatial_operator=spatial_operator,
-            id_layer=id_layer, cutsdate=cutsdate, cutedate=cutedate,
-            output_csv_path=output_csv_path, **operator_kwargs,
-        )
-
     def apply_temporal_operator(
         self,
         arr: np.ndarray,

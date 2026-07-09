@@ -15,9 +15,6 @@ class Config(FactoryClass):
         with open(jsonPath, "w", encoding="utf-8") as json_file:
             json.dump(self.a_dict, json_file, ensure_ascii=False, indent=4)
 
-    def reverseDict(self, dict_to_reverse: dict):
-        return {value: key for key, value in dict_to_reverse.items()}
-
 
 class ConfigGeometry(Config):
     def __init__(self, a_dict: dict):
