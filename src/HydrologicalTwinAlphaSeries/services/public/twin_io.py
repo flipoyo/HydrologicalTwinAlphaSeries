@@ -12,7 +12,8 @@ it imports *nothing* from the L1 client or L2 developer layers.
 What belongs here
 -----------------
 - ``get_compartment``, ``list_compartments``, ``get_compartment_info``
-- ``get_layer_info``, ``get_all_layers``, ``get_observation_info``
+- ``get_layer_info``, ``get_all_layers``, ``get_observation_info``,
+  ``get_extraction_info``
 - ``read_values``, ``read_observations``, ``read_sim_steady``, ``read_obs_steady``
 - ``read_watbal_converted`` (hybrid read+convert kept with the readers)
 - ``has_observations``
@@ -54,6 +55,7 @@ from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Operator
 from .io_types import (
     CompartmentInfo,
+    ExtractionInfo,
     LayerInfo,
     ObservationInfo,
     ObservationsResponse,
@@ -205,6 +207,32 @@ def get_observation_info(
         layer_ids=[p.id_layer for p in obs.obs_points],
         geometries=[p.geometry for p in obs.obs_points],
         mesh_ids=[p.id_mesh for p in obs.obs_points],
+        crs_mismatches=list(getattr(obs, "crs_mismatches", [])),
+    )
+
+
+def get_extraction_info(
+    twin: "HydrologicalTwin", id_compartment: int
+) -> Optional[ExtractionInfo]:
+    """Return a serializable snapshot of extraction metadata.
+
+    Returns None if the compartment has no extraction points.
+    """
+    comp = twin.get_compartment(id_compartment)
+    if comp.extraction is None:
+        return None
+    ext = comp.extraction
+    return ExtractionInfo(
+        id_compartment=id_compartment,
+        ext_type=ext.ext_type,
+        n_points=ext.n_ext_points,
+        layer_gis_name=ext.layer_name,
+        point_names=[p.name for p in ext.ext_point],
+        cell_ids=[p.id_cell for p in ext.ext_point],
+        layer_ids=[p.id_layer for p in ext.ext_point],
+        geometries=[p.geometry for p in ext.ext_point],
+        mesh_ids=[p.id_mesh for p in ext.ext_point],
+        crs_mismatches=list(getattr(ext, "crs_mismatches", [])),
     )
 
 

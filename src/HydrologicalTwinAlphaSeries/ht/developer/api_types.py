@@ -11,6 +11,7 @@ import numpy as np
 # here so existing L2 import sites keep referencing them from ``api_types``.
 from ...services.public.io_types import (
     CompartmentInfo,
+    ExtractionInfo,
     LayerInfo,
     ObservationInfo,
     ObservationsResponse,
@@ -416,6 +417,21 @@ class ObservationCatalog:
     point_ids: List[Any] = field(default_factory=list)
     layer_ids: List[int] = field(default_factory=list)
     geometries: List[Any] = field(default_factory=list)
+    # One (point_crs, mesh_layer_name, mesh_crs) tuple per disagreeing mesh layer.
+    crs_mismatches: List[Any] = field(default_factory=list)
+
+
+@dataclass
+class ExtractionCatalog:
+    layer_name: Optional[str]
+    n_points: int
+    point_name_column: Any = None
+    point_layer_column: Any = None
+    point_cell_column: Any = None
+    point_names: List[str] = field(default_factory=list)
+    layer_ids: List[int] = field(default_factory=list)
+    geometries: List[Any] = field(default_factory=list)
+    crs_mismatches: List[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -430,6 +446,7 @@ class CompartmentCatalog:
     hyd_corresp_missing: bool = False
     layers: List[LayerCatalog] = field(default_factory=list)
     observations: Optional[ObservationCatalog] = None
+    extractions: Optional[ExtractionCatalog] = None
     output_parameters: Dict[str, List[str]] = field(default_factory=dict)
 
     @property
