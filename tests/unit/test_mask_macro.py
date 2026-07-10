@@ -213,19 +213,45 @@ def test_mask_area_values_with_polygon_without_unit_raises(monkeypatch):
 
 def test_mask_area_values_with_polygon_crs_mismatch_reprojects(monkeypatch):
     """A defined polygon_crs that differs from the mesh CRS is reprojected onto
-    the mesh rather than raising — the op proceeds to extract_area."""
+    the mesh rather than raising — the op proceeds to the values read."""
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+
     mesh = _grid_mesh(crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)
-    called = {"extract_area": False}
-    monkeypatch.setattr(
-        twin, "extract_area", lambda **_kw: called.__setitem__("extract_area", True)
-    )
+
+    # Spy on the reprojection so we can assert the geometric test ran against
+    # the mesh CRS, not the raw degrees the caller passed in.
+    reprojected = {}
+    real_reproject = _dispatch.reproject_polygon_to_match
+
+    def spy_reproject(poly, poly_crs, mesh_crs, **kw):
+        out = real_reproject(poly, poly_crs, mesh_crs, **kw)
+        reprojected["bounds"] = out.bounds
+        return out
+
+    monkeypatch.setattr(_dispatch, "reproject_polygon_to_match", spy_reproject)
+
+    called = {"read_watbal_converted": False}
+
+    def fake_read_watbal_converted(**_kw):
+        called["read_watbal_converted"] = True
+        return _make_full_mesh_values_response(n_cells=9)
+
+    monkeypatch.setattr(twin, "read_watbal_converted", fake_read_watbal_converted)
 
     # No CRSMismatchError: the polygon is reprojected onto the mesh CRS first.
-    twin.mask(**_area_values_kwargs(polygon=polygon, polygon_crs="EPSG:4326"))
+    response = twin.mask(
+        **_area_values_kwargs(
+            polygon=polygon, polygon_crs="EPSG:4326", target_unit="m3/j"
+        )
+    )
 
-    assert called["extract_area"] is True
+    assert called["read_watbal_converted"] is True
+    assert isinstance(response, ValuesResponse)
+    # EPSG:4326 degrees near the origin land ~11 km out in EPSG:3857 metres —
+    # proof the mesh-CRS geometry, not the raw lon/lat box, drove the selection.
+    assert reprojected["bounds"][0] > 1_000
 
 
 # ---------------------------------------------------------------------------
