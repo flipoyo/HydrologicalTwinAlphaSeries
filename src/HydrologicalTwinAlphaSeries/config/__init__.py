@@ -1,6 +1,5 @@
 from HydrologicalTwinAlphaSeries.config.constants import (
     link_obs_mesh,
-    mesh_to_compartment,
     module_caw,
     nbRecs,
     obs_config,
@@ -18,7 +17,6 @@ __all__ = [
     "ConfigProject",
     "FactoryClass",
     "link_obs_mesh",
-    "mesh_to_compartment",
     "module_caw",
     "nbRecs",
     "obs_config",
