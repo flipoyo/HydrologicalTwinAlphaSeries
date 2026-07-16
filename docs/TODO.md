@@ -14,11 +14,12 @@ These were captured (not done) by the structural-relocation change that moved
 `accessors.py` → `services/public/twin_io.py` and renamed the L1/L2 entry
 modules. They complete the move toward the clean single L2→L3 arrow.
 
-- **Fold `handlers.py` and `dispatch.py` into the L2 micro-verbs.** They are
+- **Fold `handlers.py` into the L2 micro-verbs or L3 elementaries evaluating by case to case.** They are
   currently *transitional L2-internal modules* sitting between the
   `hydrological_twin_developer.py` facade and L3. Folding their compute /
   routing bodies into the micro-verb methods removes the intermediate hop so L2
-  becomes a single layer that calls straight down into L3.
+  becomes a single layer that calls straight down into L3. dispatch instead will have exactly the same 
+  role that operations_client is having now: the code side of a facade. 
 - **Revisit moving the leaf data DTOs into an L3 `io_types.py`** — *done* for
   the 5 read DTOs (`ValuesResponse`, `ObservationsResponse`, `CompartmentInfo`,
   `LayerInfo`, `ObservationInfo`), which now live in
@@ -67,6 +68,35 @@ weight column — a services-layer op, no twin / no dispatch).
 - **Fix:** keep the `twin.*` selection inline in `run_mask_internal_values`;
   extract the pure geopandas assembly into `services/`.
 
+<<<<<<< HEAD
+
+
+### Create more L2 APIs to differentiate more; ex - rendering only for images, while the ouptucreation for others
+
+
+## TO DO - FASTER (pure clening /removal)
+- remove ht/persistence -> remove the hydrotwin class depending from that one
+- remove all the passage throught the hydrological_twin_developer of the twin_io calls
+- AT LEAST the read values has to be clean: ideal structure is:
+HT_DEV : 
+  if fetch.simulation matrix  
+    call: temporal.load_from_cache 
+    call:: temporal.temporal_mask - NEW METHOD produced as a result of the final part ofread_values (twin_io)
+
+
+## Twin_io analysis 
+- read_values can be replaced
+- read_observation can be deleted and completely replaced by a 
+
+
+## Proposals
+- **`assemble` micro-verb (semantic-artefact, no I/O).** Counterpart to `export`:
+  where `export(kind=<format>)` serializes data to disk, `assemble(kind=<artefact>)`
+  builds the exportable object (DataFrame / table) and **returns** it, writing nothing
+  (server-tomorrow seam). First home for `assemble_daily_sim_obs_table`, then the
+  criteria report and budget/boundary tables — the content-shaped writers `export`
+  intentionally leaves out.
+=======
 ### 6. Dead code — unused functions (mostly DONE)
 Functions with **no reference** in `src/`, `tests/`, the notebooks, or the CWV
 frontend (verified by whole-word sweep + `getattr` check).
@@ -115,3 +145,4 @@ structure routes **all** `read_values` through the `fetch` verb, orchestrated at
   L2 handlers take the already-fetched matrix as an argument.
 - This is the structural half formerly noted under #6; it is the single home for
   the "read_values from L1" idea (also referenced by #7's DTO-seam point).
+>>>>>>> 388d82e

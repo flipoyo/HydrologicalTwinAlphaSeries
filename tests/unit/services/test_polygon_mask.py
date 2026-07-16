@@ -4,11 +4,15 @@ import time
 
 import geopandas as gpd
 import pytest
+import shapely
+from shapely.affinity import rotate
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, box
 
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
-    aq_cells_boundary_faces,
-    aq_cells_on_polygon_boundary,
+    _FACE_BUFFER_EPS,
+    _FACE_LENGTH_FRAC,
+    _mesh_face_floor,
+    cells_boundary_faces,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
@@ -404,127 +408,6 @@ def test_reaches_on_polygon_boundary_id_col_as_integer_position():
 
 
 # ---------------------------------------------------------------------------
-# aq_cells_on_polygon_boundary — inside↔outside topological boundary (S6)
-# ---------------------------------------------------------------------------
-
-
-def test_aq_cells_on_polygon_boundary_inside_cell_with_one_outside_neighbor():
-    """3x1 strip; polygon covers only the middle cell — its two outside neighbours give 2 boundary edges."""
-    mesh = _grid_mesh(nx=3, ny=1)  # cells: 0 left, 1 middle, 2 right
-    polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only cell 1's centroid (1.5, 0.5)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Cell 1 is the only inside cell; both its neighbours (0, 2) are outside,
-    # so it contributes 2 boundary edges (its left and right shared edges).
-    assert sorted(cell_ids) == [1, 1]
-    assert len(edges) == 2
-    for edge in edges:
-        assert edge.geom_type == "LineString"
-
-
-def test_aq_cells_on_polygon_boundary_inside_cell_with_all_inside_neighbors():
-    """3x3 mesh; polygon covers all cells → centre cell (4) has all-inside neighbours → no entry for it."""
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(0.0, 0.0, 3.0, 3.0)  # covers all 9 cells
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # All cells inside → no inside↔outside adjacency anywhere → empty result.
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_polygon_disjoint_from_mesh():
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(100.0, 100.0, 200.0, 200.0)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_excludes_corner_only_adjacency():
-    """3x3 mesh; polygon covers cells 0,1,3,4 (lower-left 2x2 block).
-
-    Boundary cells: 0,1,3,4. Each has some outside neighbours.
-    Corner-only adjacency (e.g. cell 4 corner-touches cell 8 at (2,2))
-    must NOT be counted — only edge-sharing neighbours produce LineString
-    intersections.
-    """
-    mesh = _grid_mesh(nx=3, ny=3)
-    polygon = box(0.0, 0.0, 2.0, 2.0)  # cells 0,1,3,4 inside
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Edge-sharing outside neighbours per inside cell on this 3x3 mesh:
-    #   0 → no outside edge-neighbour (1 and 3 are both inside)
-    #   1 → 2 (right outside neighbour)         → 1 edge
-    #   3 → 6 (top outside neighbour, j=2)      → 1 edge
-    #   4 → 5 (right) and 7 (top)               → 2 edges
-    # Corner-only contacts (e.g. 4↔8, 1↔5, 3↔7) are NOT counted.
-    assert sorted(cell_ids) == [1, 3, 4, 4]
-    assert len(edges) == 4
-    assert all(edge.geom_type == "LineString" for edge in edges)
-
-
-def test_aq_cells_on_polygon_boundary_hole_induced_boundary():
-    """Cell whose centroid falls inside a hole counts as outside, contributing edges."""
-    mesh = _grid_mesh(nx=3, ny=3)
-    # Outer covers all 9 cells; hole punches out the centre cell (id 4)
-    outer = [(0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (0.0, 3.0), (0.0, 0.0)]
-    hole = [(1.1, 1.1), (1.9, 1.1), (1.9, 1.9), (1.1, 1.9), (1.1, 1.1)]
-    polygon = Polygon(outer, holes=[hole])
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    # Cell 4 is now "outside" (centroid inside the hole).
-    # Its 4 edge-neighbours (1, 3, 5, 7) are still inside, each contributes
-    # one boundary edge → 4 entries.
-    assert sorted(cell_ids) == [1, 3, 5, 7]
-    assert len(edges) == 4
-    assert all(edge.geom_type == "LineString" for edge in edges)
-
-
-def test_aq_cells_on_polygon_boundary_multipolygon_each_component_contributes():
-    """Two disjoint polygons over a 5x1 mesh each select one cell; both contribute boundary edges."""
-    mesh = _grid_mesh(nx=5, ny=1)
-    multi = MultiPolygon(
-        [
-            box(0.1, 0.1, 0.9, 0.9),  # only cell 0 inside
-            box(4.1, 0.1, 4.9, 0.9),  # only cell 4 inside
-        ]
-    )
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, multi, id_col="cell_id")
-
-    # Cell 0 → outside neighbour 1 → 1 edge; cell 4 → outside neighbour 3 → 1 edge.
-    assert sorted(cell_ids) == [0, 4]
-    assert len(edges) == 2
-
-
-def test_aq_cells_on_polygon_boundary_empty_mesh():
-    mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
-    polygon = box(0.0, 0.0, 1.0, 1.0)
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col="cell_id")
-
-    assert cell_ids == []
-    assert edges == []
-
-
-def test_aq_cells_on_polygon_boundary_id_col_as_integer_position():
-    mesh = _grid_mesh(nx=3, ny=1)
-    polygon = box(1.1, 0.1, 1.9, 0.9)  # only middle cell inside
-
-    cell_ids, edges = aq_cells_on_polygon_boundary(mesh, polygon, id_col=0)
-
-    assert sorted(cell_ids) == [1, 1]
-    assert len(edges) == 2
-
-
-# ---------------------------------------------------------------------------
 # reaches_in_polygon_carachterisation — directional classification
 # ---------------------------------------------------------------------------
 
@@ -597,19 +480,19 @@ def test_reaches_on_polygon_boundary_now_delegates_to_signs_helper():
 
 
 # ---------------------------------------------------------------------------
-# aq_cells_boundary_faces — per-cell direction labels
+# cells_boundary_faces — per-cell direction labels + merged edge geometry
 # ---------------------------------------------------------------------------
 
 
-def test_aq_cells_boundary_faces_single_inside_cell_four_directions():
+def test_cells_boundary_faces_single_inside_cell_four_directions():
     """Cross of 5 cells: centre is the only inside cell, 4 outside neighbours,
     one per cardinal direction. Each contributes one face on the centre cell.
     """
     cells = {
         0: box(4.0, 4.0, 6.0, 6.0),  # centre, inside polygon
         1: box(4.0, 6.0, 6.0, 8.0),  # north neighbour (dy>0 → "north")
-        2: box(2.0, 4.0, 4.0, 6.0),  # west neighbour  (dx<0 → "east")
-        3: box(6.0, 4.0, 8.0, 6.0),  # east neighbour  (dx>0 → "west")
+        2: box(2.0, 4.0, 4.0, 6.0),  # west neighbour  (dx<0 → "west")
+        3: box(6.0, 4.0, 8.0, 6.0),  # east neighbour  (dx>0 → "east")
         4: box(4.0, 2.0, 6.0, 4.0),  # south neighbour (dy<0 → "south")
     }
     mesh = gpd.GeoDataFrame(
@@ -619,17 +502,18 @@ def test_aq_cells_boundary_faces_single_inside_cell_four_directions():
     )
     polygon = box(3.5, 3.5, 6.5, 6.5)  # contains only centre cell's centroid (5,5)
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert result["interior_ids"] == [0]
-    assert result["boundary_ids"] == [0]
-    assert sorted(result["boundary_faces"][0]) == ["east", "north", "south", "west"]
-    assert set(result["edges_by_face"][0].keys()) == {"north", "east", "west", "south"}
-    for edge in result["edges_by_face"][0].values():
-        assert edge.geom_type in ("LineString", "MultiLineString")
+    assert sorted(boundary_faces[0]) == ["east", "north", "south", "west"]
+    # One merged geometry per cell; the 4 faces of the centre cell collapse to
+    # a single (multi-part) edge geometry.
+    assert set(edge_geometries.keys()) == {0}
+    assert edge_geometries[0].geom_type in ("LineString", "MultiLineString")
+    # The two dicts share keys so callers can align them 1:1.
+    assert boundary_faces.keys() == edge_geometries.keys()
 
 
-def test_aq_cells_boundary_faces_excludes_corner_only_neighbours():
+def test_cells_boundary_faces_excludes_corner_only_neighbours():
     """3x3 grid; polygon covers cell 4 only. Diagonal neighbours touch only
     at a point — must NOT be counted as boundary faces."""
     cells = []
@@ -641,13 +525,13 @@ def test_aq_cells_boundary_faces_excludes_corner_only_neighbours():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(1.1, 1.1, 1.9, 1.9)  # only cell 4 (centre) inside
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, _, _ = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
     # 4 edge-sharing neighbours; 4 corner-only excluded.
-    assert sorted(result["boundary_faces"][4]) == ["east", "north", "south", "west"]
+    assert sorted(boundary_faces[4]) == ["east", "north", "south", "west"]
 
 
-def test_aq_cells_boundary_faces_all_inside_no_boundary():
+def test_cells_boundary_faces_all_inside_no_boundary():
     cells = []
     ids = []
     for j in range(3):
@@ -657,22 +541,318 @@ def test_aq_cells_boundary_faces_all_inside_no_boundary():
     mesh = gpd.GeoDataFrame({"cell_id": ids}, geometry=cells, crs="EPSG:3857")
     polygon = box(0.0, 0.0, 3.0, 3.0)  # covers everything
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert sorted(result["interior_ids"]) == ids
-    assert result["boundary_ids"] == []
-    assert result["boundary_faces"] == {}
+    # All cells inside → no inside↔outside adjacency → empty result.
+    assert boundary_faces == {}
+    assert edge_geometries == {}
 
 
-def test_aq_cells_boundary_faces_empty_mesh():
+def test_cells_boundary_faces_empty_mesh():
     mesh = gpd.GeoDataFrame({"cell_id": []}, geometry=[], crs="EPSG:3857")
     polygon = box(0.0, 0.0, 1.0, 1.0)
 
-    result = aq_cells_boundary_faces(mesh, polygon, id_col="cell_id")
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(mesh, polygon, id_col="cell_id")
 
-    assert result == {
-        "interior_ids":   [],
-        "boundary_ids":   [],
-        "boundary_faces": {},
-        "edges_by_face":  {},
+    assert boundary_faces == {}
+    assert edge_geometries == {}
+
+
+# ---------------------------------------------------------------------------
+# cells_boundary_faces — refined (quadtree) grids: T-junction merge + dedup
+# (fix-aq-boundary-refined-grid)
+# ---------------------------------------------------------------------------
+
+
+# Buffer-overlap recovery introduces a constant ~2·ε = 0.1 m of vertex fuzz at
+# each face (the ε-buffer over-capture the design accepts as sub-metre). On the
+# tiny unit-square fixtures the predecessor used this is 5 % of a side, so these
+# fixtures are scaled to a realistic cell size where 0.1 m is genuinely
+# sub-metre, and lengths are asserted to sub-metre tolerance — NOT byte-tight —
+# per the spec's "sub-metre length agreement, not byte-identity" contract.
+_CELL = 2000.0  # realistic AQ cell side (m); keeps the ε-fuzz proportionally tiny
+_SUBMETRE = 1.0  # length-agreement tolerance (m): absorbs the constant 2·ε fuzz
+
+
+def _refined_t_junction_mesh(side: float = _CELL) -> gpd.GeoDataFrame:
+    """One standard cell (id 0) whose WEST side abuts three 1/3-height cells.
+
+    Big inside cell occupies x∈[side, 2·side], y∈[0, side]. Three smaller outside
+    cells each span the full west edge x∈[0, side] in thirds of the height — the
+    canonical refinement T-junction: one side of the big cell shared with three
+    neighbours. ``side`` is parametrised so the same fixture drives both the
+    coarse (~2000 m) and fine (~100 m) two-scale-floor tests.
+    """
+    cells = {
+        0: box(side, 0.0, 2.0 * side, side),
+        1: box(0.0, 0.0, side, side / 3.0),
+        2: box(0.0, side / 3.0, side, 2.0 * side / 3.0),
+        3: box(0.0, 2.0 * side / 3.0, side, side),
     }
+    return gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+
+
+def test_cells_boundary_faces_refined_t_junction_single_continuous_line():
+    """Refined T-junction: the shared side is one continuous LineString, no gap,
+    no dropped sub-edge, and the direction appears exactly once (not thrice)."""
+    mesh = _refined_t_junction_mesh()
+    # Polygon contains only the big cell's centroid; the three small cells
+    # (centroid x = side/2) are outside.
+    polygon = box(_CELL * 1.05, _CELL * 0.025, _CELL * 1.95, _CELL * 0.975)
+
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # The big cell faces its three west neighbours on one side → "west" once.
+    assert boundary_faces[0] == ["west"]
+    geom = edge_geometries[0]
+    # The three collinear sub-edges fuse into ONE continuous line spanning the
+    # full shared side (length ≈ side), not a gappy MultiLineString of 3 parts.
+    assert geom.geom_type == "LineString"
+    assert geom.length == pytest.approx(_CELL, abs=_SUBMETRE)
+    # No hairline gap: the merged line is connected end to end.
+    assert shapely.line_merge(geom).geom_type == "LineString"
+
+
+def test_cells_boundary_faces_refined_t_junction_source_is_ext_cell():
+    """Source map (aq-boundary-coarse-cell-flux): the coarse inside cell whose one
+    side abuts several smaller outside cells is EXT_cell (sign -1) on that side,
+    with ``outside_ids`` = every smaller outside neighbour on it."""
+    mesh = _refined_t_junction_mesh()
+    polygon = box(_CELL * 1.05, _CELL * 0.025, _CELL * 1.95, _CELL * 0.975)
+
+    boundary_faces, _edge_geometries, face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # The coarse inside cell 0 borders its three smaller outside neighbours on
+    # its "west" side (the direction the existing merge test asserts).
+    assert boundary_faces[0] == ["west"]
+    src = face_sources[0]["west"]
+    assert src["sign"] == -1
+    assert sorted(src["outside_ids"]) == [1, 2, 3]
+
+
+def test_cells_boundary_faces_fine_inside_source_is_int_cell():
+    """A SMALL inside cell against a LARGER outside neighbour is INT_cell (+1)
+    with empty ``outside_ids`` — its own face is the clean single-sub-face value.
+    (Reuse the T-junction mesh but mask a small cell instead of the coarse one.)"""
+    mesh = _refined_t_junction_mesh()
+    # Mask only the middle small cell (id 2, centroid at x=side/2, y=side/2). Its
+    # east neighbour is the coarse cell 0 (larger), so cell 2's east face is
+    # INT_cell — ties/coarser-neighbour keep the inside cell's own face.
+    polygon = box(
+        _CELL * 0.05, _CELL / 3.0 + _CELL * 0.02,
+        _CELL * 0.95, 2.0 * _CELL / 3.0 - _CELL * 0.02,
+    )
+
+    boundary_faces, _edge_geometries, face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    assert 2 in boundary_faces
+    # Every bordered face of the small inside cell is INT_cell with empty outside.
+    for direction, src in face_sources[2].items():
+        assert src["sign"] == 1, direction
+        assert src["outside_ids"] == [], direction
+
+
+def test_cells_boundary_faces_corner_cell_stays_multiline_per_side():
+    """A corner cell bordering two perpendicular sides yields a MultiLineString
+    with one line per side — the per-side merge must NOT chain perpendicular
+    edges into one L-shaped line just because they touch at the corner vertex."""
+    s = _CELL
+    cells = {
+        0: box(s, s, 2.0 * s, 2.0 * s),  # inside (centroid 1.5·s, 1.5·s)
+        1: box(0.0, s, s, 2.0 * s),  # west neighbour
+        2: box(s, 0.0, 2.0 * s, s),  # south neighbour
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(s * 1.05, s * 1.05, s * 1.95, s * 1.95)  # only centre centroid inside
+
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    assert sorted(boundary_faces[0]) == ["south", "west"]
+    geom = edge_geometries[0]
+    assert isinstance(geom, MultiLineString)
+    assert len(geom.geoms) == 2  # one line per bordered side, kept distinct
+    # Each side is one cell long; total ≈ 2·side with no fused L-corner.
+    assert geom.length == pytest.approx(2.0 * _CELL, abs=2.0 * _SUBMETRE)
+
+
+def test_cells_boundary_faces_uniform_grid_geometry_unchanged():
+    """Uniform-grid invariance (D4): after the fix the merged edge geometry is
+    *geometrically* identical to the pre-change behaviour (same covered linework
+    via shapely.equals, modulo vertex order / Multi-vs-Single container), and the
+    per-cell distinct directions are unchanged.
+
+    The pre-change behaviour for the centre cell of a 3x3 grid (4 outside
+    neighbours) is the union of its 4 unit sides — i.e. the cell's own boundary
+    ring. We assert the new output covers exactly that linework.
+    """
+    mesh = _grid_mesh(nx=3, ny=3)
+    polygon = box(1.1, 1.1, 1.9, 1.9)  # only centre cell (id 4) inside
+
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # Pre-change reference: the 4 shared sides = the centre cell's boundary ring.
+    expected = box(1, 1, 2, 2).boundary
+    geom = edge_geometries[4]
+    assert shapely.equals(geom, expected)
+    # Distinct cardinal directions unchanged (all four, each once).
+    assert sorted(boundary_faces[4]) == ["east", "north", "south", "west"]
+
+
+# ---------------------------------------------------------------------------
+# cells_boundary_faces — rotated / off-grid meshes (fix-aq-boundary-tjunction-faces)
+#
+# The buffer-overlap detector recovers shared faces on meshes that are NOT
+# exactly axis-aligned, where the small cell's shared-edge endpoints fall
+# mid-edge on the large cell so the old boundary∩boundary test dropped them.
+# ---------------------------------------------------------------------------
+
+
+def _rotate_mesh(mesh: gpd.GeoDataFrame, degrees: float) -> gpd.GeoDataFrame:
+    """Rotate every cell of a mesh about the origin by ``degrees`` (off-axis)."""
+    rotated = mesh.copy()
+    rotated["geometry"] = rotated.geometry.apply(
+        lambda g: rotate(g, degrees, origin=(0.0, 0.0), use_radians=False)
+    )
+    return rotated
+
+
+def test_cells_boundary_faces_rotated_t_junction_is_recovered():
+    """Rotated mesh T-junction: a big cell abutting three smaller same-side cells,
+    the whole mesh tilted ~0.5° off-axis (like the 3C Seine mesh). The small
+    cells' shared-edge endpoints fall mid-edge on the big cell — NOT on a shared
+    vertex — so the old boundary∩boundary test collapsed them to points and
+    dropped the face. The buffer-overlap detector must still recover it.
+
+    Guards `#### Scenario: Rotated mesh T-junction is recovered`.
+    """
+    mesh = _rotate_mesh(_refined_t_junction_mesh(), 0.5)
+    # The mask polygon is the (rotated) big cell's interior, so only its centroid
+    # is inside and the three small west cells are outside.
+    polygon = rotate(
+        box(_CELL * 1.05, _CELL * 0.025, _CELL * 1.95, _CELL * 0.975),
+        0.5,
+        origin=(0.0, 0.0),
+        use_radians=False,
+    )
+
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # The face is detected (not dropped) and a non-empty line is returned.
+    assert 0 in boundary_faces
+    assert boundary_faces[0] == ["west"]
+    geom = edge_geometries[0]
+    assert not geom.is_empty
+    assert geom.geom_type in ("LineString", "MultiLineString")
+    # The full shared run (≈ one cell side) is recovered — no sub-edge dropped.
+    assert geom.length == pytest.approx(_CELL, abs=2.0)
+
+
+def test_cells_boundary_faces_corner_only_touch_rejected_at_scale():
+    """Two diagonal cells sharing exactly one corner vertex (no edge segment)
+    yield NO boundary entry — the buffer-overlap nub is below the floor.
+
+    Guards `#### Scenario: Corner-only touch is rejected` at a realistic scale
+    where the nub (≈ 2ε) is far below the mesh-derived floor.
+    """
+    s = _CELL
+    cells = {
+        0: box(s, s, 2.0 * s, 2.0 * s),  # inside (centroid 1.5·s, 1.5·s)
+        1: box(0.0, 0.0, s, s),  # SW diagonal — touches only at corner (s, s)
+    }
+    mesh = gpd.GeoDataFrame(
+        {"cell_id": list(cells.keys())},
+        geometry=list(cells.values()),
+        crs="EPSG:3857",
+    )
+    polygon = box(s * 1.05, s * 1.05, s * 1.95, s * 1.95)  # only cell 0 inside
+
+    boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+        mesh, polygon, id_col="cell_id"
+    )
+
+    # No edge-sharing neighbour → cell 0 contributes no boundary face.
+    assert boundary_faces == {}
+    assert edge_geometries == {}
+
+
+def test_cells_boundary_faces_floor_uses_sqrt_area_not_bbox_on_rotated_mesh():
+    """The mesh-derived floor must use sqrt(cell_area) (rotation-invariant), NOT
+    the bounding-box extent (which a tilt inflates). On a 0.5°-rotated 2000 m
+    grid the true side is 2000 m but each cell's bbox spans > 2000 m; the floor
+    must reflect the true side.
+
+    Guards the `sqrt(area)` clause of `#### Scenario: Floor adapts to a fine mesh`.
+    """
+    s = _CELL
+    cells = [box(i * s, 0.0, (i + 1) * s, s) for i in range(3)]
+    mesh = _rotate_mesh(
+        gpd.GeoDataFrame({"cell_id": [0, 1, 2]}, geometry=cells, crs="EPSG:3857"),
+        0.5,
+    )
+
+    floor = _mesh_face_floor(mesh)
+
+    # floor = 0.10 * side; sqrt(area) recovers the true 2000 m side → floor ≈ 200.
+    assert floor == pytest.approx(_FACE_LENGTH_FRAC * s, abs=1.0)
+    # A bbox-based side would be inflated by the tilt; assert we are NOT using it.
+    bbox_widths = [g.bounds[2] - g.bounds[0] for g in mesh.geometry]
+    inflated_floor = _FACE_LENGTH_FRAC * min(bbox_widths)
+    assert inflated_floor > floor  # bbox inflates the side, so its floor is larger
+
+
+def test_cells_boundary_faces_floor_adapts_between_coarse_and_fine_meshes():
+    """The same fixtures at coarse (~2000 m) and fine (~100 m) cell sizes: the
+    derived floor scales with the mesh (short real faces kept on the fine mesh,
+    corner touch rejected on both). A single fixed constant tuned for the coarse
+    mesh would wrongly drop the fine mesh's short real faces or admit its nubs.
+
+    Guards `#### Scenario: Floor adapts to a fine mesh`.
+    """
+    coarse = _refined_t_junction_mesh(side=2000.0)
+    fine = _refined_t_junction_mesh(side=100.0)
+
+    floor_coarse = _mesh_face_floor(coarse)
+    floor_fine = _mesh_face_floor(fine)
+
+    # Floor tracks the mesh and is an order of magnitude apart between the two:
+    # it is 10% of the smallest cell's sqrt(area). The refinement fixture's
+    # smallest cells are 1/3-height, so sqrt(area) = side / sqrt(3).
+    expected_coarse = _FACE_LENGTH_FRAC * 2000.0 / (3.0 ** 0.5)
+    expected_fine = _FACE_LENGTH_FRAC * 100.0 / (3.0 ** 0.5)
+    assert floor_coarse == pytest.approx(expected_coarse, rel=1e-3)  # ≈ 115 m
+    assert floor_fine == pytest.approx(expected_fine, rel=1e-3)  # ≈ 5.8 m
+    assert floor_coarse > 10.0 * floor_fine  # scales an order of magnitude
+    # Both stay well above the corner-touch nub (≈ 2ε), so corners never pass —
+    # a single constant tuned for the coarse mesh could not satisfy both ends.
+    nub = 2.0 * _FACE_BUFFER_EPS
+    assert floor_fine > 10.0 * nub
+
+    # The fine mesh's short real faces (≈ 100 m, well above its ~6 m floor) are
+    # still kept — the same refinement T-junction is recovered at both scales.
+    for mesh, side in ((coarse, 2000.0), (fine, 100.0)):
+        polygon = box(side * 1.05, side * 0.025, side * 1.95, side * 0.975)
+        boundary_faces, edge_geometries, _face_sources = cells_boundary_faces(
+            mesh, polygon, id_col="cell_id"
+        )
+        assert boundary_faces[0] == ["west"]
+        assert edge_geometries[0].length == pytest.approx(side, abs=1.0)

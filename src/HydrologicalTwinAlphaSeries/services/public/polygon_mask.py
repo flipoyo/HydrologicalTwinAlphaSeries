@@ -19,6 +19,18 @@ import shapely
 from shapely.ops import unary_union
 
 
+def _as_linestrings(geom: Any) -> List[Any]:
+    """Flatten a ``LineString`` / ``MultiLineString`` into a list of LineStrings.
+
+    A per-side merged edge is normally a single ``LineString``; if a side could
+    not be fully fused it stays a ``MultiLineString`` and we keep each part, so
+    the cell's collected ``MultiLineString`` carries every sub-line.
+    """
+    if isinstance(geom, shapely.MultiLineString):
+        return list(geom.geoms)
+    return [geom]
+
+
 def _resolve_id_col(gdf: gpd.GeoDataFrame, id_col: Union[str, int]) -> str:
     """Resolve ``id_col`` (column name or integer position) to a column name."""
     if isinstance(id_col, int):
@@ -208,7 +220,6 @@ def reaches_in_polygon_carachterisation(
         "crossing_geometries": [],
         "crossing_ids":        [],
         "signs":               {},
-        "weights":             {},
         "clipped_geometries":  {},
         "internal_and_boundary_ids": [],
     }
@@ -224,7 +235,6 @@ def reaches_in_polygon_carachterisation(
     crossing_geometries: List[Any] = []
     crossing_ids: List[Any] = []
     signs: Dict[Any, int] = {}
-    weights: Dict[Any, float] = {}
     # Per-reach geometry clipped to the polygon — for a fully-internal reach
     # this is the whole reach; for a boundary reach it is the inside segment.
     # We always clip (nicer to display, and it is the same intersection used
@@ -247,10 +257,6 @@ def reaches_in_polygon_carachterisation(
         # (= inside length / total length), mirroring the area-fraction logic
         # in cells_in_polygon_weighted.
         inside_part = polygon.intersection(geom)
-        total_length = geom.length
-        weights[cell_id] = (
-            inside_part.length / total_length if total_length > 0 else 0.0
-        )
         clipped_geometries[cell_id] = inside_part
 
         if f_in and t_in:
@@ -277,105 +283,180 @@ def reaches_in_polygon_carachterisation(
         "crossing_geometries": crossing_geometries,
         "crossing_ids":        crossing_ids,
         "signs":               signs,
-        "weights":             weights,
         "clipped_geometries":  clipped_geometries,
         "internal_and_boundary_ids": internal_and_boundary_ids,
     }
 
 
-def aq_cells_on_polygon_boundary(
-    aq_mesh_gdf: gpd.GeoDataFrame,
-    polygon: Any,
-    id_col: Union[str, int],
-) -> tuple:
-    """Return AQ-mesh boundary edges separating inside-polygon cells from outside.
 
-    A boundary edge is a cell edge that connects a cell INSIDE the polygon to
-    a cell OUTSIDE the polygon (topological boundary of the masked AQ region —
-    NOT the geometric intersection with ``polygon.exterior``). "Inside" is
-    determined by centroid containment, same convention as
-    :func:`cells_in_polygon`; ``polygon.contains(centroid)`` treats interior
-    rings as outside, so cells in holes count as outside neighbours and
-    contribute boundary edges as expected.
+# --- Shared-face detection thresholds (see Decision 3/4 of the design) -------
+#
+# The two thresholds below live at *different scales on purpose*, because they
+# guard against two unrelated things:
+#
+#   * ``_FACE_BUFFER_EPS`` (the LOWER guard) is the buffer half-width used to
+#     grow each cell before intersecting. It only has to bridge the sub-metre
+#     geometric misalignment of a rotated / off-grid mesh, so it is a small
+#     fixed length set by *float/rotation drift* — NOT by cell size. A genuine
+#     shared edge of length ``L`` then overlaps in a thin ribbon of area
+#     ``≈ 2·ε·L``; a corner-only touch overlaps in a tiny ``≈ (2ε)²`` nub.
+#   * the minimum-face-length **floor** (the UPPER guard) is what separates a
+#     real face from that corner nub. It must sit *above* the nub yet *below*
+#     the smallest real face — and the smallest real face is the smallest cell
+#     side, which is set by the *mesh*, not by ε. A single hard-coded constant
+#     cannot track it across meshes (3C faces ≈ 2000 m, 8C CRAIE faces ≈ 100 m),
+#     so the floor is derived per-mesh in ``_mesh_face_floor`` below.
+#
+# Keeping the two at separate scales is the whole fix: the predecessor conflated
+# them into one 1 mm common-grid snap, which could bridge float drift but could
+# not also serve as a real-face threshold on a rotated mesh.
+_FACE_BUFFER_EPS = 0.05  # m — buffer half-width; lower guard, set by drift not mesh
+_FACE_LENGTH_FRAC = 0.10  # floor as a fraction of the smallest cell side
+_FACE_NUB_CLAMP = 10  # floor lower bound as a multiple of ε (keeps floor ≫ nub)
 
-    Returns a tuple ``(cell_ids, edge_geometries)`` aligned per boundary edge:
-    for each (inside cell, outside cell) adjacency, one entry is appended
-    where ``cell_ids[i]`` is the inside-polygon cell's id and
-    ``edge_geometries[i]`` is the shared-edge geometry. An inside cell with
-    N outside neighbours contributes N entries.
+# Snap grid (CRS units) applied ONLY when fusing one side's recovered sub-edges
+# into a single line. Clipping the smaller cell's boundary to the ε-buffered
+# ribbon over-captures by ≈ 2ε at each end (a tiny backward perpendicular stub),
+# so two collinear same-side sub-edges of a refinement T-junction *overlap* and
+# branch instead of touching end-to-end — and plain ``line_merge`` cannot fuse
+# overlapping/branched lines into one ``LineString``. Snapping the per-side union
+# to 2ε collapses those stubs and overlaps so the side fuses cleanly. It is tied
+# to the buffer scale (NOT the mesh), unlike the retired ``_FACE_SNAP_GRID``
+# which tried — and failed — to also serve as the shared-edge detector.
+_FACE_MERGE_SNAP = 2.0 * _FACE_BUFFER_EPS
 
-    Adjacency is computed from shared geometry edges via Shapely's
-    ``predicate="touches"`` STRtree query, then filtered to keep only
-    intersections that are LineString / MultiLineString (true edge-sharing,
-    excluding corner-only adjacency).
 
-    :param aq_mesh_gdf: GeoDataFrame of aquifer cells (polygon geometries)
-    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
-    :param id_col: Column name (or integer position) to read cell ids from.
-    :return: ``(cell_ids, edge_geometries)`` aligned per boundary edge.
+def _mesh_face_floor(aq_mesh_gdf: gpd.GeoDataFrame) -> float:
+    """Derive the minimum-face-length floor once for the whole mesh.
+
+    The floor must lie between two scales set by *different* things: its lower
+    bound is the buffer-induced corner nub (``≈ 2ε``, driven by ε), its upper
+    bound is the smallest real face (= the smallest cell side, driven by the
+    mesh). It is computed as::
+
+        side  = p1( sqrt(cell_area) )            # robust smallest cell side
+        floor = max(_FACE_LENGTH_FRAC * side, _FACE_NUB_CLAMP * _FACE_BUFFER_EPS)
+
+    * ``sqrt(area)`` is used as the cell "side", **not** the bounding-box
+      extent: on the rotated 3C mesh the bbox width is inflated by the tilt
+      (2015 m for a true ~1999 m side), whereas ``sqrt(area)`` is rotation-
+      invariant and recovers the real side — which matters precisely because
+      rotation is the root cause being fixed.
+    * the **1st percentile** (not strict ``min``) is robust to a single sliver
+      or degenerate cell in a future shapefile, which would otherwise crater
+      ``min(side)`` and pull the floor down toward the nub.
+    * the ``max(..., _FACE_NUB_CLAMP * ε)`` clamp guarantees the floor never
+      approaches the corner nub even on an arbitrarily fine mesh
+      (``floor ≥ 0.5 m ≫ 2ε = 0.1 m`` always).
+
+    Measured floors that validated these constants: 3C ≈ 200 m, 8C ALLUVIONS
+    ≈ 20 m, 8C CRAIE ≈ 10 m — each ~100–200× above the nub and ~10× below the
+    smallest real face on that mesh, i.e. ~10× headroom both ways. Use those as
+    the reference point when tuning ``_FACE_LENGTH_FRAC``.
     """
-    if aq_mesh_gdf.empty:
-        return [], []
-
-    geometries = list(aq_mesh_gdf.geometry.values)
-    centroids = aq_mesh_gdf.geometry.centroid
-    inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
-    inside_positions = {i for i, inside in enumerate(inside_mask) if inside}
-
-    if not inside_positions:
-        return [], []
-
-    tree = shapely.STRtree(geometries)
-    col_name = _resolve_id_col(aq_mesh_gdf, id_col)
-
-    cell_ids_out: List[Any] = []
-    edge_geometries_out: List[Any] = []
-    for inside_pos in sorted(inside_positions):
-        cell_geom = geometries[inside_pos]
-        candidate_positions = tree.query(cell_geom, predicate="touches")
-        for cand_pos in candidate_positions:
-            cand_int = int(cand_pos)
-            if cand_int == inside_pos or cand_int in inside_positions:
-                continue
-            shared = cell_geom.intersection(geometries[cand_int])
-            if shared.geom_type in ("LineString", "MultiLineString"):
-                cell_ids_out.append(aq_mesh_gdf.iloc[inside_pos][col_name])
-                edge_geometries_out.append(shared)
-
-    return cell_ids_out, edge_geometries_out
+    areas = aq_mesh_gdf.geometry.area
+    side = float(areas.pow(0.5).quantile(0.01))
+    return max(_FACE_LENGTH_FRAC * side, _FACE_NUB_CLAMP * _FACE_BUFFER_EPS)
 
 
-def aq_cells_boundary_faces(
+def _shared_face(cell_geom: Any, neigh_geom: Any, eps: float, floor: float) -> Tuple[float, Any]:
+    """Detect the shared flux face of two cells and recover its line geometry.
+
+    Robust to rotated / off-grid meshes, where the smaller cell's shared-edge
+    endpoints fall mid-edge on the larger cell (not on a shared vertex), so the
+    classic ``boundary ∩ boundary`` collapses to points and drops the face.
+
+    Instead each cell is grown outward by ``eps`` (``mitre`` join, so the ribbon
+    ends stay square and short faces measure correctly) and the polygons are
+    intersected: a genuine shared edge of length ``L`` overlaps in a thin ribbon
+    of area ``≈ 2·ε·L``, a corner-only touch in a ``≈ (2ε)²`` nub. Overlaps below
+    ``eps * floor`` (i.e. a recovered length below ``≈ floor / 2``) are rejected
+    as nubs. The face line is recovered by clipping the **smaller** cell's
+    boundary to the ribbon and line-merging — the smaller cell is chosen because
+    its edge *is* the full face, whereas the larger cell's edge spans several
+    small neighbours and would over-capture.
+
+    :return: ``(length, line)`` — the recovered face length and its merged
+        ``LineString`` / ``MultiLineString``, or ``(0.0, None)`` for a nub.
+    """
+    strip = cell_geom.buffer(eps, join_style="mitre").intersection(
+        neigh_geom.buffer(eps, join_style="mitre")
+    )
+    if strip.is_empty or strip.area < eps * floor:
+        return 0.0, None
+    smaller = cell_geom if cell_geom.area <= neigh_geom.area else neigh_geom
+    line = shapely.line_merge(smaller.boundary.intersection(strip))
+    if line.is_empty:
+        return 0.0, None
+    return line.length, line
+
+
+def cells_boundary_faces(
     aq_mesh_gdf: gpd.GeoDataFrame,
     polygon: Any,
     id_col: Union[str, int],
-) -> Dict[str, Any]:
-    """Identify boundary AQ cells with cardinal-direction face labels.
+) -> Tuple[Dict[Any, List[str]], Dict[Any, Any], Dict[Any, Dict[str, Dict[str, Any]]]]:
+    """Identify boundary cells with cardinal-direction face labels.
 
     A boundary cell is an interior cell (centroid inside the polygon) that
     shares a face with an outside cell. The face direction is determined
     from the centroid offset between the boundary cell and its outside
     neighbour: if ``|dx| ≥ |dy|`` then ``"east" if dx < 0 else "west"``,
-    else ``"south" if dy < 0 else "north"``. Corner-touching neighbours
-    (intersection is a Point) are filtered out — only true edge-sharing
-    counts as a flux face. Direction labelling preserves the original
-    feature-branch convention (cf. branch_migration/backend_50.patch L327-333).
+    else ``"south" if dy < 0 else "north"``. Direction labelling preserves
+    the original feature-branch convention (cf.
+    branch_migration/backend_50.patch L327-333).
 
-    Returns a dict with keys:
-        * ``interior_ids``:    sorted list of all cells with centroid inside
-        * ``boundary_ids``:    sorted list of cell ids touching ≥1 outside cell
-        * ``boundary_faces``:  ``{cell_id: ["east"|"west"|"south"|"north", ...]}``
-        * ``edges_by_face``:   ``{cell_id: {direction: shapely.Geometry}}``
-                               (per-face union of shared boundary parts)
+    **Shared-face detection (robust on rotated / off-grid meshes).** Two cells
+    share a flux face IFF, after growing each by a small outward buffer ``ε``,
+    their polygons overlap in a thin ribbon (see :func:`_shared_face`). The face
+    line is recovered by clipping the *smaller* cell's boundary to that ribbon.
+    This does NOT require the shared edge's endpoints to be vertices of both
+    cells, so it recovers refinement T-junction faces (where the small cell's
+    endpoints fall mid-edge on the large cell) that the old
+    ``boundary ∩ boundary`` test dropped as zero-length points.
+
+    Two thresholds at two scales separate a real face from a corner touch:
+    ``ε`` (``_FACE_BUFFER_EPS``, the lower guard — only bridges sub-metre
+    rotation/coordinate drift) and a minimum-face-length **floor** (the upper
+    guard, derived per-mesh by :func:`_mesh_face_floor` from a low percentile of
+    ``sqrt(cell_area)``, so it scales with the mesh and stays well above the
+    corner nub). A corner-only touch falls below the floor and is rejected; a
+    real face of any orientation is kept.
+
+    **Per-face flux source (refined-mesh coarse-cell correction).** CaWaQS stores
+    exactly one finite-difference flux per cardinal face per cell, so a coarse
+    inside cell's single side-flux is the *blended* net over every neighbour on
+    that side. The third return value, ``face_sources``, tells a downstream flux
+    read where to source each face: for a side where the inside cell is
+    smaller-or-equal to its outside neighbour(s) the inside cell's own face is a
+    clean single-sub-face value (``sign=+1``, ``INT_cell``); for a side where the
+    inside cell is *strictly coarser* the own face is a blend and must instead be
+    read from the smaller outside neighbours' opposing faces (``sign=-1``,
+    ``EXT_cell``, ``outside_ids`` = those smaller outside cells). Ties resolve to
+    the inside cell (``+1``). The size comparison reuses the same
+    ``cell_geom.area`` vs ``neigh_geom.area`` test :func:`_shared_face` already
+    performs. Only ``outside_set`` cells (centroid-outside) are candidates here,
+    so a smaller *inside* neighbour on the same side never enters ``outside_ids``.
+
+    :param aq_mesh_gdf: GeoDataFrame of aquifer mesh cells (polygon geometries)
+    :param polygon: shapely ``Polygon`` or ``MultiPolygon`` defining the mask
+    :param id_col: Column name (or integer position) to read cell ids from.
+    :return: ``(boundary_faces, edge_geometries, face_sources)`` where
+        ``boundary_faces`` is ``{cell_id: ["east"|"west"|"south"|"north", ...]}``
+        — one entry per boundary cell, each value the list of flux-face
+        directions for that cell (a corner cell can have two faces) —
+        ``edge_geometries`` is ``{cell_id: geometry}``, the shared face edge(s)
+        for that cell merged into a single geometry, and ``face_sources`` is
+        ``{cell_id: {direction: {"sign": +1|-1, "outside_ids": [id, ...]}}}``,
+        the per-(cell, direction) flux-source map described above. Collinear
+        sub-edges on one side (a refinement T-junction, where several smaller
+        outside cells abut one side) fuse into a single continuous
+        ``LineString``; a corner cell bordering two perpendicular sides stays a
+        ``MultiLineString`` with one line per side. All three dicts share the
+        same keys so callers can align them 1:1.
     """
-    empty: Dict[str, Any] = {
-        "interior_ids":   [],
-        "boundary_ids":   [],
-        "boundary_faces": {},
-        "edges_by_face":  {},
-    }
     if aq_mesh_gdf.empty:
-        return empty
+        return {}, {}, {}
 
     col_name = _resolve_id_col(aq_mesh_gdf, id_col)
     geometries = list(aq_mesh_gdf.geometry.values)
@@ -384,16 +465,37 @@ def aq_cells_boundary_faces(
 
     inside_mask = [bool(polygon.contains(centroids.iloc[i])) for i in range(len(geometries))]
     interior_positions = [i for i, x in enumerate(inside_mask) if x]
-    interior_ids = sorted([ids[i] for i in interior_positions])
 
-    if not interior_ids:
-        return empty
+    if not interior_positions:
+        return {}, {}, {}
 
     outside_set = {ids[i] for i, x in enumerate(inside_mask) if not x}
     tree = shapely.STRtree(geometries)
 
+    # Minimum-face-length floor, derived once from the whole mesh (not per pair):
+    # it must scale with the mesh's smallest real face while staying well above
+    # the buffer-induced corner nub. See _mesh_face_floor.
+    face_floor = _mesh_face_floor(aq_mesh_gdf)
+
+    # Per-cell ordered set of bordered cardinal directions (each direction at
+    # most once — a refined cell with several same-side neighbours still borders
+    # that side once). Insertion order is preserved so face_directions is stable.
     boundary_faces: Dict[Any, List[str]] = {}
-    edges_by_face_parts: Dict[Any, Dict[str, List[Any]]] = {}
+    # Shared sub-edges grouped by (cell_id, direction). Grouping by direction is
+    # what keeps the per-side merge correct: all sub-edges of one side are
+    # collinear and fuse to one line, while two *perpendicular* sides of a corner
+    # cell stay separate (they must NOT fuse, even though they touch at the shared
+    # corner vertex — see the merge step below).
+    edge_parts: Dict[Tuple[Any, str], List[Any]] = {}
+    # Per-(cell_id, direction) flux source. ``sign`` starts +1 (INT_cell: read the
+    # inside cell's own face) and flips to -1 the moment a *strictly smaller*
+    # outside neighbour is seen on that side (EXT_cell: the inside cell is coarser,
+    # so its own face is a blend and must be sourced from the smaller outside
+    # neighbours' opposing faces). ``outside_ids`` collects exactly those smaller
+    # outside neighbours. All outside sub-cells on a refined side are smaller
+    # together, so any one strict-smaller test classifies the side; equal-size or
+    # coarser outside neighbours leave the side INT_cell (ties → inside, D1).
+    face_source_parts: Dict[Tuple[Any, str], Dict[str, Any]] = {}
 
     for inside_pos in interior_positions:
         cell_id = ids[inside_pos]
@@ -401,7 +503,7 @@ def aq_cells_boundary_faces(
         cell_cx = cell_geom.centroid.x
         cell_cy = cell_geom.centroid.y
 
-        candidate_positions = tree.query(cell_geom, predicate="touches")
+        candidate_positions = tree.query(cell_geom, predicate="intersects")
         for cand_pos in candidate_positions:
             cand_int = int(cand_pos)
             if cand_int == inside_pos:
@@ -411,29 +513,76 @@ def aq_cells_boundary_faces(
                 continue
             neigh_geom = geometries[cand_int]
 
-            shared = cell_geom.boundary.intersection(neigh_geom.boundary)
-            if shared.is_empty or shared.geom_type == "Point":
+            # The flux face is the segment the two cells share. Detect it by the
+            # area overlap of the two cells grown by ε and recover the line from
+            # the smaller cell's boundary (see _shared_face): robust to rotation
+            # and off-grid coordinates, where the small cell's endpoints fall
+            # mid-edge on the large cell. A corner-only touch yields a tiny nub
+            # below the floor and is skipped.
+            length, shared = _shared_face(
+                cell_geom, neigh_geom, _FACE_BUFFER_EPS, face_floor
+            )
+            if shared is None or length < face_floor:
                 continue
 
             dx = neigh_geom.centroid.x - cell_cx
             dy = neigh_geom.centroid.y - cell_cy
             if abs(dx) >= abs(dy):
-                face = "east" if dx < 0 else "west"
+                face = "west" if dx < 0 else "east"
             else:
                 face = "south" if dy < 0 else "north"
 
-            boundary_faces.setdefault(cell_id, []).append(face)
-            edges_by_face_parts.setdefault(cell_id, {}).setdefault(face, []).append(shared)
+            cell_faces = boundary_faces.setdefault(cell_id, [])
+            if face not in cell_faces:
+                cell_faces.append(face)
+            edge_parts.setdefault((cell_id, face), []).append(shared)
 
-    boundary_ids = sorted(boundary_faces.keys())
-    edges_by_face = {
-        cell_id: {face: unary_union(parts) for face, parts in dir_parts.items()}
-        for cell_id, dir_parts in edges_by_face_parts.items()
-    }
+            # Classify this side's flux source. The inside cell is coarser than
+            # this outside neighbour IFF its area is strictly larger; equal-size
+            # (tie) and larger-neighbour cases keep the side reading the inside
+            # cell's own face (sign +1). ``neigh_id`` is in ``outside_set`` by the
+            # guard above, so a smaller *inside* neighbour on the same side is
+            # never eligible for ``outside_ids`` (task 2.3).
+            src = face_source_parts.setdefault(
+                (cell_id, face), {"sign": 1, "outside_ids": []}
+            )
+            if cell_geom.area > neigh_geom.area:
+                src["sign"] = -1
+                src["outside_ids"].append(neigh_id)
 
-    return {
-        "interior_ids":   interior_ids,
-        "boundary_ids":   boundary_ids,
-        "boundary_faces": boundary_faces,
-        "edges_by_face":  edges_by_face,
-    }
+    # Merge each cell's sub-edges into one geometry per cell, fusing *per side*.
+    # Same-side (collinear) sub-edges of a refinement T-junction are line-merged
+    # into one continuous ``LineString``; the per-side lines of a corner cell are
+    # then collected without merging across sides. The cross-side union is kept
+    # un-merged on purpose: a plain ``line_merge`` across a corner would chain two
+    # perpendicular sides into one L-shaped ``LineString`` (they touch at the
+    # shared corner vertex), which would misrepresent a two-faced cell. Grouping
+    # by direction first guarantees one merged line per bordered side — matching
+    # the one-flux-per-cardinal-direction contract (see dispatch ``boundary_aq``).
+    per_cell_lines: Dict[Any, List[Any]] = {}
+    for (cell_id, _face), parts in edge_parts.items():
+        # Snap to 2ε first so the buffer's ≈2ε over-capture stubs collapse and the
+        # collinear sub-edges meet end-to-end, letting line_merge fuse one side's
+        # several refinement sub-edges into a single continuous LineString.
+        snapped = shapely.set_precision(unary_union(parts), _FACE_MERGE_SNAP)
+        merged = shapely.line_merge(snapped)
+        per_cell_lines.setdefault(cell_id, []).append(merged)
+
+    edge_geometries: Dict[Any, Any] = {}
+    for cell_id, lines in per_cell_lines.items():
+        if len(lines) == 1:
+            edge_geometries[cell_id] = lines[0]
+        else:
+            # One bordered side per entry already; collect (do not re-merge) into
+            # a MultiLineString so perpendicular sides stay distinct lines.
+            edge_geometries[cell_id] = shapely.MultiLineString(
+                [g for line in lines for g in _as_linestrings(line)]
+            )
+
+    # Nest the per-(cell, direction) source parts into the response shape
+    # ``{cell_id: {direction: {"sign": ±1, "outside_ids": [...]}}}``.
+    face_sources: Dict[Any, Dict[str, Dict[str, Any]]] = {}
+    for (cell_id, face), src in face_source_parts.items():
+        face_sources.setdefault(cell_id, {})[face] = src
+
+    return boundary_faces, edge_geometries, face_sources

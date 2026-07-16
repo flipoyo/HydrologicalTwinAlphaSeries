@@ -597,3 +597,191 @@ class Temporal:
             return (True, 366)
         else:
             return (False, 365)
+
+    def simMatrixToDf(
+        self,
+        matrix:np.array,
+        sdate:str,
+        edate:str,
+        cutsdate:str=None,
+        cutedate:str=None,
+        cell_ids=None
+        )->pd.DataFrame:
+        """_summary_
+
+        :param matrix: Simulated matrix
+        :type matrix: np.array
+        :param sdate: Starting date of the simulation (format : %Y/%M/%d)
+        :type sdate: str
+        :param edate: Ending date of the simulation (format : %Y/%M/%d)
+        :type edate: str
+        :param cutsdate:  Starting date of the desired exctractionPeriod, defaults to None (format : %Y/%M/%d)
+        :type cutsdate: str, optional
+        :param cutedate: Ending date of the desired exctractionPeriod, defaults to None (format : %Y/%M/%d)
+        :type cutedate: str, optional
+        :return: Simulated Dataframe
+        :rtype: pd.DataFrame
+        """
+
+
+        print("Convert SimMatrix in numpy format to dataframe")
+
+        dates = pd.date_range(start=f'{sdate}-08-01', end=f'{edate}-07-31')
+
+        if cell_ids is not  None:
+            df_sim = pd.DataFrame(
+                matrix.T,
+                index=dates,
+                columns=cell_ids
+            )
+        else :
+            df_sim = pd.DataFrame(
+                matrix.T,
+                index=dates,
+                columns=[i for i in range(1, matrix.shape[0] + 1)],
+            )
+
+        if cutedate is not None and cutsdate is not None:
+            print(f"Return period : {cutsdate} - {cutedate}")
+            df_sim = df_sim.loc[cutsdate:cutedate]
+
+        print("Done")
+        print(df_sim.head(), flush=True)
+        return df_sim
+
+
+    def aggregate_matrix(
+        self,
+        df:pd.DataFrame,
+        agg_dimension:Union[str, float],
+        fz:str,
+        plurianual_agg:bool,
+        compartment:Compartment=None
+    ) -> pd.DataFrame:
+        """
+        Aggragate given matrix according specified aggragator on a specied matrix
+        dimension
+
+        Paremeters :
+        :param df: time series wanted to be aggragate (meshes, recorded parameter, nday)
+        :param aggragator: mean or interanual
+        :param agg_dimention: set 1 to agregate on time
+        :param syear: Starting year of the simulation
+        :param eyear: Ending year of the simulation
+        :return: Aggragated matrix (columns : id_abs, index : dates)
+        :rtype: pd.DataFrame
+        """
+        print("Aggragate Sim Matrix...", flush=True)
+        print("\tAggragator : ", agg_dimension, flush=True)
+        print("\tFz : ", fz, flush=True)
+        print("\tPlurianual Agg : ", plurianual_agg, flush=True)
+
+        if fz == 'Annual':
+            if agg_dimension == "sum":
+                    df =  pd.DataFrame(df.resample("A-AUG").sum())
+
+            elif agg_dimension == "mean":
+                    df = pd.DataFrame(df.resample("A-AUG").mean())
+
+            elif agg_dimension == "min":
+                    df =  pd.DataFrame(df.resample("A-AUG").min())
+
+            elif agg_dimension == "max":
+                    df =  pd.DataFrame(df.resample("A-AUG").max())
+
+            elif agg_dimension == "quantile" :
+                df = df.quantile(q = agg_dimension, axis = 0)
+
+            df.index = df.index.strftime('%Y')
+
+            if plurianual_agg is True :
+                df = pd.DataFrame(df.mean()).T
+                df.index = ["Z(x, y)"]
+
+
+        if fz == 'Monthly' and plurianual_agg:
+            if agg_dimension == "sum":
+                df = df.resample("M").sum()
+
+            elif agg_dimension == "mean":
+                df = df.resample("M").mean()
+
+            elif agg_dimension == "min":
+                df = df.resample("M").min()
+
+            elif agg_dimension == "min":
+                df = df.resample("M").min()
+
+            elif agg_dimension == "quantile" :
+                df = df.quantile(agg_dimension, axis = 0)
+
+            df.index = df.index.strftime('%m-%Y')
+
+            if plurianual_agg is True :
+                df.index = pd.to_datetime(df.index).strftime('%m')
+                df = df.groupby(df.index).mean()
+
+        print(df, flush=True)
+        print("Done", flush=True)
+
+        return df
+
+    # Seconds in one day — the m³/s → m³/day conversion folded into the monthly
+    # sum below. Kept local (not a magic number spread across the method) so the
+    # "per-day volume, then summed over the month" definition reads in one place.
+    _SECONDS_PER_DAY = 86400.0
+
+    def monthly_total_volume(
+        self,
+        arr: np.ndarray,
+        dates: np.ndarray,
+    ) -> (np.ndarray, np.ndarray):
+        """Sum a daily ``m³/s`` series into a calendar-month **total volume** (m³).
+
+        This is the plain per-month ``resample("M").sum()`` that
+        :meth:`aggregate_matrix`'s monthly branch never exposes on its own: that
+        branch is gated behind ``plurianual_agg``, relabels the index to
+        ``'%m-%Y'``, and can collapse to a pluriannual mean — none of which is a
+        single self-contained "volume that crossed this month" total. This method
+        is the dedicated primitive for that quantity, so bending the gated branch
+        (and risking its existing callers) is not needed.
+
+        For each series the monthly value for month *m* is
+        ``Σ_{d ∈ days(m)} value_d × 86400`` (m³): the ``×86400`` m³/s→per-day
+        volume conversion is folded in **before** the sum, so summing over the
+        month's real simulated days naturally honours 28/29/30/31-day months and
+        totals a partial start/end month over only its simulated days (the true
+        volume over the simulated portion, not an error).
+
+        :param arr: Daily series, shape ``(n_days,)`` (a single face series) or
+            ``(n_days, n_series)`` (a column per series). Time is axis 0, aligned
+            row-for-row with ``dates``.
+        :param dates: 1-D array of daily ``datetime64`` (or anything
+            ``pd.to_datetime`` accepts), one per row of ``arr``.
+        :returns: ``(monthly_matrix, monthly_index)`` where ``monthly_matrix`` has
+            the same trailing shape as ``arr`` (``(n_months,)`` for a 1-D input,
+            ``(n_months, n_series)`` for 2-D) and ``monthly_index`` is a 1-D array
+            of stable, parseable ``YYYY-MM`` month labels — one per calendar month
+            present in ``dates``, in ascending order.
+        :rtype: (np.ndarray, np.ndarray)
+        """
+        arr = np.asarray(arr, dtype=float)
+        was_1d = arr.ndim == 1
+        if was_1d:
+            arr = arr[:, np.newaxis]
+
+        index = pd.to_datetime(np.asarray(dates))
+        df = pd.DataFrame(arr * self._SECONDS_PER_DAY, index=index)
+
+        # Plain calendar-month sum — one row per (year, month) actually present,
+        # NO pluriannual collapse and NO '%m-%Y' relabel (cf. aggregate_matrix).
+        monthly = df.resample("M").sum()
+
+        # Stable, parseable month labels (period end → its own year-month), so the
+        # loose CSV and the GeoPackage can be read back without ambiguity.
+        monthly_index = monthly.index.strftime("%Y-%m").to_numpy()
+        monthly_matrix = monthly.to_numpy()
+        if was_1d:
+            monthly_matrix = monthly_matrix[:, 0]
+
+        return monthly_matrix, monthly_index

@@ -102,11 +102,40 @@ obs_config = {
     1: {"id_col_time": 2, "id_col_data": 4},
 }
 
+# Canonical statement of the AQ boundary-flux sign convention. This is the single
+# source of truth: the ``AQ_FACE_DIRECTIONS`` comment below references it, and it
+# is *shipped* into the boundary-flux outputs (loose-CSV header line + GeoPackage
+# ``provenance`` row) so a downstream reader can interpret a value's sign without
+# reading source code. A comment and a shipped string that restate the same fact
+# independently would drift; one constant referenced by both cannot.
+AQ_BOUNDARY_FLUX_SIGN_CONVENTION = (
+    "Sign convention (CaWaQS): positive = flux entering the cell. Each face "
+    "direction is named from the inside cell's perspective relative to its "
+    "outside neighbour; a per-cell net is the net inflow across that cell's "
+    "exposed boundary faces."
+)
+
+# Semantics note for the AQ boundary-flux calendar-month total-volume mode
+# (``unit="m3"``). Shipped into the GeoPackage ``provenance`` table for that mode
+# so the rows of the ``monthly_values`` table are self-describing: they are
+# MONTHLY totals, not daily values, and a partial first or last month totals only
+# its simulated days. One constant referenced by both the code and the shipped
+# provenance cannot drift from what the file actually holds (same discipline as
+# ``AQ_BOUNDARY_FLUX_SIGN_CONVENTION``).
+AQ_BOUNDARY_FLUX_MONTHLY_VOLUME_SEMANTICS = (
+    "Values are CALENDAR-MONTH TOTAL VOLUMES in m3 (one row per year-month, "
+    "the sum over that month's simulated days of daily_m3/s x 86400), stored in "
+    "the 'monthly_values' table (not 'daily_values'). A partial first or last "
+    "month totals only its simulated days (the true volume over the simulated "
+    "portion)."
+)
+
 # AQ face flux direction → CaWaQS AQ_MB parameter name.
-# Sign convention (CaWaQS): positive = flux entering the cell from that direction.
-# Direction is named from the inside cell's perspective relative to its outside
-# neighbour; the convention preserves the original feature-branch labelling
-# (cf. branch_migration/frontend_50.patch L2174-2181).
+# Sign convention is AQ_BOUNDARY_FLUX_SIGN_CONVENTION above (the canonical source):
+# positive = flux entering the cell from that direction. Direction is named from
+# the inside cell's perspective relative to its outside neighbour; the convention
+# preserves the original feature-branch labelling (cf.
+# branch_migration/frontend_50.patch L2174-2181).
 AQ_FACE_DIRECTIONS = {
     "east":  "flux_x_two",
     "west":  "flux_x_one",
@@ -114,9 +143,79 @@ AQ_FACE_DIRECTIONS = {
     "north": "flux_y_two",
 }
 
-# Dimensions constats 
+# Cardinal-face flip (west↔east, south↔north). Single source of truth for the
+# opposing direction used when a coarse inside boundary cell must read its flux
+# from a SMALLER outside neighbour: CaWaQS stores one blended flux on the coarse
+# cell's shared face, but the smaller outside cell's *opposing* face is a clean
+# single-sub-face value, so the read composes this flip with ``AQ_FACE_DIRECTIONS``
+# to pick that outside cell's flux column. Inlining the flip in the dispatch read
+# would duplicate this domain constant; it belongs here beside its sibling map.
+OPPOSITE_FACE = {
+    "east":  "west",
+    "west":  "east",
+    "south": "north",
+    "north": "south",
+}
 
-_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s"})
+# Provenance note for the AQ boundary-flux coarse-cell source correction. On a
+# refined (quadtree) mesh a coarse inside boundary cell shares one side with
+# several smaller outside cells, so its single stored face flux is a *blended*
+# net; the exact single-sub-face crossing is instead the negated sum of those
+# smaller outside neighbours' opposing faces (sign −1). Shipped into both the
+# GeoPackage ``provenance`` row and the loose-CSV commented header when any face
+# was sourced this way, so a value read from an outside neighbour is
+# self-describing. One constant, two shipped surfaces, cannot drift (same
+# discipline as ``AQ_BOUNDARY_FLUX_SIGN_CONVENTION`` /
+# ``AQ_BOUNDARY_FLUX_MONTHLY_VOLUME_SEMANTICS``).
+AQ_BOUNDARY_COARSE_CELL_SOURCE_NOTE = (
+    "Coarse-cell source (refined mesh): where an inside boundary cell is COARSER "
+    "than its outside neighbours on a side, CaWaQS stores a single blended face "
+    "flux for that side. Such a face is NOT read from the inside cell; its value "
+    "is the negated sum of the smaller outside neighbours' opposing-face fluxes "
+    "(sign -1), the exact single-sub-face crossing. The 'outside_ids' column/mapping "
+    "records those outside cell ids; an empty 'outside_ids' means the inside cell's "
+    "own face was read (equal-size or fine-inside boundary, unchanged)."
+)
+
+# Dimensions constats
+
+# Volumetric tokens. The rate tokens (``m3/s``, ``m3/j``, ``m3/mois``) are pure
+# magnitude rescales (a scalar factor in ``_VOLUMETRIC_UNIT_FACTORS``, daily axis
+# unchanged). ``m3`` is the odd one out: a *volume* (bare cubic metres), produced
+# by a calendar-month SUM aggregation (Σ daily×86400 per month), NOT a scalar
+# rescale — so it deliberately has NO entry in ``_VOLUMETRIC_UNIT_FACTORS`` below
+# (see the aggregating-token note there). It is still "volumetric" for the family
+# checks that gate the ×86400 vs length-passthrough distinction.
+_VOLUMETRIC_UNITS = frozenset({"m3/j", "m3/s", "m3/mois", "m3"})
+
+# Multiplicative factor converting a CaWaQS-native ``m³/s`` flux to the given
+# volumetric token. ``m3/s`` is the raw pass-through (1.0); ``m3/j`` (jour) is the
+# m³/day rate (× one day of seconds); ``m3/mois`` (mois) is an *average-month*
+# flow RATE — every daily value rescaled by the same factor, NOT a calendar
+# re-aggregation. 2_629_800 = 86400 × 365.25 / 12 (seconds in an average month).
+#
+# The ``m3`` calendar-month total-volume token is INTENTIONALLY ABSENT here: it
+# aggregates (daily→monthly Σ of value×86400), it does not scalar-rescale, so
+# there is no single factor to list. Callers that look a token up here must guard
+# the aggregating token explicitly (``transform(kind='volumetric_rescale')`` and
+# ``run_mask_aq_boundary`` do) rather than inventing a scalar for it.
+_VOLUMETRIC_UNIT_FACTORS = {
+    "m3/s": 1.0,
+    "m3/j": 86400.0,
+    "m3/mois": 2_629_800.0,
+}
+
+# Token → loose-CSV column-name suffix for the AQ boundary-flux export. Derived
+# from the same token as the factor (above) so the values and their declared unit
+# can never diverge, and two runs differing only in unit do not overwrite each
+# other in one output directory. ``m3`` (calendar-month total volume) gets its
+# own ``m3month`` suffix so its monthly-indexed files never collide with the
+# daily-indexed ``m3d`` / ``m3mois`` rate files in the same directory.
+_VOLUMETRIC_UNIT_CSV_SUFFIX = {
+    "m3/j": "m3d",
+    "m3/mois": "m3mois",
+    "m3": "m3month",
+}
 
 # Length units (e.g. HYD Water Height). These are NOT volumetric: the ×86400
 # m³/s→m³/day conversion must be skipped for them. ``m`` is the CaWaQS-native

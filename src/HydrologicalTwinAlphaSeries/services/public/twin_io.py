@@ -60,6 +60,7 @@ from .io_types import (
     ValuesResponse,
 )
 
+#LAYERREFACTORING - ALL THESE FUNCTIONS (get_compartment, layer_info) COULD BE CONSIDERED BELONGING TO THE DOMAIN (evaluate inheritance relationship in this sense) AND NOT SERVICE SPHERE OR BEING DIRECTLY TOOLS
 def get_compartment(twin: "HydrologicalTwin", id_compartment: int) -> Compartment:
     """Return a registered Compartment.
 
@@ -83,6 +84,47 @@ def _resolve_mesh_gdf(
     compartment = get_compartment(twin, id_compartment)
     layer_name = compartment.mesh.layers_gis_name[id_layer]
     return compartment.mesh.layer_gdfs[layer_name]
+
+
+def _resolve_hyd_mesh_gdf(
+    twin: "HydrologicalTwin", id_compartment: int, id_layer: int = 0
+) -> gpd.GeoDataFrame:
+    """Return the HYD layer mesh built from ``Cell`` objects, keyed on ``id_abs``.
+
+    Unlike ``_resolve_mesh_gdf`` (which returns the raw GIS GeoDataFrame whose
+    id column still carries the untranslated GIS id for HYD), this builds the
+    mesh from the compartment's ``Cell`` objects so the id column is the
+    absolute CaWaQS matrix id (``ID_ABS``). ``cell.id_abs`` was mapped from the
+    GIS id through ``HYD_corresp_file.txt`` once at mesh-build time
+    (``Mesh.buildLayer`` → ``Mesh._assign_global_ids``), so **no corresp file is
+    re-read here** — the translation is already paid.
+
+    The geometry is byte-identical to the raw gdf (both come from the same
+    ``row.geometry`` at build time), so containment / length-fraction weights
+    are unchanged. Mirrors ``handlers._build_outcropping_mesh_gdf`` (the AQ
+    outcropping equivalent) but for a single HYD layer. Used by ``mask()`` HYD
+    branches so polygon selection yields ``ID_ABS`` directly with
+    ``id_col="id_abs"``.
+
+    The returned gdf carries **both** ids per candidate cell: the internal
+    ``id_abs`` (the selection / matrix-lookup key) and the user-facing ``id_gis``
+    (the id the user's own reach layer carries — the relabel source at output
+    time). ``id_gis`` rides along unused by selection; it lets the output
+    ``ID_ABS → ID_GIS`` relabel be a column swap rather than a corresp re-read.
+    For AQ/WATBAL and the HYD-missing-corresp fallback ``id_gis == id_abs``.
+    """
+    compartment = get_compartment(twin, id_compartment)
+    layer = compartment.mesh.mesh[id_layer]
+    return gpd.GeoDataFrame(
+        {
+            "id_abs": [cell.id_abs for cell in layer.layer],
+            "id_gis": [cell.id_gis for cell in layer.layer],
+            "geometry": [cell.geometry for cell in layer.layer],
+        },
+        crs=layer.crs,
+        geometry="geometry",
+    )
+
 
 def _resolve_cell_id_col(twin: "HydrologicalTwin", id_compartment: int) -> Union[str, int]:
     """Return the cell-id column (name or integer position) configured for a compartment.
@@ -119,14 +161,14 @@ def _resolve_layer_infos(
     if layers is not None:
         return layers
     if layer_names:
-        comp_info = twin.get_compartment_info(id_compartment)
+        comp_info = get_compartment_info(twin, id_compartment)
         return [
-            twin.get_layer_info(id_compartment, comp_info.layers_gis_names.index(layer_name))
+            get_layer_info(twin, id_compartment, comp_info.layers_gis_names.index(layer_name))
             for layer_name in layer_names
         ]
     if id_layer == -9999:
-        return twin.get_all_layers(id_compartment)
-    return [twin.get_layer_info(id_compartment, id_layer)]
+        return get_all_layers(twin, id_compartment)
+    return [get_layer_info(twin, id_compartment, id_layer)]
 
 
 def get_compartment_info(twin: "HydrologicalTwin", id_compartment: int) -> CompartmentInfo:
@@ -178,7 +220,7 @@ def get_all_layers(twin: "HydrologicalTwin", id_compartment: int) -> List[LayerI
     """Return LayerInfo for every layer in a compartment's mesh."""
     comp = twin.get_compartment(id_compartment)
     return [
-        twin.get_layer_info(id_compartment, lid)
+        get_layer_info(twin, id_compartment, lid)
         for lid in comp.mesh.mesh
     ]
 

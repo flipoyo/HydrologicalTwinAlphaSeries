@@ -220,20 +220,51 @@ class MaskHydBoundaryResult:
 
 
 @dataclass(frozen=True)
+class AqBoundaryLayerEntry:
+    """One aquifer layer's boundary-cells GeoDataFrame + layer name.
+
+    The AQ boundary extraction emits one of these per aquifer layer the mask
+    polygon's boundary actually reaches, mirroring :class:`CompartmentCellsEntry`
+    so the frontend can register it with the same per-entry pattern
+    (``convertGdfToVectorLayer`` + ``addNewResolutionToCurrentProject``).
+
+    :param id_layer: 0-based aquifer-layer id this entry belongs to.
+    :param gdf: GeoDataFrame of this layer's boundary cells — one row per cell,
+        with a ``cell_id`` column and the cell's merged boundary-edge geometry.
+    :param layer_name: Display name, ``<area_name>_AQ_layer<id>_boundary``.
+    """
+
+    id_layer: int
+    gdf: Any
+    layer_name: str
+
+
+@dataclass(frozen=True)
 class MaskAqBoundaryResult:
     """Result of :meth:`HydrologicalTwinClient.mask_aq_boundary`.
 
-    :param cells_gdf: GeoDataFrame of AQ boundary edges (one feature per
-        edge, with a ``cell_id`` attribute).
+    When the mask polygon's boundary cuts a multi-layer aquifer, each boundary
+    cell lies on exactly one aquifer layer, so the borders are grouped **per
+    aquifer layer** rather than exposed as one merged ``gdf`` — mirroring
+    :class:`MaskInternalValuesResult.entries`. Single-layer callers simply
+    iterate one entry.
+
+    :param entries: One :class:`AqBoundaryLayerEntry` per aquifer layer that has
+        boundary cells, ascending by ``id_layer``. Layers the polygon does not
+        reach produce no entry (silent skip); an empty list means the polygon
+        touched no AQ boundary.
     :param flux_gdf: Placeholder for a future flux gdf; currently unused
         (the time-series live in the CSV artefact).
-    :param layer_names: Display names for the layers, ``(cells, flux)``;
-        ``flux`` is ``None`` when no fluxes are emitted.
     :param artefacts: On-disk artefact paths (one CSV with per-(cell, dir)
-        flux time series in m³/d, when fluxes are non-empty).
+        flux time series in the chosen ``unit`` — ``m³/day`` by default or
+        ``m³/month`` as an average-month rate — when fluxes are non-empty, plus
+        the ``.gpkg`` in GeoPackage mode). Both surfaces ship the sign convention
+        (positive = flux into the cell): the CSV as a commented header line, the
+        GeoPackage in its ``provenance`` table. The CSV column suffix
+        (``_m3d`` / ``_m3mois``) and the GeoPackage ``daily_values`` ``unit``
+        label both follow the same chosen unit token.
     """
 
-    cells_gdf: Any
-    flux_gdf: Any
-    layer_names: tuple = ("", "")
+    entries: List[AqBoundaryLayerEntry] = field(default_factory=list)
+    flux_gdf: Any = None
     artefacts: List[str] = field(default_factory=list)
