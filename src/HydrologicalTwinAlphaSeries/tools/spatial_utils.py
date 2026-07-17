@@ -217,6 +217,44 @@ def verify_crs_match(crs_a, crs_b, context: str = "") -> None:
         )
 
 
+def reproject_polygon_to_match(polygon, polygon_crs, mesh_crs, context: str = ""):
+    """Reproject a shapely polygon from its CRS into the mesh CRS.
+
+    The mask operations join a caller-supplied polygon (carrying its own
+    ``polygon_crs``) against a mesh GeoDataFrame. They must run the geometric
+    test in ONE common CRS, otherwise the polygon and the mesh sit in different
+    coordinate spaces and the containment / shared-edge tests silently return
+    nothing or a wrong, partial selection (the Lambert-93-polygon vs
+    Lambert-II-mesh trap). This replaces the older "verify only" guard: instead
+    of erroring on a mismatch, we reproject the polygon to match the mesh.
+
+    Behaviour (mirrors ``verify_crs_match`` on the "unknown CRS" cases, so the
+    pre-existing "polygon_crs=None defers to the frontend" contract is kept):
+        * ``mesh_crs is None`` — the mesh has no CRS to target. Pass the polygon
+          through unchanged (cannot reproject; nothing to align to).
+        * ``polygon_crs is None`` — CRS undetermined. Pass through unchanged: the
+          frontend is trusted to have already aligned the polygon to the mesh
+          (same silent-on-None rule ``verify_crs_match`` used).
+        * both defined and equal — return the polygon unchanged (no-op).
+        * both defined and different — reproject the polygon into ``mesh_crs``.
+          This is the behaviour change vs the old verify-only guard: a defined
+          mismatch is now *fixed* (reprojected) rather than raised.
+
+    :param polygon: shapely ``Polygon`` / ``MultiPolygon`` in ``polygon_crs``.
+    :param polygon_crs: CRS of ``polygon`` (pyproj.CRS, EPSG/auth string, or None).
+    :param mesh_crs: CRS of the mesh the polygon will be tested against.
+    :param context: Operation name (reserved for diagnostics; currently unused).
+    :return: The polygon expressed in ``mesh_crs`` (a new geometry if a
+        reprojection happened, otherwise the input object unchanged).
+    """
+    if mesh_crs is None or polygon_crs is None:
+        return polygon
+    if polygon_crs == mesh_crs:
+        return polygon
+    reprojected = gpd.GeoSeries([polygon], crs=polygon_crs).to_crs(mesh_crs)
+    return reprojected.iloc[0]
+
+
 def check_point_layer_crs(
     point_gdf: gpd.GeoDataFrame,
     mesh_gdfs: Dict[str, gpd.GeoDataFrame],
