@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Dict, List
 
 import geopandas as gpd
@@ -11,6 +12,8 @@ from HydrologicalTwinAlphaSeries.config.constants import (
     reversed_module_caw,
 )
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    check_point_layer_crs,
+    format_crs_mismatches,
     get_nearest_cell,
     read_hyd_corresp_file,
 )
@@ -90,7 +93,20 @@ class Extraction():
         self.out_caw_directory = out_caw_directory
 
         self.ext_gdf = ext_gdf
+        self.crs = ext_gdf.crs           # pyproj.CRS or None — CRS of the extraction point layer
         self.mesh_gdfs = mesh_gdfs
+
+        self.crs_mismatches = check_point_layer_crs(
+            ext_gdf, mesh_gdfs, context="extraction points vs mesh"
+        )
+        self.coupling_refused = False    # set by defineExtPoints, which knows cell_col
+        if self.crs_mismatches:
+            warnings.warn(
+                "CRS mismatch between the extraction point layer and the mesh: "
+                f"{format_crs_mismatches(self.crs_mismatches)}. "
+                "Reproject the point layer to match the mesh in QGIS.",
+                stacklevel=2,
+            )
 
         self.layer_name = self.defineLayerGisName()
         self.out_caw_path = self.defineOutCawPath()
@@ -150,6 +166,13 @@ class Extraction():
         if self.config.extIdsCell[id_compartment] is not None:
             cell_col_idx = int(self.config.extIdsCell[id_compartment])
             cell_col = self.ext_gdf.columns[cell_col_idx]
+
+        # Without a cell column the coupling would come from get_nearest_cell(),
+        # whose shapely.Point argument carries no CRS and whose cKDTree always
+        # returns some neighbour. Refuse rather than couple to a wrong cell.
+        self.coupling_refused = bool(self.crs_mismatches) and cell_col is None
+        if self.coupling_refused:
+            return []
 
         for idx, row in self.ext_gdf.iterrows():
             name_point = row[name_col]

@@ -66,7 +66,7 @@ from HydrologicalTwinAlphaSeries.services.public.twin_io import read_values
 from HydrologicalTwinAlphaSeries.services.public.renderer import Renderer
 from HydrologicalTwinAlphaSeries.services.public.spatial import Spatial
 from HydrologicalTwinAlphaSeries.services.public.vec_operator import Comparator, Operator
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import verify_crs_match
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import require_coupling, verify_crs_match
 
 from .api_types import (
     SpatialAverageResponse,
@@ -119,6 +119,16 @@ def _prepare_sim_obs_data(
                 layer.crs,
                 context="observations vs mesh spatial linkage",
             )
+
+    # Both point channels feed the same sim_obs bundle, so both are guarded
+    # before any simulation data is read. Protecting only one would yield a
+    # chart whose observation curves are trustworthy and whose extraction
+    # curves come from cells thousands of kilometres away.
+    require_coupling(comp.obs, context="observation points for sim/obs comparison")
+    if comp.extraction is not None:
+        require_coupling(
+            comp.extraction, context="extraction points for sim/obs comparison"
+        )
 
     # L3 ``read_values`` returns a raw ``(sim_matrix, dates)`` tuple — there is
     # no DTO-returning ``twin.read_values`` method (unlike ``read_observations``

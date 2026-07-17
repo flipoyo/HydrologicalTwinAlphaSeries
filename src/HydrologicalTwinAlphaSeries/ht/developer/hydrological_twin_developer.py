@@ -36,6 +36,8 @@ from .api_types import (
     DescribeRequest,
     ExportRequest,
     ExportResult,
+    ExtractionCatalog,
+    ExtractionInfo,
     FetchRequest,
     InvalidStateError,
     LayerCatalog,
@@ -264,6 +266,34 @@ class HydrologicalTwin:
                     point_ids=list(obs_info.point_ids),
                     layer_ids=list(obs_info.layer_ids),
                     geometries=list(obs_info.geometries),
+                    crs_mismatches=list(obs_info.crs_mismatches),
+                )
+
+            extractions = None
+            ext_info = self.get_extraction_info(comp_info.id_compartment)
+            if request.include_observations and ext_info is not None:
+                extractions = ExtractionCatalog(
+                    layer_name=ext_info.layer_gis_name,
+                    n_points=ext_info.n_points,
+                    point_name_column=(
+                        self.config_geom.extIdsColNames.get(comp_info.id_compartment)
+                        if self.config_geom is not None
+                        else None
+                    ),
+                    point_layer_column=(
+                        self.config_geom.extIdsColLayer.get(comp_info.id_compartment)
+                        if self.config_geom is not None
+                        else None
+                    ),
+                    point_cell_column=(
+                        self.config_geom.extIdsCell.get(comp_info.id_compartment)
+                        if self.config_geom is not None
+                        else None
+                    ),
+                    point_names=list(ext_info.point_names),
+                    layer_ids=list(ext_info.layer_ids),
+                    geometries=list(ext_info.geometries),
+                    crs_mismatches=list(ext_info.crs_mismatches),
                 )
 
             output_parameters: Dict[str, List[str]] = {}
@@ -733,6 +763,14 @@ class HydrologicalTwin:
         """
         from ...services.public import twin_io
         return twin_io.get_observation_info(self, id_compartment)
+
+    def get_extraction_info(self, id_compartment: int) -> Optional[ExtractionInfo]:
+        """Return a serializable snapshot of extraction metadata.
+
+        Returns None if the compartment has no extraction points.
+        """
+        from ...services.public import twin_io
+        return twin_io.get_extraction_info(self, id_compartment)
 
 
     def read_observations(

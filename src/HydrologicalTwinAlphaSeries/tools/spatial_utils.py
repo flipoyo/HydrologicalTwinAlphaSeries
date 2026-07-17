@@ -217,35 +217,6 @@ def verify_crs_match(crs_a, crs_b, context: str = "") -> None:
         )
 
 
-def reproject_to_match(
-    gdf: gpd.GeoDataFrame,
-    target_crs,
-    context: str = "",
-) -> gpd.GeoDataFrame:
-    """
-    Reproject a GeoDataFrame to a target CRS.
-
-    Raises explicitly when the target CRS is None, because silently returning
-    an un-reprojected GDF would hide the misconfiguration.
-
-    :param gdf: GeoDataFrame to reproject
-    :param target_crs: Target CRS (pyproj.CRS, EPSG string, or None)
-    :param context: Operation name included in the error message
-    :return: Reprojected GeoDataFrame (new object), or original if already matching
-    :rtype: gpd.GeoDataFrame
-    :raises ValueError: If target_crs is None
-    """
-    if target_crs is None:
-        ctx = f" for {context}" if context else ""
-        raise ValueError(
-            f"Cannot reproject{ctx}: target CRS is None. "
-            "The reference layer has no CRS defined."
-        )
-    if gdf.crs == target_crs:
-        return gdf
-    return gdf.to_crs(target_crs)
-
-
 def reproject_polygon_to_match(polygon, polygon_crs, mesh_crs, context: str = ""):
     """Reproject a shapely polygon from its CRS into the mesh CRS.
 
@@ -282,3 +253,67 @@ def reproject_polygon_to_match(polygon, polygon_crs, mesh_crs, context: str = ""
         return polygon
     reprojected = gpd.GeoSeries([polygon], crs=polygon_crs).to_crs(mesh_crs)
     return reprojected.iloc[0]
+
+
+def check_point_layer_crs(
+    point_gdf: gpd.GeoDataFrame,
+    mesh_gdfs: Dict[str, gpd.GeoDataFrame],
+    context: str = "",
+) -> List[tuple]:
+    """
+    Compare a point layer's CRS against every mesh layer's CRS.
+
+    Stricter than :func:`verify_crs_match`: an undefined CRS on *either* side
+    counts as a mismatch. A point layer whose ``.prj`` is missing is exactly the
+    case where its coordinates are most likely in an unintended system, and
+    coupling it to a mesh by nearest-neighbour would silently produce wrong cells.
+
+    :param point_gdf: Observation or extraction point GeoDataFrame
+    :param mesh_gdfs: Mapping of mesh layer name to mesh GeoDataFrame
+    :param context: Operation name, for the caller's warning/error message
+    :return: One ``(point_crs, mesh_layer_name, mesh_crs)`` tuple per disagreeing
+             mesh layer; empty list when every layer agrees
+    :rtype: List[tuple]
+    """
+    point_crs = getattr(point_gdf, "crs", None)
+    mismatches: List[tuple] = []
+    for layer_name, mesh_gdf in (mesh_gdfs or {}).items():
+        mesh_crs = getattr(mesh_gdf, "crs", None)
+        if point_crs is None or mesh_crs is None or point_crs != mesh_crs:
+            mismatches.append((point_crs, layer_name, mesh_crs))
+    return mismatches
+
+
+def format_crs_mismatches(mismatches: List[tuple]) -> str:
+    """Render ``check_point_layer_crs`` tuples as one human-readable line each."""
+    return "; ".join(
+        f"point layer CRS {point_crs} vs mesh layer '{layer_name}' CRS {mesh_crs}"
+        for point_crs, layer_name, mesh_crs in mismatches
+    )
+
+
+def require_coupling(points_owner, context: str = "") -> None:
+    """
+    Raise CRSMismatchError when a point→cell coupling was refused at load time.
+
+    Called by every operation that reads coupled points. Returns silently when
+    the coupling is trustworthy — including when ``crs_mismatches`` is non-empty
+    but the cell ids came from an attribute column rather than from a
+    nearest-neighbour lookup.
+
+    :param points_owner: An ``Observation`` or ``Extraction`` instance (or None)
+    :param context: Operation name included in the error message
+    :raises CRSMismatchError: If ``points_owner.coupling_refused`` is True
+    """
+    if points_owner is None:
+        return
+    if not getattr(points_owner, "coupling_refused", False):
+        return
+
+    ctx = f" in {context}" if context else ""
+    details = format_crs_mismatches(getattr(points_owner, "crs_mismatches", []))
+    raise CRSMismatchError(
+        f"CRS mismatch{ctx}: {details}. "
+        "Point-to-cell coupling was refused, so this operation cannot run. "
+        "Reproject the point layer to match the mesh in QGIS, then reload."
+    )

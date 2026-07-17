@@ -3,6 +3,8 @@ from os import sep
 
 import numpy as np
 
+from HydrologicalTwinAlphaSeries.tools.spatial_utils import require_coupling
+
 
 class Budget:
     def __init__(self):
@@ -175,6 +177,12 @@ class Budget:
         print(
             f"Calculate Interannual Hydrological Regime for {compartment.compartment} compartment",
             flush=True,
+        )
+
+        # Refuse before the np.vstack below, which would otherwise raise a bare
+        # numpy ValueError on the empty list a refused coupling leaves behind.
+        require_coupling(
+            compartment.obs, context="observation points for hydrological regime"
         )
 
         # Get observation points

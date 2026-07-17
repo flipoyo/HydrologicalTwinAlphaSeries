@@ -87,3 +87,26 @@ class ObservationInfo:
     layer_ids: List[int]
     geometries: list
     mesh_ids: List[int]
+    # One (point_crs, mesh_layer_name, mesh_crs) tuple per disagreeing mesh layer.
+    crs_mismatches: list = field(default_factory=list)
+
+
+@dataclass
+class ExtractionInfo:
+    """Serializable snapshot of extraction-point metadata.
+
+    Mirrors :class:`ObservationInfo`. ``ExtractionPoint`` stores its geometry as
+    ``.geometry`` (not ``.geometry_point``) and the owning ``Extraction`` names
+    its point list ``ext_point`` (singular).
+    """
+
+    id_compartment: int
+    ext_type: str
+    n_points: int
+    layer_gis_name: str
+    point_names: List[str]
+    cell_ids: List[int]
+    layer_ids: List[int]
+    geometries: list
+    mesh_ids: List[int]
+    crs_mismatches: list = field(default_factory=list)

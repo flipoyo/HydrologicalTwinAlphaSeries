@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Dict, List, Union
 
 import geopandas as gpd
@@ -9,6 +10,8 @@ from HydrologicalTwinAlphaSeries.config.constants import (
 )
 from HydrologicalTwinAlphaSeries.domain.Extraction import Extraction, ExtractionPoint
 from HydrologicalTwinAlphaSeries.tools.spatial_utils import (
+    check_point_layer_crs,
+    format_crs_mismatches,
     get_nearest_cell,
     read_hyd_corresp_file,
 )
@@ -99,6 +102,20 @@ class Observation(Extraction):
         self.crs = obs_gdf.crs           # pyproj.CRS or None — CRS of the observation point layer
         self.mesh_gdfs = mesh_gdfs
 
+        # Observation does not call super().__init__(), so the shared helper is
+        # invoked directly rather than inherited.
+        self.crs_mismatches = check_point_layer_crs(
+            obs_gdf, mesh_gdfs, context="observation points vs mesh"
+        )
+        self.coupling_refused = False    # set by defineObsPoints, which knows cell_col
+        if self.crs_mismatches:
+            warnings.warn(
+                "CRS mismatch between the observation point layer and the mesh: "
+                f"{format_crs_mismatches(self.crs_mismatches)}. "
+                "Reproject the point layer to match the mesh in QGIS.",
+                stacklevel=2,
+            )
+
         self.obs_type = self.defineExtType()
         self.id_mesh = self.defineIdMesh()
 
@@ -147,6 +164,13 @@ class Observation(Extraction):
         if config.obsIdsCell[id_obs] is not None:
             cell_col_idx = int(config.obsIdsCell[id_obs])
             cell_col = self.obs_gdf.columns[cell_col_idx]
+
+        # Without a cell column the coupling would come from get_nearest_cell(),
+        # whose shapely.Point argument carries no CRS and whose cKDTree always
+        # returns some neighbour. Refuse rather than couple to a wrong cell.
+        self.coupling_refused = bool(self.crs_mismatches) and cell_col is None
+        if self.coupling_refused:
+            return []
 
         for idx, row in self.obs_gdf.iterrows():
             id_point = row[id_point_col] if id_point_col is not None else None
