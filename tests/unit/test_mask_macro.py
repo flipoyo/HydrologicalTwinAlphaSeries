@@ -6,8 +6,7 @@ import pytest
 from shapely.geometry import LineString, box
 
 from HydrologicalTwinAlphaSeries.ht import (
-    AqBoundaryFluxResponse,
-    AqBoundaryResponse,
+    BoundaryFluxResponse,
     CellSelectionResponse,
     HydBoundaryFluxResponse,
     HydBoundaryResponse,
@@ -17,7 +16,6 @@ from HydrologicalTwinAlphaSeries.ht import (
     TwinState,
     ValuesResponse,
 )
-from HydrologicalTwinAlphaSeries.tools.spatial_utils import CRSMismatchError
 
 
 def _twin_in_loaded_state() -> HydrologicalTwin:
@@ -125,8 +123,9 @@ def _twin_with_mock_compartment(monkeypatch, mesh_gdf, cell_id_col="cell_id"):
     mesh and id_col, so we mock those two helpers directly.
     """
     twin = _twin_in_loaded_state()
-    monkeypatch.setattr(twin, "_resolve_mesh_gdf", lambda *_args, **_kw: mesh_gdf)
-    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_args, **_kw: cell_id_col)
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+    monkeypatch.setattr(_dispatch, "_resolve_mesh_gdf", lambda *_args, **_kw: mesh_gdf)
+    monkeypatch.setattr(_dispatch, "_resolve_cell_id_col", lambda *_args, **_kw: cell_id_col)
     return twin
 
 
@@ -173,18 +172,21 @@ def test_mask_polygon_cells_missing_polygon_raises(monkeypatch):
         twin.mask(kind="polygon_cells", id_compartment=1)
 
 
-def test_mask_polygon_cells_crs_mismatch_raises(monkeypatch):
+def test_mask_polygon_cells_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs that differs from the mesh CRS is reprojected onto
+    the mesh (not raised). The op runs through and returns a CellSelectionResponse."""
     mesh = _grid_mesh(crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="polygon_cells",
-            id_compartment=1,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="polygon_cells",
+        id_compartment=1,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, CellSelectionResponse)
 
 
 def test_mask_polygon_cells_no_polygon_crs_skips_validation(monkeypatch):
@@ -209,13 +211,47 @@ def test_mask_area_values_with_polygon_without_unit_raises(monkeypatch):
         twin.mask(**_area_values_kwargs(polygon=polygon))
 
 
-def test_mask_area_values_with_polygon_crs_mismatch_raises(monkeypatch):
+def test_mask_area_values_with_polygon_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs that differs from the mesh CRS is reprojected onto
+    the mesh rather than raising — the op proceeds to the values read."""
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+
     mesh = _grid_mesh(crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(0.1, 0.1, 1.9, 1.9)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(**_area_values_kwargs(polygon=polygon, polygon_crs="EPSG:4326"))
+    # Spy on the reprojection so we can assert the geometric test ran against
+    # the mesh CRS, not the raw degrees the caller passed in.
+    reprojected = {}
+    real_reproject = _dispatch.reproject_polygon_to_match
+
+    def spy_reproject(poly, poly_crs, mesh_crs, **kw):
+        out = real_reproject(poly, poly_crs, mesh_crs, **kw)
+        reprojected["bounds"] = out.bounds
+        return out
+
+    monkeypatch.setattr(_dispatch, "reproject_polygon_to_match", spy_reproject)
+
+    called = {"read_watbal_converted": False}
+
+    def fake_read_watbal_converted(**_kw):
+        called["read_watbal_converted"] = True
+        return _make_full_mesh_values_response(n_cells=9)
+
+    monkeypatch.setattr(twin, "read_watbal_converted", fake_read_watbal_converted)
+
+    # No CRSMismatchError: the polygon is reprojected onto the mesh CRS first.
+    response = twin.mask(
+        **_area_values_kwargs(
+            polygon=polygon, polygon_crs="EPSG:4326", target_unit="m3/j"
+        )
+    )
+
+    assert called["read_watbal_converted"] is True
+    assert isinstance(response, ValuesResponse)
+    # EPSG:4326 degrees near the origin land ~11 km out in EPSG:3857 metres —
+    # proof the mesh-CRS geometry, not the raw lon/lat box, drove the selection.
+    assert reprojected["bounds"][0] > 1_000
 
 
 # ---------------------------------------------------------------------------
@@ -491,20 +527,23 @@ def test_mask_boundary_hyd_missing_polygon_raises(monkeypatch):
         twin.mask(kind="boundary_hyd", id_compartment=1)
 
 
-def test_mask_boundary_hyd_crs_mismatch_raises(monkeypatch):
+def test_mask_boundary_hyd_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs differing from the network CRS is reprojected onto
+    the network (not raised); the op returns a HydBoundaryResponse."""
     network = _hyd_network(
         {1: LineString([(2.0, 5.0), (15.0, 5.0)])}, crs="EPSG:3857"
     )
     twin = _twin_with_mock_compartment(monkeypatch, network, cell_id_col="reach_id")
     polygon = box(0.0, 0.0, 10.0, 10.0)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="boundary_hyd",
-            id_compartment=1,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="boundary_hyd",
+        id_compartment=1,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, HydBoundaryResponse)
 
 
 def test_mask_boundary_hyd_meta_carries_inflow_outflow_signs(monkeypatch):
@@ -545,47 +584,52 @@ def test_mask_boundary_hyd_no_boundary_reaches_returns_empty(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# S7 — kind="boundary_aq" + AqBoundaryResponse
+# S7 — kind="boundary_aq" + BoundaryFluxResponse (face orientations)
 # ---------------------------------------------------------------------------
 
 
-def test_mask_boundary_aq_returns_aq_boundary_response(monkeypatch):
-    """3x1 strip; polygon covers only middle cell — its 2 outside neighbours give 2 boundary edges."""
+def test_mask_boundary_aq_returns_boundary_response(monkeypatch):
+    """3x1 strip; polygon covers only middle cell — its 2 outside neighbours
+    give 2 flux faces on that single boundary cell."""
     mesh = _grid_mesh(nx=3, ny=1)
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(1.1, 0.1, 1.9, 0.9)  # contains only the middle cell's centroid (id 2)
 
     response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
 
-    assert isinstance(response, AqBoundaryResponse)
-    assert sorted(response.cell_ids) == [2, 2]
-    assert len(response.edge_geometries) == 2
-    assert all(edge.geom_type == "LineString" for edge in response.edge_geometries)
+    assert isinstance(response, BoundaryFluxResponse)
+    # One entry per boundary cell; cell 2 is the only inside cell.
+    assert response.cell_ids == [2]
+    assert len(response.face_directions[2]) == 2  # left + right outside faces
+    # edge_geometries is keyed by cell_id with one merged geometry per cell.
+    assert set(response.edge_geometries.keys()) == {2}
+    assert response.edge_geometries[2].geom_type in ("LineString", "MultiLineString")
     assert response.meta["id_compartment"] == 2
-    assert response.meta["id_layer"] == 0
+    assert response.meta["id_layers"] == [0]
     assert response.meta["kind"] == "boundary_aq"
 
 
-def test_mask_boundary_aq_passes_id_layer_through(monkeypatch):
-    """id_layer reaches _resolve_mesh_gdf and ends up in the response meta."""
+def test_mask_boundary_aq_scans_all_id_layers(monkeypatch):
+    """id_layers drives one _resolve_mesh_gdf call per layer; meta carries the list."""
     mesh = _grid_mesh(nx=3, ny=1)
     captured_layers = []
 
-    def fake_resolve_mesh_gdf(id_compartment, id_layer=0):
+    def fake_resolve_mesh_gdf(twin, id_compartment, id_layer=0):
         captured_layers.append(id_layer)
         return mesh
 
     twin = _twin_in_loaded_state()
-    monkeypatch.setattr(twin, "_resolve_mesh_gdf", fake_resolve_mesh_gdf)
-    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_a, **_kw: "cell_id")
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+    monkeypatch.setattr(_dispatch, "_resolve_mesh_gdf", fake_resolve_mesh_gdf)
+    monkeypatch.setattr(_dispatch, "_resolve_cell_id_col", lambda *_a, **_kw: "cell_id")
     polygon = box(1.1, 0.1, 1.9, 0.9)
 
     response = twin.mask(
-        kind="boundary_aq", id_compartment=2, polygon=polygon, id_layer=3
+        kind="boundary_aq", id_compartment=2, polygon=polygon, id_layers=[3]
     )
 
     assert captured_layers == [3]
-    assert response.meta["id_layer"] == 3
+    assert response.meta["id_layers"] == [3]
 
 
 def test_mask_boundary_aq_missing_id_compartment_raises(monkeypatch):
@@ -605,18 +649,21 @@ def test_mask_boundary_aq_missing_polygon_raises(monkeypatch):
         twin.mask(kind="boundary_aq", id_compartment=2)
 
 
-def test_mask_boundary_aq_crs_mismatch_raises(monkeypatch):
+def test_mask_boundary_aq_crs_mismatch_reprojects(monkeypatch):
+    """A defined polygon_crs differing from the AQ mesh CRS is reprojected onto
+    the mesh (not raised); the op returns a BoundaryFluxResponse."""
     mesh = _grid_mesh(nx=3, ny=1, crs="EPSG:3857")
     twin = _twin_with_mock_compartment(monkeypatch, mesh)
     polygon = box(1.1, 0.1, 1.9, 0.9)
 
-    with pytest.raises(CRSMismatchError):
-        twin.mask(
-            kind="boundary_aq",
-            id_compartment=2,
-            polygon=polygon,
-            polygon_crs="EPSG:4326",
-        )
+    response = twin.mask(
+        kind="boundary_aq",
+        id_compartment=2,
+        polygon=polygon,
+        polygon_crs="EPSG:4326",
+    )
+
+    assert isinstance(response, BoundaryFluxResponse)
 
 
 def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):
@@ -627,7 +674,8 @@ def test_mask_boundary_aq_polygon_disjoint_returns_empty(monkeypatch):
     response = twin.mask(kind="boundary_aq", id_compartment=2, polygon=polygon)
 
     assert response.cell_ids == []
-    assert response.edge_geometries == []
+    assert response.edge_geometries == {}
+    assert response.face_directions == {}
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +827,10 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
         "north": _make_face_flux_response(n_cells=5, value=4.0),
     }
 
+    # boundary_aq resolves the boundary cells + flux faces; boundary_aq_flux
+    # reuses them via face_orientations rather than recomputing from the mesh.
+    face_orientations = twin.mask(kind="boundary_aq", id_compartment=1, polygon=polygon)
+
     response = twin.mask(
         kind="boundary_aq_flux",
         id_compartment=1,
@@ -786,9 +838,10 @@ def test_mask_boundary_aq_flux_pulls_per_face_time_series(monkeypatch):
         syear=2010,
         eyear=2011,
         face_responses=face_responses,
+        face_orientations=face_orientations,
     )
 
-    assert isinstance(response, AqBoundaryFluxResponse)
+    assert isinstance(response, BoundaryFluxResponse)
     assert response.cell_ids == [1]
     assert sorted(response.face_directions[1]) == ["east", "north", "south", "west"]
     # Each direction's flux is 5 timesteps of the per-direction constant.
@@ -816,6 +869,10 @@ def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
     }
     polygon = box(100.0, 100.0, 200.0, 200.0)
 
+    # Disjoint polygon → boundary_aq finds no boundary cells; the empty
+    # orientations carry through to an empty flux response.
+    face_orientations = twin.mask(kind="boundary_aq", id_compartment=1, polygon=polygon)
+
     response = twin.mask(
         kind="boundary_aq_flux",
         id_compartment=1,
@@ -823,6 +880,7 @@ def test_mask_boundary_aq_flux_disjoint_returns_empty(monkeypatch):
         syear=2010,
         eyear=2011,
         face_responses=face_responses,
+        face_orientations=face_orientations,
     )
 
     assert response.cell_ids == []

@@ -9,8 +9,7 @@ from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
     assemble_single_layer_geodataframe,
 )
 from HydrologicalTwinAlphaSeries.services.public.polygon_mask import (
-    aq_cells_boundary_faces,
-    aq_cells_on_polygon_boundary,
+    cells_boundary_faces,
     cells_in_polygon,
     cells_in_polygon_weighted,
     reaches_in_polygon_carachterisation,
@@ -47,10 +46,9 @@ __all__ = [
     "Spatial",
     "Temporal",
     "ValuesResponse",
-    "aq_cells_boundary_faces",
-    "aq_cells_on_polygon_boundary",
     "assemble_multi_layer_geodataframe",
     "assemble_single_layer_geodataframe",
+    "cells_boundary_faces",
     "cells_in_polygon",
     "cells_in_polygon_weighted",
     "detect_from_out_caw",

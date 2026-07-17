@@ -25,10 +25,11 @@ from HydrologicalTwinAlphaSeries.domain.Compartment import Compartment
 from HydrologicalTwinAlphaSeries.services.public.budget import Budget
 from HydrologicalTwinAlphaSeries.services.public.temporal import Temporal
 
-from ..persistence import HTPersistenceMixin
 from .api_types import (
     ALLOWED_TRANSITIONS,
     MINIMUM_STATE,
+    AssembleRequest,
+    CompartmentBundleResult,
     CompartmentCatalog,
     CompartmentInfo,
     ConfigureRequest,
@@ -60,7 +61,7 @@ from .api_types import (
 )
 
 
-class HydrologicalTwin(HTPersistenceMixin):
+class HydrologicalTwin:
     """HydrologicalTwin class is the main and only entry point for the hydrological twin package. It encapsulates the entire twin state and provides the canonical public API for configuration, data loading, description, extraction, transformation, rendering, and export. This Alpha Series is a first POC of a wider project that will develop private methods for :
     extraction, git synchronisation for navigation in the space-state continuum of data, software and simulations, building and launching of CaWaQS submodels, creation of subtwins, advanced multisimulation statistics, bayesian inference, uncertainties quantification, intellectual rights and property certification.
 
@@ -355,7 +356,7 @@ class HydrologicalTwin(HTPersistenceMixin):
                 "sim_obs_interactive",
                 "aq_flux_diagram",
             ],
-            export_formats=["pickle"],
+            export_formats=["npy", "geopackage"],
         )
 
     @staticmethod
@@ -655,29 +656,73 @@ class HydrologicalTwin(HTPersistenceMixin):
 
     def export(
         self,
-        path: Optional[str] = None,
-        fmt: str = "pickle",
+        kind: Union[str, ExportRequest] = "npy",
         request: Optional[ExportRequest] = None,
         **kwargs: Any,
     ) -> ExportResult:
-        """Export data or twin snapshot to disk via the canonical macro API."""
+        """Serialize already-computed data to disk, keyed by **data format**.
+
+        ``export`` is the 5th canonical dispatching verb, alongside ``fetch``,
+        ``mask``, ``transform``, and ``render``. ``kind`` selects a file format
+        (``"npy"`` or ``"geopackage"``) — never a semantic artefact and never an
+        image type (PNG/PDF/HTML stay with ``render``: ``render`` = pixels,
+        ``export`` = data files). It is **pure serialization**: it performs no
+        ``fetch``/``transform``/compute and no shaping beyond what the
+        destination L3 writer already does — a transparent pass-through to the
+        privileged L3 writers in ``services/private/submodel_export.py``.
+
+        Follows the same coercion idiom as the other dispatching verbs: pass a
+        pre-built :class:`ExportRequest` positionally, or supply kwargs
+        (``path``, ``data``, ``options``) that are folded into one. Unexpected
+        kwargs raise ``TypeError``.
+        """
         self._require_state("export")
-        if isinstance(path, ExportRequest) and request is None:
-            request = path
-            path = None
-        if request is not None:
-            path = request.path
-            fmt = request.fmt
-        if kwargs:
+        if isinstance(kind, ExportRequest) and request is None:
+            request = kind
+            kind = request.kind
+        if request is None:
+            request = ExportRequest(kind=kind, **kwargs)
+        elif kwargs:
             unexpected = ", ".join(sorted(kwargs))
             raise TypeError(f"Unexpected keyword arguments: {unexpected}")
-        if fmt == "pickle":
-            if path is None:
-                raise ValueError("'path' is required for pickle export.")
-            self.to_pickle(path)
-        else:
-            raise ValueError(f"Unknown export format: {fmt!r}")
-        return ExportResult(path=path, meta={"fmt": fmt})
+
+        from . import dispatch
+        return dispatch.export(self, request)
+
+    def assemble(
+        self,
+        kind: Union[str, AssembleRequest] = "compartment_bundle",
+        request: Optional[AssembleRequest] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Shape already-fetched per-key blocks into a serialization-ready payload.
+
+        ``assemble`` is the 6th canonical dispatching verb, alongside ``fetch``,
+        ``mask``, ``transform``, ``render``, and ``export``. ``kind`` selects a
+        shaping workflow (``"compartment_bundle"`` for a GeoPackage bundle,
+        ``"boundary_aq_layers"`` for per-aquifer-layer borders GeoDataFrames). It
+        is **shape-only**:
+        it performs no ``fetch``/``mask``/``transform`` and no disk I/O — the
+        returned :class:`CompartmentBundleResult` is written by a subsequent
+        ``twin.export(kind="geopackage", ...)`` call.
+
+        Follows the same coercion idiom as the other dispatching verbs: pass a
+        pre-built :class:`AssembleRequest` positionally, or supply kwargs that
+        are folded into one. Unexpected kwargs raise ``TypeError``.
+        """
+        self._require_state("assemble")
+        if isinstance(kind, AssembleRequest) and request is None:
+            request = kind
+            kind = request.kind
+        if request is None:
+            assert isinstance(kind, str)
+            request = AssembleRequest(kind=kind, **kwargs)
+        elif kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+
+        from . import dispatch
+        return dispatch.assemble(self, request)
 
     def get_compartment(self, id_compartment: int) -> Compartment:
         """Return a registered Compartment.
@@ -686,16 +731,6 @@ class HydrologicalTwin(HTPersistenceMixin):
         """
         from ...services.public import twin_io
         return twin_io.get_compartment(self, id_compartment)
-
-    def _resolve_mesh_gdf(self, id_compartment: int, id_layer: int = 0):
-        """Return the mesh GeoDataFrame for a compartment's layer."""
-        from ...services.public import twin_io
-        return twin_io._resolve_mesh_gdf(self, id_compartment, id_layer)
-
-    def _resolve_cell_id_col(self, id_compartment: int) -> Union[str, int]:
-        """Return the name or index of the cell ID column for a compartment's mesh."""
-        from ...services.public import twin_io
-        return twin_io._resolve_cell_id_col(self, id_compartment)
 
     def get_compartment_info(self, id_compartment: int) -> CompartmentInfo:
         """Return a serializable snapshot of compartment metadata."""

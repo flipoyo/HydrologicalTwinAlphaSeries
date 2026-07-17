@@ -234,18 +234,20 @@ class TestMacroMethods:
         assert "simulation_matrix" in desc.catalog.extract_kinds
         assert "budget_barplot" in desc.catalog.render_kinds
 
-    def test_export_pickle_returns_export_result(self, tmp_path):
+    def test_export_npy_returns_export_result(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
-        pkl_path = str(tmp_path / "twin.pkl")
-        result = twin.export(path=pkl_path, fmt="pickle")
-        assert isinstance(result, ExportResult)
-        assert result.path == pkl_path
-        assert result.meta["fmt"] == "pickle"
+        npy_path = str(tmp_path / "values.npy")
+        import numpy as np
 
-    def test_export_unknown_format_raises(self, tmp_path):
+        result = twin.export(kind="npy", path=npy_path, data=np.zeros((2, 3)))
+        assert isinstance(result, ExportResult)
+        assert result.path == npy_path
+        assert result.meta["kind"] == "npy"
+
+    def test_export_unknown_kind_raises(self, tmp_path):
         twin = self._make_loaded_twin(tmp_path)
-        with pytest.raises(ValueError, match="Unknown export format"):
-            twin.export(path=str(tmp_path / "x"), fmt="unknown")
+        with pytest.raises(ValueError, match="Unknown export kind"):
+            twin.export(kind="unknown", path=str(tmp_path / "x"))
 
     def test_render_returns_file_artefacts(self, tmp_path, monkeypatch):
         twin = self._make_loaded_twin(tmp_path)

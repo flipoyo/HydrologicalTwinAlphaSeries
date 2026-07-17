@@ -166,9 +166,15 @@ class Mesh:
             return f"Layer count {self.ncells} cells"
 
         class Cell:
-            def __init__(self, id_compartment, id_cell, geometry, id_abs=None):
+            def __init__(self, id_compartment, id_cell, geometry, id_abs=None, id_gis=None):
                 self.id = id_cell  # id int of the cells
                 self.id_abs = id_abs
+                # id_gis: the id the user's own vector layer carries (what they see
+                # in QGIS / their attribute table). For HYD it is the pre-translation
+                # GIS reach id; for AQ/WATBAL/other (and the HYD fallback) it equals
+                # id_abs. Carried here so output sites can relabel ID_ABS -> ID_GIS
+                # without re-reading HYD_corresp_file.txt (see design D1).
+                self.id_gis = id_gis
                 self.geometry = geometry  # shapely geometry
                 self.area = geometry.area  # in meters (shapely uses .area property)
 
@@ -212,8 +218,12 @@ class Mesh:
                     if id_cell >= 0:
                         geometry_cell = row.geometry
 
+                        # AQ / WATBAL / other: GIS id == ABS id, so id_gis == id_cell.
                         layer.append(
-                            self.Cell(self.id_compartment, id_cell, geometry_cell)
+                            self.Cell(
+                                self.id_compartment, id_cell, geometry_cell,
+                                id_gis=id_cell,
+                            )
                         )
 
             else:
@@ -224,7 +234,14 @@ class Mesh:
                         id_int = corr_file["ID_ABS"].loc[id_gis]
                         geometry_cell = row.geometry
 
-                        layer.append(self.Cell(self.id_compartment, id_int, geometry_cell))
+                        # HYD: id is the translated ABS id; keep the pre-translation
+                        # GIS id (read one line up) so output can relabel back to it.
+                        layer.append(
+                            self.Cell(
+                                self.id_compartment, id_int, geometry_cell,
+                                id_gis=id_gis,
+                            )
+                        )
 
                 except FileNotFoundError as e:
                     print(
@@ -238,8 +255,13 @@ class Mesh:
                         id_cell = row[col_name]
                         if id_cell >= 0:
                             geometry_cell = row.geometry
+                            # HYD fallback: no inward translation, so the raw id is
+                            # already the GIS id — id_gis == id_abs, relabel is a no-op.
                             layer.append(
-                                self.Cell(self.id_compartment, id_cell, geometry_cell)
+                                self.Cell(
+                                    self.id_compartment, id_cell, geometry_cell,
+                                    id_gis=id_cell,
+                                )
                             )
 
             return layer

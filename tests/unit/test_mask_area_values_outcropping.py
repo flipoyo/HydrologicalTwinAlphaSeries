@@ -128,8 +128,9 @@ def _grid_mesh(nx=3, ny=3, crs="EPSG:3857"):
 def test_watbal_default_resolution_uses_single_layer_path(monkeypatch):
     twin = _twin_in_loaded_state()
     mesh = _grid_mesh()  # 9 cells, ids 1..9
-    monkeypatch.setattr(twin, "_resolve_mesh_gdf", lambda *_a, **_k: mesh)
-    monkeypatch.setattr(twin, "_resolve_cell_id_col", lambda *_a, **_k: "cell_id")
+    import HydrologicalTwinAlphaSeries.ht.developer.dispatch as _dispatch
+    monkeypatch.setattr(_dispatch, "_resolve_mesh_gdf", lambda *_a, **_k: mesh)
+    monkeypatch.setattr(_dispatch, "_resolve_cell_id_col", lambda *_a, **_k: "cell_id")
 
     def _outcropping_must_not_be_called(*_a, **_k):
         raise AssertionError(

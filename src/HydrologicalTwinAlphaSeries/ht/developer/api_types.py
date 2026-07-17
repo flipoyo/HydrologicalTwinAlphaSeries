@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import numpy as np
 
@@ -53,6 +53,7 @@ MINIMUM_STATE: Dict[str, TwinState] = {
     "transform": TwinState.LOADED,
     "render": TwinState.LOADED,
     "export": TwinState.LOADED,
+    "assemble": TwinState.LOADED,
 }
 
 
@@ -144,6 +145,7 @@ class MaskRequest:
     syear: Optional[int] = None
     eyear: Optional[int] = None
     id_layer: int = 0
+    id_layers: Optional[List[int]] = None
     cutsdate: Optional[str] = None
     cutedate: Optional[str] = None
     polygon: Any = None
@@ -167,6 +169,68 @@ class MaskRequest:
     # (keyed by direction name, e.g. ``"east"``, ``"west"``, ``"south"``, ``"north"``).
     q_response: Optional[Any] = None
     face_responses: Optional[Dict[str, Any]] = None
+    # The boundary_aq BoundaryFluxResponse, threaded into boundary_aq_flux so
+    # the flux pass reuses the multi-layer boundary faces / edges instead of
+    # recomputing them. Typed Any (like q_response / face_responses) because it
+    # carries a response dataclass, not a bare mapping.
+    face_orientations: Optional[Any] = None
+
+
+@dataclass
+class AssembleRequest:
+    """Inputs for ``HydrologicalTwin.assemble(kind=...)``.
+
+    ``assemble`` is shape-only: it turns already-fetched per-key blocks into a
+    serialization-ready payload (a :class:`CompartmentBundleResult`) that a
+    subsequent ``twin.export(kind="geopackage", ...)`` writes to disk. It never
+    fetches/masks and never touches disk itself.
+
+    ``kind`` is the only required field; the rest are optional so the same
+    request shape can serve future kinds. For ``kind="compartment_bundle"``:
+
+    - ``label`` — basename token (e.g. ``"InternalValues"``); L3 composes
+      ``{area_name}_{label}_{syear}_{eyear}.gpkg``.
+    - ``compartment_blocks`` — the generic per-key block mapping
+      ``{key: (rows_gdf, {series_key: ValuesResponse}, totals)}``.
+    - ``output_dir`` — the directory the composed ``gpkg_path`` lives in.
+    - ``source_run`` — a twin-derived value (the caller passes
+      ``twin.out_caw_directory``) so L3 needs no upward import.
+
+    For ``kind="boundary_aq_layers"`` (shape-only grouping of AQ boundary edges
+    into one GeoDataFrame per aquifer layer):
+
+    - ``edge_geometries`` — ``{cell_id: merged_edge_geometry}`` from the
+      ``boundary_aq`` response.
+    - ``cell_layer_ids`` — ``{cell_id: id_layer}`` (0-based) from the same
+      response, tagging each boundary cell with its aquifer layer.
+    - ``crs`` — the CRS the per-layer GeoDataFrames are built in.
+    - ``face_directions`` — ``{cell_id: [direction, ...]}`` from the same
+      response, used to format the per-cell ``faces`` cardinal-direction column.
+    - ``face_sources`` — ``{cell_id: {direction: {"sign", "outside_ids"}}}`` from
+      the same response, used to format the per-cell ``outside_ids`` coarse-cell
+      provenance column (empty for cells with no ``EXT_cell`` face).
+    """
+
+    kind: str = "compartment_bundle"
+    label: Optional[str] = None
+    compartment_blocks: Optional[Mapping] = None
+    output_dir: Optional[str] = None
+    area_name: Optional[str] = None
+    syear: Optional[int] = None
+    eyear: Optional[int] = None
+    polygon: Any = None
+    polygon_crs: Any = None
+    weighted: bool = False
+    source_run: Optional[str] = None
+    # Extra flat columns merged into every provenance row (compartment_bundle),
+    # e.g. the AQ boundary-flux sign convention. None leaves rows unchanged.
+    provenance_extra: Optional[Mapping[str, Any]] = None
+    # Inputs for kind="boundary_aq_layers".
+    edge_geometries: Optional[Mapping[Any, Any]] = None
+    cell_layer_ids: Optional[Mapping[Any, int]] = None
+    crs: Any = None
+    face_directions: Optional[Mapping[Any, Any]] = None
+    face_sources: Optional[Mapping[Any, Any]] = None
 
 
 @dataclass
@@ -199,6 +263,8 @@ class TransformRequest:
     areas: Optional[np.ndarray] = None
     aq_inputs: Any = None
     regime: Optional[str] = None
+    # Volumetric token for kind="volumetric_rescale" (e.g. "m3/j", "m3/mois").
+    target_unit: Optional[str] = None
 
 
 @dataclass
@@ -244,9 +310,21 @@ class RenderRequest:
 
 @dataclass
 class ExportRequest:
-    path: Optional[str] = None
-    fmt: str = "pickle"
+    """Inputs for ``HydrologicalTwin.export(kind=...)`` (alpha-2 shape).
+
+    ``kind`` selects a **data file format** (``"npy"`` or ``"geopackage"``),
+    not a semantic artefact and never an image type. ``data`` carries the
+    primary payload (an ndarray for npy, the ``compartment_blocks`` mapping for
+    geopackage) and ``options`` carries kind-specific extras (e.g.
+    ``provenance_rows`` / ``unit_override`` for geopackage). The extras ride an
+    ``options`` dict rather than ``**kwargs`` so they never collide with the
+    facade's ``request=`` coercion idiom.
+    """
+
+    kind: str = "npy"
+    path: str = ""
     data: Any = None
+    options: Dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -308,13 +386,6 @@ class HydBoundaryResponse:
 
 
 @dataclass
-class AqBoundaryResponse:
-    cell_ids: List[Any] = field(default_factory=list)
-    edge_geometries: List[Any] = field(default_factory=list)
-    meta: Optional[Dict[str, Any]] = None
-
-
-@dataclass
 class HydBoundaryFluxResponse:
     """Per-boundary-reach signed discharge time series.
 
@@ -330,17 +401,40 @@ class HydBoundaryFluxResponse:
 
 
 @dataclass
-class AqBoundaryFluxResponse:
+class BoundaryFluxResponse:
     """Per-(boundary-cell, face-direction) flux time series.
 
     fluxes is nested: ``fluxes[cell_id][direction]`` is a 1D ndarray of
     length n_timesteps. Sign convention follows CaWaQS data (positive =
     flux entering the cell). Unit conversion (m³/s → m³/d) is left to
     the caller — the response carries raw m³/s data.
+
+    ``cell_layer_ids`` tags each boundary ``cell_id`` with the 0-based
+    ``id_layer`` of the aquifer layer it belongs to. The ``boundary_aq`` scan
+    visits every layer named in ``id_layers``, and the cross-layer-uniqueness
+    guard ensures each ``cell_id`` appears in exactly one layer, so this mapping
+    is single-valued. It lets downstream consumers split the merged boundary
+    edges back into one surface per aquifer layer. The flux-bearing
+    ``boundary_aq_flux`` mask keys on ``cell_id``/direction and never reads it.
+
+    ``face_sources`` is the per-(cell, direction) flux-source map produced by the
+    boundary face detection: ``{cell_id: {direction: {"sign": +1 | -1,
+    "outside_ids": [id, ...]}}}``. ``sign=+1`` (``INT_cell``, empty
+    ``outside_ids``) means read the inside cell's own face flux for that
+    direction; ``sign=-1`` (``EXT_cell``) means the inside cell is coarser on that
+    side, so its own face is a *blended* net and the flux is instead the negated
+    sum of the ``outside_ids`` smaller outside neighbours' opposing faces (see the
+    coarse-cell correction in ``dispatch.mask(kind="boundary_aq_flux")``).
+    ``boundary_aq`` populates it and threads it to ``boundary_aq_flux``. It
+    defaults to an empty mapping, so an equal-resolution mesh (all ``INT_cell``)
+    or any existing construction without it reduces to prior own-face behaviour.
     """
     cell_ids: List[Any] = field(default_factory=list)
     face_directions: Dict[Any, List[str]] = field(default_factory=dict)
+    edge_geometries: Dict[Any, Any] = field(default_factory=dict)
     fluxes: Dict[Any, Dict[str, np.ndarray]] = field(default_factory=dict)
+    cell_layer_ids: Dict[Any, int] = field(default_factory=dict)
+    face_sources: Dict[Any, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     dates: Optional[np.ndarray] = None
     meta: Optional[Dict[str, Any]] = None
 
@@ -511,3 +605,63 @@ class RenderResult:
 class ExportResult:
     path: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class CompartmentBundleResult:
+    """Serialization-ready payload from ``assemble(kind="compartment_bundle")``.
+
+    Constructed at L2 (``dispatch.assemble`` wraps the plain 4-tuple returned by
+    the L3 :func:`build_compartment_bundle`) and consumed by L1
+    ``operations_client``. L3 never names this type, so the import edge stays
+    downward only. ``gpkg_path`` is a *composed* path string — no file exists at
+    it until a later ``twin.export(kind="geopackage", ...)`` writes it.
+    """
+
+    gpkg_path: str
+    compartment_blocks: Mapping
+    provenance_rows: list
+    unit_override: Mapping
+
+
+@dataclass
+class BoundaryAqLayersResult:
+    """Per-aquifer-layer borders payload from ``assemble(kind="boundary_aq_layers")``.
+
+    Constructed at L2 (``dispatch.assemble`` wraps the plain list returned by the
+    pure L3 :func:`build_boundary_aq_layers`) and consumed by L1
+    ``operations_client``. L3 never names this type, so the import edge stays
+    downward only. Shape-only: the GeoDataFrames live in memory, no file is
+    written.
+
+    ``entries`` is an ordered ``[(id_layer, gdf), ...]`` list — one GeoDataFrame
+    per aquifer layer that has boundary cells, ascending by ``id_layer``. Each
+    ``gdf`` carries a ``cell_id`` column, a ``faces`` cardinal-direction column,
+    and the cells' merged boundary-edge geometry. Layers the polygon does not
+    reach are absent (silent skip); an empty input yields an empty list.
+
+    ``faces_by_cell`` is the flat ``{cell_id: faces_str}`` map over every boundary
+    cell — the same comma-separated cardinal-direction string the geometry rows
+    carry — produced at the single L3 formatting site so a caller can annotate the
+    GeoPackage ``daily_values`` surface without re-formatting (design D5).
+
+    ``outside_ids_by_cell`` is the flat ``{cell_id: outside_ids_str}`` map over
+    every boundary cell — comma-joined ids of the smaller outside neighbours a
+    coarse cell's flux was sourced from (across all that cell's ``EXT_cell``
+    faces), empty for a cell whose faces are all ``INT_cell`` — produced at the
+    same single L3 formatting site so the GeoPackage ``daily_values`` coarse-cell
+    provenance column is self-describing without L1 re-formatting (design D6).
+
+    ``face_slots_by_cell`` is the per-cell ``{cell_id: {column: value}}`` map
+    spreading each boundary cell's face structure across the seven fixed columns
+    ``n_faces`` + ``faceN_orient`` / ``faceN_outid`` (N ∈ {1, 2, 3}). Produced at
+    the same single L3 formatting site (design D1/D2/D4) so L1 can forward it
+    unchanged into ``twin.export(kind="geopackage", ...)`` as
+    ``daily_values_face_slots``, from which the writer materialises the seven
+    columns on both the geometry layer and the values table (design D5/D7).
+    """
+
+    entries: List[tuple] = field(default_factory=list)
+    faces_by_cell: Dict[Any, str] = field(default_factory=dict)
+    outside_ids_by_cell: Dict[Any, str] = field(default_factory=dict)
+    face_slots_by_cell: Dict[Any, Dict[str, Any]] = field(default_factory=dict)

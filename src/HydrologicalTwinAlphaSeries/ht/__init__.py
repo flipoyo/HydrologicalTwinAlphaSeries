@@ -1,8 +1,7 @@
 from HydrologicalTwinAlphaSeries.ht.developer import (
-    AqBoundaryFluxResponse,
-    AqBoundaryResponse,
     AquiferBalanceInputsResponse,
     AquiferBalanceResponse,
+    BoundaryFluxResponse,
     BudgetComputationResponse,
     CellSelectionResponse,
     CompartmentCatalog,
@@ -39,10 +38,9 @@ from HydrologicalTwinAlphaSeries.ht.developer import (
 )
 
 __all__ = [
-    "AqBoundaryFluxResponse",
-    "AqBoundaryResponse",
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
+    "BoundaryFluxResponse",
     "BudgetComputationResponse",
     "CellSelectionResponse",
     "CompartmentCatalog",
