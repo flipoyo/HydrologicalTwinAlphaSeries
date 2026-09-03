@@ -38,3 +38,4 @@ Thumbs.db
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+docs/hydrological_twin
