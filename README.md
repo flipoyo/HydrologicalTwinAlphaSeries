@@ -2,6 +2,15 @@
 
 HydrologicalTwinAlphaSeries is the standalone scientific backend supporting CaWaQS-ViZ.
 
+> **Looking to read and explore your CaWaQS simulation results?**
+> This repository is intended mainly for developers. If you want to use it to
+> read and visualize your results, go through CaWaQS-ViZ instead:
+>
+> * [CaWaQS-ViZ README](https://gitlab.com/cawaqs/gviz/cawaqsviz/-/blob/main/README.md): installation and overview
+> * CaWaQS-ViZ user guide: [English](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_ENG.tex) | [French](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_FR.tex)
+>
+> The documentation for this backend is still a work in progress.
+
 It serves as a proof-of-concept (POC) for the HydrologicalTwin framework and is dedicated to the definition, validation, and consolidation of its core computational structures.
 
 The repository provides the backend layer required to structure hydrological simulation outputs, expose controlled programmatic interfaces, and support post-processing workflows required by the visualization layer. It focuses strictly on the backend domain, including data structuring and transformation, computational services, configuration models, and API exposure for external consumers. It does not include user interface components, QGIS integration logic, or visualization responsibilities.
