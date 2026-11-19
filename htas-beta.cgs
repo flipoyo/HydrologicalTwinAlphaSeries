@@ -1,0 +1,7 @@
+project = { name = "HydrologicalTwinAlphaSeries", default_branch = "HT-BETA" }
+repos = [
+    { repository = "github:flipoyo/HydrologicalTwinAlphaSeries", fallback_branch = "main"},
+    { repository = "github:flipoyo/ComplexGitSync", fallback_branch = "CGS-ALPHA", nested_config = "disabled" },
+    { repository = "github:flipoyo/hydrological_twin", relative_path = "docs/hydrological_twin" },
+    { repository = "github:flipoyo/.memory", relative_path = ".cgitsync/.memory", fallback_branch = "main", private = true, writable = true, nested_config = "disabled" },
+]

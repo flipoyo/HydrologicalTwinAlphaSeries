@@ -38,3 +38,6 @@ Thumbs.db
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+.cgitsync/
+HydrologicalTwinAlphaSeries.lgr
+docs/hydrological_twin
