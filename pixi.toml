@@ -1,0 +1,22 @@
+[workspace]
+name = "HydrologicalTwinAlphaSeries"
+version = "1.0.0"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tasks]
+run = "python -m HydrologicalTwinAlphaSeries"
+test = "pytest"
+lint = "ruff check src tests"
+dev-setup = "pre-commit install"
+bump-version = "python .agent/.local/.dev/scripts/bump_version.py"
+bump-build = "python scripts/bump_build.py"
+
+[dependencies]
+python = "3.11.*"
+pytest = ">=8,<9"
+ruff = ">=0.12,<1"
+pre-commit = ">=3.7"
+
+[pypi-dependencies]
+HydrologicalTwinAlphaSeries = { path = ".", editable = true }

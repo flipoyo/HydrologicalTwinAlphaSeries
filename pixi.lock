@@ -295,8 +295,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./
   name: hydrologicaltwinalphaseries
-  version: 0a40
-  sha256: 97e6a9bd8b67d7d02374f9dda3acdbd10659f84ffa579c2463741eff2db247dc
+  version: 1.0.0
+  sha256: ed9eeccca249d2a657a8102c5a7521420020e8c473b7b188963d47756a0c4a86
   requires_dist:
   - geopandas>=1.1.2,<2
   - matplotlib>=3.10.8,<4
@@ -307,7 +307,7 @@ packages:
   - shapely>=2,<3
   - pytest>=8,<9 ; extra == 'dev'
   - ruff>=0.12,<1 ; extra == 'dev'
-  requires_python: '>=3.10'
+  requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/noarch/identify-2.6.19-pyhd8ed1ab_0.conda
   sha256: 381cedccf0866babfc135d65ee40b778bd20e927d2a5ec810f750c5860a7c5b8
   md5: 84a3233b709a289a4ddd7a2fd27dd988

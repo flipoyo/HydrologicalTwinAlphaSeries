@@ -9,3 +9,5 @@ try:
     __version__: str = version("HydrologicalTwinAlphaSeries")
 except PackageNotFoundError:  # pragma: no cover - only when running from source without install
     __version__ = "0.0.0.dev0"
+
+__build__ = "2026.01"
