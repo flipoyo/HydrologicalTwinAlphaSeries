@@ -43,3 +43,10 @@ HydrologicalTwinAlphaSeries.lgr
 docs/hydrological_twin
 .cgitsync/.memory
 ComplexGitSync
+.agent/.distant/dev-sync
+.agent/.distant/documentation
+.agent/.distant/ticket
+.agent/.local/.claude
+.agent/.local/.dev
+.agent/.local/.localSpec
+.omniscience
