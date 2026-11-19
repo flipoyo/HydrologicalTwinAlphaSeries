@@ -70,3 +70,19 @@ print(
     ]
 )
 ```
+
+
+## File-based provider and the command line
+
+```python
+from HydrologicalTwinAlphaSeries.services.public import FileGeoProvider
+
+provider = FileGeoProvider({"AQ_LAYER": "/data/gis/aq.gpkg"})
+twin.load(geo_provider=provider)
+```
+
+```bash
+pixi run htas detect run /data/OUT_CAW --write htas.toml
+pixi run htas detect neighbors /data/project.qgz --write htas.toml
+pixi run htas describe --project htas.toml --layer AQ_LAYER=/data/gis/aq.gpkg
+```

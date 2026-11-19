@@ -92,6 +92,21 @@ Export data or snapshots. `pickle` remains the canonical persisted export format
 
 ---
 
+## File-based layer provider
+
+`FileGeoProvider({layer_name: path})` (`HydrologicalTwinAlphaSeries.services.public`)
+serves the layers `HydrologicalTwin.load` needs from files with geopandas, with
+no QGIS. Pass it as `geo_provider` to `load`.
+
+## Command line (L0)
+
+`htas` (`pixi run htas --help`) is a thin adapter over `HydrologicalTwinClient`.
+Available: `htas detect run`, `htas detect neighbors`, `htas describe`, which
+mirror `detect_from_out_caw`, `detect_project_neighbors` and `describe`. The
+twin is read from an `htas.toml` project file, overridden by options.
+
+---
+
 ## Transport Layer
 
 No HTTP schema or web framework integration is defined at this stage.

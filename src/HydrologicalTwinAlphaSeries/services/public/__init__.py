@@ -4,6 +4,7 @@ from HydrologicalTwinAlphaSeries.services.public.automatic_detection_config impo
     detect_project_neighbors,
 )
 from HydrologicalTwinAlphaSeries.services.public.budget import Budget
+from HydrologicalTwinAlphaSeries.services.public.file_geo_provider import FileGeoProvider
 from HydrologicalTwinAlphaSeries.services.public.geodata_assembly import (
     assemble_multi_layer_geodataframe,
     assemble_single_layer_geodataframe,
@@ -32,6 +33,7 @@ from HydrologicalTwinAlphaSeries.services.public.vec_operator import (
 )
 
 __all__ = [
+    "FileGeoProvider",
     "Budget",
     "CacheMissError",
     "Comparator",

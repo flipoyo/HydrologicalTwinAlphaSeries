@@ -4,6 +4,7 @@ See :class:`HydrologicalTwinClient` for the entry point.
 """
 
 from ...services.public.automatic_detection_config import DetectionError
+from ..developer.api_types import InvalidStateError
 from .api_types import (
     BudgetBarplotResult,
     CompareSimObsResult,
@@ -23,6 +24,7 @@ from .hydrological_twin_client import HydrologicalTwinClient
 __all__ = [
     "HydrologicalTwinClient",
     "DetectionError",
+    "InvalidStateError",
     "BudgetBarplotResult",
     "HydrologicalRegimeResult",
     "SpatialMapWatbalResult",
