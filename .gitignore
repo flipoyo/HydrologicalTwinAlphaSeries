@@ -41,3 +41,5 @@ Thumbs.db
 .cgitsync/
 HydrologicalTwinAlphaSeries.lgr
 docs/hydrological_twin
+.cgitsync/.memory
+ComplexGitSync

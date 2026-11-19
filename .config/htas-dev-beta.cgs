@@ -1,0 +1,66 @@
+# The development workspace of HydrologicalTwinAlphaSeries on HT-BETA, with the agentic
+# layout of ComplexGitSync (examples/cgitsync-alpha.cgs) adapted to HTAS.
+# No level branch (opx, dev, usr): "htas-dev-beta" is not a level file, since cgitsync reads
+# <project>-<xxx>.cgs as branch xxx only for a three-character xxx, and "beta" has four.
+#
+# Install, in this order (HT-BETA already exists in HydrologicalTwinAlphaSeries and
+# hydrological_twin, so `branch create` only creates the private branches):
+#     pixi run cgitsync bootstrap .config/htas-dev-beta.cgs HydrologicalTwinAlphaSeries
+#     cgitsync branch create HT-BETA --private   # <Project>_HT-BETA in every private/local mount
+#     cgitsync checkout HT-BETA                  # moves those mounts off their fallback seed
+#     cgitsync self-history adopt                # empty twin .self-history, on the memory's branch
+#     cgitsync push                              # publishes the new private branches
+# The bootstrap warns that each private/local mount was cloned on its fallback: expected,
+# and nothing may be committed there before the checkout.
+#
+# Private/local (private, writable): the branch is never typed. cgitsync derives it from the
+# tree (git_branch.private_local_branch) and overrides any declared default (declare_targets):
+#   .agent/.local      .dev, .localSpec, .claude   HydrologicalTwinAlphaSeries_HT-BETA
+#   .omniscience       the ledger                  HydrologicalTwinAlphaSeries_HT-BETA
+#   .cgitsync/.memory  the memory                  ComplexGitSync_HydrologicalTwinAlphaSeries_HT-BETA
+#                      (a bootstrap is a twin, so its memory is filed under ComplexGitSync;
+#                      this branch already exists, so the memory clones straight onto it)
+# fallback_branch is therefore only the seed `branch create` starts the HTAS branch from:
+#   .dev, .localSpec, .claude  ComplexGitSync_CGS-ALPHA, where ComplexGitSync's agentic content
+#                              lives (their main is an empty skeleton). Adapt it on the HTAS
+#                              branch right after the checkout (CLAUDE.md, AGENT.md, DevTickets).
+#   .omniscience               main (nothing project-specific to inherit)
+#
+# .self-history is not declared: its remote has no main, so a declared mount would clone
+# ComplexGitSync's own records (remote HEAD) and fork the HTAS history from them.
+# `self-history adopt` gives the twin a fresh, contentless history instead, as ComplexGraphSync's.
+# The memory's nested config-memory.cgs stays disabled.
+#
+# Private/distant (private, read-only): never moved, never written, on their declared main.
+#   .agent/.distant    .ticketing, DevSpec, DocSpec
+#   ComplexGitSync     the tool, on CGS-ALPHA. Declared private so branch create, checkout and
+#                      push leave it alone: as a plain entry it would follow the tree to HT-BETA
+#                      and get that branch pushed to github:flipoyo/ComplexGitSync.
+# .cgitsync is cgitsync's own directory, not a mount; only its .memory is (cgitsync >= 8.7.1).
+# The planning surface (short tickets, planning tickets, archive) is .agent/.local/.dev/DevTickets.
+
+environment_root = "root"
+environment = { tools = { python = "3.11", git = "2.30", pixi = "0.65" }, manifests = ["pyproject.toml"] }
+
+project = { name = "HydrologicalTwinAlphaSeries", default_branch = "HT-BETA" }
+
+repos = [
+    { repository = "github:flipoyo/HydrologicalTwinAlphaSeries", fallback_branch = "main" },
+    { repository = "github:flipoyo/hydrological_twin", relative_path = "docs/hydrological_twin", fallback_branch = "main" },
+
+    # the tool — read-only, pinned to its own alpha line
+    { repository = "github:flipoyo/ComplexGitSync", default_branch = "CGS-ALPHA", fallback_branch = "CGS-ALPHA", nested_config = "disabled", private = true },
+
+    { repository = "github:flipoyo/omniscience", relative_path = ".omniscience", fallback_branch = "main", private = true, writable = true, nested_config = "disabled" },
+    { repository = "github:flipoyo/.memory", relative_path = ".cgitsync/.memory", fallback_branch = "main", private = true, writable = true, nested_config = "disabled" },
+
+    # .distant — shared, read-only, the same for every conforming project
+    { repository = "github:flipoyo/.ticketing", relative_path = ".agent/.distant/ticket", default_branch = "main", fallback_branch = "main", private = true },
+    { repository = "github:flipoyo/DevSpec", relative_path = ".agent/.distant/dev-sync", default_branch = "main", fallback_branch = "main", nested_config = "disabled", private = true },
+    { repository = "github:flipoyo/DocSpec", relative_path = ".agent/.distant/documentation", default_branch = "main", fallback_branch = "main", nested_config = "disabled", private = true },
+
+    # .local — this project's own, writable, seeded from ComplexGitSync's agentic branch
+    { repository = "github:flipoyo/.dev", relative_path = ".agent/.local/.dev", fallback_branch = "ComplexGitSync_CGS-ALPHA", private = true, writable = true },
+    { repository = "github:flipoyo/.localSpec", relative_path = ".agent/.local/.localSpec", fallback_branch = "ComplexGitSync_CGS-ALPHA", private = true, writable = true },
+    { repository = "github:flipoyo/.claude", relative_path = ".agent/.local/.claude", fallback_branch = "ComplexGitSync_CGS-ALPHA", private = true, writable = true },
+]
