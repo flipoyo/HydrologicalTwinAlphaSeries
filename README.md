@@ -157,8 +157,9 @@ the whole framework and says which part of it HTAS implements.
 - Main Developer: Simone Mazzarelli
 - Proto implementation (CaWaQS-ViZ backend): Lise-Marie Girod
 
-Contributors (ongoing):
-Tristan Bourgeois, Nicolas Gallois, Fulvia Baratelli, Pierre Guillou, Fabien Ors, Mariam Taki
+
+<!-- Contributors (ongoing):
+Tristan Bourgeois, Nicolas Gallois, Fulvia Baratelli, Pierre Guillou, Fabien Ors, Mariam Taki !-->
 
 ## License
 
