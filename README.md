@@ -8,7 +8,7 @@ and hydrological compartments. HydrologicalTwinAlphaSeries (HTAS) is its
 first implementation: a scientific backend for the hydrological model
 [CaWaQS](https://gitlab.com/cawaqs). The Beta series, now in development,
 adds the orchestration of hydrological models, with CaWaQS as its proof of
-concept; HTAS does not do this.
+concept coupled with [ComplexGitSync](https://github.com/flipoyo/ComplexGitSync) for tracability and reproductibility; HTAS does not do this.
 
 HTAS covers the hydrological side. It reads the outputs of a CaWaQS
 simulation and turns them into the products a hydrologist works with: water
