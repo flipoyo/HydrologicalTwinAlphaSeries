@@ -110,7 +110,7 @@ def _specs(args: argparse.Namespace) -> list[tuple[str, str, str, str]]:
     return specs
 
 
-def _polygon(args: argparse.Namespace) -> tuple[Any, str]:
+def read_polygon(args: argparse.Namespace) -> tuple[Any, str]:
     """The polygon of ``--polygon FILE`` (all its features, merged) and its CRS."""
     gdf = FileGeoProvider({"polygon": args.polygon}).get_layer("polygon")
     crs = args.polygon_crs or (gdf.crs.to_string() if gdf.crs is not None else None)
@@ -245,7 +245,7 @@ def _kwargs(args: argparse.Namespace, settings: dict[str, Any]) -> dict[str, Any
         out["mode"] = _mode(args)
     if args.command == "mask":
         out["syear"], out["eyear"] = settings["start_year"], settings["end_year"]
-        out["polygon"], out["polygon_crs"] = _polygon(args)
+        out["polygon"], out["polygon_crs"] = read_polygon(args)
     if (args.command, args.subcommand) == ("mask", "internal"):
         out["specs"] = _specs(args)
     return out

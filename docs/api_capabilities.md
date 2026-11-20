@@ -142,7 +142,8 @@ The keyword arguments of each operation are those of its
 
 `HydrologicalTwin` (`HydrologicalTwinAlphaSeries`) has nine macro-verbs.
 Each takes either a `*Request` dataclass or the same fields as keywords.
-The dispatching verbs choose their work by `kind`.
+The dispatching verbs choose their work by `kind`. `htas-dev` runs them
+from the command line (below).
 
 ### `configure(...)`
 
@@ -164,7 +165,10 @@ cache only, and raises `CacheMissError` when it is missing.
 
 Returns a `TwinDescription`: the state, the compartments, the metadata,
 and a `TwinCatalog` of layers, observations, and the kinds and formats a
-frontend can offer (`DescribeRequest`).
+frontend can offer: `extract_kinds` (`fetch`), `mask_kinds`,
+`transform_kinds`, `assemble_kinds`, `render_kinds` and `export_formats`,
+all read from `KINDS` (`HydrologicalTwinAlphaSeries.ht.developer`), the one
+registry of the dispatching verbs and their kinds (`DescribeRequest`).
 
 ### `fetch(...)`
 
@@ -228,6 +232,31 @@ Writes data already computed to a file, by format (`ExportRequest`,
 
 - `npy`: a NumPy array.
 - `geopackage`: a GeoPackage, from an `assemble` bundle.
+
+### Command line (`htas-dev`)
+
+`htas-dev <verb> <kind>`, run as `pixi run htas-dev ...`, calls one verb with
+one kind: `fetch`, `mask`, `transform`, `assemble`, `render`, `export`, and
+each kind of `KINDS` as a subcommand, written with hyphens
+(`htas-dev fetch simulation-matrix`). Its commands and options are generated
+from the registry and the request dataclasses, so they follow the code.
+
+- Every field of the verb's request is an option named after it
+  (`id_compartment` is `--id-compartment`); one left out is not passed. A
+  request field whose name a twin option already uses gets a prefix:
+  `--request-years`.
+- A number, text, flag or list is parsed. Any other field (an array, a
+  mapping, a frame) is read from a file with `--NAME-file`: `.npy`, `.json`,
+  or a vector file.
+- `--polygon FILE` and `--polygon-crs` read a polygon as `htas mask` does.
+- `--output DIR` writes each array (`.npy`), table (`.csv`) and layer
+  (GeoPackage) of the result into `DIR`, so a result can feed the next command
+  with `--data-file`. In `--json`, an array of more than 1000 values appears
+  as its shape.
+- The twin is built like `htas` builds it (project file, `--out-caw`,
+  `--obs-dir`, `--geometry-config`, `--years`, `--layer`), and the exit codes
+  are the same. A kind that needs an in-memory result of an earlier step (a
+  simulation-observation bundle, aquifer inputs) cannot be fed from files.
 
 ## File-based layer provider
 

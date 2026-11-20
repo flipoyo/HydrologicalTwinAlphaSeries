@@ -59,6 +59,7 @@ from .api_types import (
     TwinState,
     ValuesResponse,
 )
+from .kinds import KINDS
 
 
 class HydrologicalTwin:
@@ -331,32 +332,12 @@ class HydrologicalTwin:
 
         return TwinCatalog(
             compartments=compartments,
-            extract_kinds=[
-                "simulation_matrix",
-                "observations",
-                "sim_obs_bundle",
-                "spatial_map",
-                "catchment_cells",
-                "aquifer_outcropping_map",
-                "aq_balance_inputs",
-            ],
-            transform_kinds=[
-                "temporal_aggregation",
-                "spatial_average",
-                "criteria",
-                "budget",
-                "hydrological_regime",
-                "runoff_ratio",
-                "aq_balance",
-            ],
-            render_kinds=[
-                "budget_barplot",
-                "hydrological_regime",
-                "sim_obs_pdf",
-                "sim_obs_interactive",
-                "aq_flux_diagram",
-            ],
-            export_formats=["npy", "geopackage"],
+            extract_kinds=list(KINDS["fetch"]),
+            mask_kinds=list(KINDS["mask"]),
+            transform_kinds=list(KINDS["transform"]),
+            assemble_kinds=list(KINDS["assemble"]),
+            render_kinds=list(KINDS["render"]),
+            export_formats=list(KINDS["export"]),
         )
 
     @staticmethod

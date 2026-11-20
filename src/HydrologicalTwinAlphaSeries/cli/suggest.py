@@ -28,12 +28,12 @@ def command_token(argv: Sequence[str]) -> str | None:
     return None
 
 
-def suggestion_line(argv: Sequence[str], known: Iterable[str]) -> str | None:
+def suggestion_line(argv: Sequence[str], known: Iterable[str], prog: str = "htas") -> str | None:
     typed = command_token(argv)
     if typed is None or typed in set(known):
         return None
     guess = closest_command(typed, known)
-    return f"htas: did you mean '{guess}'?" if guess else None
+    return f"{prog}: did you mean '{guess}'?" if guess else None
 
 
 def parse_args_with_hint(
@@ -43,7 +43,7 @@ def parse_args_with_hint(
         return parser.parse_args(argv)
     except SystemExit as request:
         if request.code == 2:
-            hint = suggestion_line(sys.argv[1:] if argv is None else argv, known)
+            hint = suggestion_line(sys.argv[1:] if argv is None else argv, known, parser.prog)
             if hint:
                 print(hint, file=sys.stderr)
         raise

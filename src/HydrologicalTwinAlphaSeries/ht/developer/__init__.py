@@ -36,8 +36,11 @@ from .api_types import (
     ValuesResponse,
 )
 from .hydrological_twin_developer import HydrologicalTwin
+from .kinds import KINDS, REQUESTS
 
 __all__ = [
+    "KINDS",
+    "REQUESTS",
     "AquiferBalanceInputsResponse",
     "AquiferBalanceResponse",
     "BoundaryFluxResponse",

@@ -555,6 +555,8 @@ class TwinCatalog:
     transform_kinds: List[str] = field(default_factory=list)
     render_kinds: List[str] = field(default_factory=list)
     export_formats: List[str] = field(default_factory=list)
+    mask_kinds: List[str] = field(default_factory=list)
+    assemble_kinds: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,10 @@ EXAMPLES = {
 }
 
 
+#: Arrays longer than this appear in ``--json`` as their shape only.
+_MAX_ARRAY = 1000
+
+
 def _to_jsonable(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {f.name: _to_jsonable(getattr(value, f.name)) for f in dataclasses.fields(value)}
@@ -42,6 +46,8 @@ def _to_jsonable(value: Any) -> Any:
     if hasattr(value, "columns") and hasattr(value, "__len__"):  # a (Geo)DataFrame: its shape
         return {"rows": len(value), "columns": [str(c) for c in value.columns]}
     if hasattr(value, "tolist"):
+        if getattr(value, "size", 0) > _MAX_ARRAY:  # a long array: its shape, not its content
+            return {"shape": list(value.shape), "dtype": str(value.dtype)}
         return value.tolist()
     if hasattr(value, "value") and not isinstance(value, (str, int, float)):
         return value.value

@@ -27,8 +27,8 @@ def exit_code_for(exc: BaseException) -> int | None:
     return None
 
 
-def diagnostic(exc: BaseException, command: str | None = None) -> str:
-    name = f"htas {command}" if command else "htas"
+def diagnostic(exc: BaseException, command: str | None = None, prog: str = "htas") -> str:
+    name = f"{prog} {command}" if command else prog
     message = str(exc).strip() or exc.__class__.__name__
     return f"{name}: {message}"
 

@@ -129,6 +129,14 @@ catalog = twin.describe().catalog
 print(catalog.extract_kinds, catalog.transform_kinds, catalog.render_kinds)
 ```
 
+## The developer verbs from the command line
+
+```bash
+pixi run htas-dev fetch simulation-matrix --project htas.toml --id-compartment 1 --outtype MB --param recharge --syear 2000 --eyear 2010 --output /data/out/recharge
+pixi run htas-dev transform temporal-aggregation --project htas.toml --data-file /data/out/recharge/data.npy --dates-file /data/out/recharge/dates.npy --frequency Monthly --agg-dimension mean --output /data/out/monthly
+pixi run htas-dev mask polygon-cells --project htas.toml --id-compartment 1 --polygon /data/area.gpkg
+```
+
 ## File-based provider and the command line
 
 ```python

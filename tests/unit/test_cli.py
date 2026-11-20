@@ -162,6 +162,8 @@ def test_cli_imports_stay_in_bounds():
                 mod = node.module or ""
                 assert mod.split(".")[0] in {"", "config", "ht", "services"}, (file, mod)
                 if mod.startswith("ht"):
-                    assert mod == "ht.client", (file, mod)
+                    # the developer verbs (htas-dev, and the twin it builds) may use ht.developer
+                    allowed = {"ht.client"} | ({"ht.developer"} if file.name in {"dev.py", "project.py"} else set())
+                    assert mod in allowed, (file, mod)
                 if mod.startswith("services"):
                     assert mod == "services.public", (file, mod)

@@ -68,7 +68,7 @@ HTAS can be driven at three levels:
 | Map the water balance or the aquifer budget | `htas map watbal`, `htas map aq`, `spatial_map_watbal`, `spatial_map_aq` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
 | Compare simulation with observations, and compute the criteria | `htas compare simobs`, `htas criteria compute`, `compare_sim_obs`, `statistical_criteria` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
 | Select a domain by a polygon: its values and its river and aquifer boundaries, as GeoPackages | `htas mask internal`, `htas mask hyd`, `htas mask aq`, `mask_internal_values`, `mask_hyd_boundary`, `mask_aq_boundary` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
-| Build your own workflow from the verbs | `fetch`, `mask`, `transform`, `assemble`, `render`, `export` | [API capabilities](docs/api_capabilities.md#developer-verbs-l2) |
+| Build your own workflow from the verbs | `htas-dev fetch`, `htas-dev mask`, `htas-dev transform`, `htas-dev assemble`, `htas-dev render`, `htas-dev export`, or the verbs in Python | [API capabilities](docs/api_capabilities.md#developer-verbs-l2) |
 | Use GIS layers from files, without QGIS | `FileGeoProvider` | [API examples](docs/api_examples.md#file-based-provider-and-the-command-line) |
 
 ## Installation
@@ -84,7 +84,7 @@ pixi run htas --version
 ```
 
 From there, Python scripts run with `pixi run python`, and the command line
-with `pixi run htas`.
+with `pixi run htas` (and `pixi run htas-dev` for the developer verbs).
 
 **Inside CaWaQS-ViZ.** CaWaQS-ViZ carries HTAS as a Git submodule, at
 `external/HydrologicalTwinAlphaSeries`, and installs it at the plugin's
@@ -98,8 +98,9 @@ pixi run htas detect --help     # one command: its subcommands, with an example 
 pixi run htas --version         # the version and the build
 ```
 
-A mistyped command gets a "did you mean". `--json` prints a command's
-result as JSON, for scripts.
+`htas-dev` takes the same options: `pixi run htas-dev --help`. A mistyped
+command gets a "did you mean". `--json` prints a command's result as JSON,
+for scripts.
 
 ## Version and stability
 

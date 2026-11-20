@@ -16,6 +16,7 @@ from typing import Any
 
 from ..config import ConfigGeometry, ConfigProject
 from ..ht.client import HydrologicalTwinClient
+from ..ht.developer import HydrologicalTwin
 from ..services.public import FileGeoProvider
 
 DEFAULT_PROJECT_FILE = "htas.toml"
@@ -91,7 +92,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     return settings
 
 
-def build_client(settings: dict[str, Any]) -> HydrologicalTwinClient:
+def _twin_inputs(settings: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """(metadata, configure keywords, load keywords) a twin is built from."""
     for key in ("out_caw", "geometry_config", "start_year", "end_year"):
         if settings.get(key) in (None, ""):
             raise ValueError(
@@ -108,18 +110,30 @@ def build_client(settings: dict[str, Any]) -> HydrologicalTwinClient:
         "obsDirectory": settings.get("obs_dir", ""),
         "regime": settings.get("regime", "Transient"),
     })
-    return HydrologicalTwinClient.build(
-        {
-            "project_name": settings.get("project_name", ""),
-            # every client operation reads the simulated years from the metadata
-            "start_year": settings["start_year"],
-            "end_year": settings["end_year"],
-        },
-        configure_kwargs={
-            "config_geom": config_geom,
-            "config_proj": config_proj,
-            "out_caw_directory": settings["out_caw"],
-            "obs_directory": settings.get("obs_dir", ""),
-        },
-        load_kwargs={"geo_provider": FileGeoProvider(settings["layers"])},
-    )
+    metadata = {
+        "project_name": settings.get("project_name", ""),
+        # every client operation reads the simulated years from the metadata
+        "start_year": settings["start_year"],
+        "end_year": settings["end_year"],
+    }
+    configure = {
+        "config_geom": config_geom,
+        "config_proj": config_proj,
+        "out_caw_directory": settings["out_caw"],
+        "obs_directory": settings.get("obs_dir", ""),
+    }
+    return metadata, configure, {"geo_provider": FileGeoProvider(settings["layers"])}
+
+
+def build_client(settings: dict[str, Any]) -> HydrologicalTwinClient:
+    metadata, configure, load = _twin_inputs(settings)
+    return HydrologicalTwinClient.build(metadata, configure_kwargs=configure, load_kwargs=load)
+
+
+def build_twin(settings: dict[str, Any]) -> HydrologicalTwin:
+    """The loaded twin itself, for ``htas-dev`` (the developer verbs)."""
+    metadata, configure, load = _twin_inputs(settings)
+    twin = HydrologicalTwin(metadata=metadata)
+    twin.configure(**configure)
+    twin.load(**load)
+    return twin

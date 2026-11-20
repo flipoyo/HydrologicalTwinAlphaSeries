@@ -40,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from HydrologicalTwinAlphaSeries.cli import COMMANDS
+from HydrologicalTwinAlphaSeries.cli.dev import COMMANDS as DEV_COMMANDS
 from HydrologicalTwinAlphaSeries.ht.client import HydrologicalTwinClient
 from HydrologicalTwinAlphaSeries.ht.developer import HydrologicalTwin
 from HydrologicalTwinAlphaSeries.ht.developer.api_types import MINIMUM_STATE
@@ -424,6 +425,14 @@ def _shell_problems(code: str) -> list[str]:
                 problems.append(f"no htas command {command!r}")
             elif None not in COMMANDS[command] and sub not in COMMANDS[command]:
                 problems.append(f"no htas subcommand {command} {sub}")
+        if m := re.match(r"(?:pixi run )?htas-dev\s+([\w-]+)(?:\s+([a-z][\w-]*))?", line):
+            verb, kind = m.group(1), m.group(2)
+            if verb.startswith("-") or (kind is None and verb in DEV_COMMANDS):
+                continue
+            if verb not in DEV_COMMANDS:
+                problems.append(f"no htas-dev command {verb!r}")
+            elif kind not in DEV_COMMANDS[verb]:
+                problems.append(f"no htas-dev subcommand {verb} {kind}")
     return problems
 
 
