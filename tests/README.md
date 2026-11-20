@@ -1,134 +1,105 @@
-# HTAS Tests
+# HTAS tests — what runs, and the smoke test on real CaWaQS data
 
-This directory contains the HydrologicalTwinAlphaSeries (HTAS) test
-suite. Most tests are pure unit / facade tests; this README focuses on
-the one piece of infrastructure that needs explanation — the
-**end-to-end smoke test on real CaWaQS data**.
+*Created: 2026-05-11*
 
-## What the smoke test does
+## Abstract — read this first
 
-`integration/test_cwv_gis_smoke.py` walks the full HTAS macro API on a
-real, light CaWaQS simulation output (the `cwv-gis-testcase` fixture):
+**What this document is.** How HydrologicalTwinAlphaSeries's test suite is
+laid out, how to run it, and how the one test on real data gets its data.
+
+**Why it exists.** Most tests need nothing. The smoke test needs a public
+CaWaQS test case, fetched by hand: this file is its recipe.
+
+**What you will find.** The layout, running the suite, the smoke test and
+its fixture, and what ages.
+
+**Who it is for.** Developers. There is no CI: this suite, run on your
+machine before every commit, is the gate.
+
+**What you need to do with it.** Run `pixi run test` before every commit.
+Fetch the fixture once to run the smoke test too.
+
+```mermaid
+graph LR
+    DEV["your change"] --> T["pixi run test<br/>unit + integration"]
+    FIX["cwv-gis-testcase<br/>(sparse clone)"] -->|"CWAQS_FIXTURE_ROOT"| SMOKE["smoke test"]
+    T --> SMOKE
+    DOC["tests/README.md<br/>YOU ARE HERE"] -.-> T
+
+    classDef here fill:#1565C0,color:#fff,stroke:#111,stroke-width:2px;
+    class DOC here;
+```
+
+---
+
+## Layout
+
+| Directory | Holds |
+|---|---|
+| `tests/unit/` | Pure unit and facade tests, with `services/` and `tools/` subpackages. Among them: `test_qgis_free.py`, the guard that no module under `src/` imports QGIS or PyQt, and `test_docs_sync.py`, the drift tests that hold the documents to `src/`. |
+| `tests/integration/` | The facade lifecycle, and smoke runs on real CaWaQS meshes. |
+
+```bash
+pixi run test                 # the whole suite
+pixi run test -m "not slow"   # without the slow runs
+pixi run lint                 # ruff check src tests
+```
+
+Tests that need real data skip cleanly when it is absent: the smoke test
+without `CWAQS_FIXTURE_ROOT`, and `test_aq_boundary_faces_real_meshes.py`
+without its meshes. No test reaches the network.
+
+## The smoke test on real CaWaQS data
+
+`integration/test_cwv_gis_smoke.py` walks the macro API on a real, light
+CaWaQS output, the `cwv-gis-testcase` fixture:
 
 ```
 configure  →  load  →  describe  →  fetch  →  transform  →  render
 ```
 
-It asserts only two things:
+It asserts two things: no step raises, and `render(kind="budget_barplot")`
+writes a PNG. It detects crashes when real data goes through the public
+API. It is not a numerical regression test: it checks no shapes, values,
+tolerances or pixels.
 
-1. No step raises an exception.
-2. `render(kind="budget_barplot")` produces a PNG that exists on disk.
+### Running it
 
-The point is **crash detection** when a real dataset is fed through the
-public API.
-
-## What it deliberately does NOT test
-
-This is **not** a numerical regression test. It does not assert on:
-
-- Array shapes or contents.
-- Specific output values, sums, or means.
-- Tolerances against golden reference files.
-- Plot pixel content.
-
-Numerical regression testing (golden outputs, tolerances,
-`syrupy`-style snapshots, regeneration workflows) is intentionally out
-of scope at this stage. The trade is: cheap to maintain now; we add
-value checks later if and when a real numerical incident slips past.
-
-## How to run it locally
-
-Run the commands from the **HTAS repo root** (the directory containing
-this submodule's `pixi.toml`). If you have cawaqsviz checked out, that
-is `external/HydrologicalTwinAlphaSeries/`; if you have HTAS standalone,
-it's the top of the repo. `pixi run test` is the same command CI uses,
-so what you see locally is what CI sees.
+From the HTAS repository root (inside CaWaQS-ViZ, that is
+`external/HydrologicalTwinAlphaSeries`):
 
 ```bash
-# 1. Clone the testcase fixture somewhere (only this subdirectory matters)
+# 1. Fetch the fixture once (only this subdirectory matters)
 git clone --depth 1 --filter=blob:none --sparse \
     --branch v0.1-cwv-gis-smoke-CI \
     https://gitlab.com/cawaqs/gtest/testcases.git /tmp/cawaqs-testcases
 git -C /tmp/cawaqs-testcases sparse-checkout set datasets/cwv-gis-testcase
 
-# 2. Move into the HTAS pixi env (skip if you're already there)
-cd external/HydrologicalTwinAlphaSeries   # or just the HTAS repo root
-
-# 3. Point the test at the cloned fixture and run it — should pass + write a PNG
+# 2. Point the test at it, and run it: it passes and writes a PNG
 export CWAQS_FIXTURE_ROOT=/tmp/cawaqs-testcases/datasets/cwv-gis-testcase
 pixi run test tests/integration/test_cwv_gis_smoke.py -v
 
-# 4. Verify the SKIP path — re-run without the env var, expect SKIPPED (not FAILED)
+# 3. Without the variable, it is SKIPPED, not FAILED
 unset CWAQS_FIXTURE_ROOT
 pixi run test tests/integration/test_cwv_gis_smoke.py -v
 ```
 
-If `CWAQS_FIXTURE_ROOT` is unset, the test **skips cleanly** —
-developers running the full suite locally without the fixture see a
-`SKIPPED` line, not a failure.
+The fixture is pinned by a git tag, `v0.1-cwv-gis-smoke-CI`, because tags
+do not move. To use a newer version of the test case, change the tag here.
 
-## How it runs in CI
+### What ages
 
-The HTAS workflow (`.github/workflows/ci.yml`) clones the fixture on
-the runner using a sparse, blobless clone pinned to a **git tag**, sets
-`CWAQS_FIXTURE_ROOT` via `$GITHUB_ENV`, and the existing
-`pixi run test` step picks it up.
+- **The fixture tag**, above, when the test case evolves.
+- **The macro API signatures the test calls** (`configure`, `load`,
+  `describe`, `fetch`, `transform`, `render`). A renamed keyword, a removed
+  kind or a restructured response breaks the test, on purpose: fix it in
+  the same change. The test does not depend on `services/`, `domain/`, or
+  any shape or value.
 
-## Two things that age (and require maintenance)
+### Its own layer provider
 
-The smoke test is engineered to be stable across changes that don't
-touch its actual surface area. But two things will need a human update
-over time:
-
-### 1. The pinned fixture tag in `ci.yml`
-
-The CI step clones `gitlab.com/cawaqs/gtest/testcases` at a fixed git
-tag (currently `v0.1-cwv-gis-smoke-CI`). When the testcase repo
-legitimately evolves and we want CI to use the new version:
-
-- Pick the new tag on the testcase repo.
-- Edit `.github/workflows/ci.yml` and bump the `--branch <tag>` value.
-- Open a PR. CI will exercise the new fixture.
-
-We pin by tag (not by branch) on purpose: branches move, tags don't —
-this keeps CI deterministic.
-
-### 2. The HTAS macro API signatures used by the test
-
-The test calls the public macro API directly: `configure`, `load`,
-`describe`, `fetch`, `transform`, `render`. If any of those signatures
-change (renamed kwargs, removed kinds, restructured response objects),
-the test will need a corresponding update.
-
-This is **a feature, not a bug**: the smoke test is a guard against
-silent breakage when the public API drifts. If you change a macro
-signature, fixing this test should be part of the same PR.
-
-What the test does *not* couple to:
-
-- Internal helpers under `services/` or `domain/`.
-- Specific output array shapes or values.
-- Backend implementation details below the macro API.
-
-## Why an inline `_SmokeGeoProvider` instead of cawaqsviz's `GeoDataProvider`?
-
-`HydrologicalTwin.load` needs an object exposing
-`get_layer(name) -> GeoDataFrame`. cawaqsviz ships a
-`GeoDataProvider` with two branches: a QGIS-based branch and a file
-path-based branch. The file-path branch is effectively
-`geopandas.read_file(layer_paths[name])`.
-
-The smoke test defines its own ~20-line `_SmokeGeoProvider` inline.
-Three reasons:
-
-1. **HTAS independence.** HTAS CI should not need to clone or import
-   cawaqsviz. The backend is migrating toward a standalone /
-   server-side deployment; the test reflects that destination.
-2. **Closer to a real future caller.** A server-side or user-lambda
-   consumer of HTAS will not import `cawaqsviz.interface.GeoDataProvider`.
-   It will write its own minimal adapter — which is exactly what the
-   test does.
-3. **The interface is tiny.** Duplicating ~20 lines costs less than
-   moving a real provider into HTAS production code. If `_SmokeGeoProvider`
-   ever grows past ~40 lines, that's the signal to promote a real
-   QGIS-free provider into HTAS — but as a deliberate, separate change.
+`load` needs an object with `get_layer(name)` returning a GeoDataFrame. The
+smoke test defines a small one inline, `_SmokeGeoProvider`, which reads each
+layer from its file with geopandas. HTAS also ships `FileGeoProvider`
+(`services/public/file_geo_provider.py`), which does the same; the test
+keeps its own so that it depends on nothing beyond the macro API.

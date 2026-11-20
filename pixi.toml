@@ -1,6 +1,6 @@
 [workspace]
 name = "HydrologicalTwinAlphaSeries"
-version = "1.0.1"
+version = "1.0.2"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 

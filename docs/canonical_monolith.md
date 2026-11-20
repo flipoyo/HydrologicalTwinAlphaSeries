@@ -1,108 +1,117 @@
-# Canonical Monolithic Architecture for HTAS
+# Canonical monolith — HydrologicalTwinAlphaSeries is one object, and its rules
 
-## Core Invariant
+*Created: 2026-04-09*
 
-> HTAS exposes a single canonical object (`HydrologicalTwin`) that manages a
-> structured domain composed of `Compartment` aggregates. All public operations
-> act on compartments, never on low-level artifacts directly.
+## Abstract — read this first
+
+**What this document is.** The architectural invariant of HTAS: one facade
+object over compartments, the layers behind it, its lifecycle, and the
+rules that keep it that way.
+
+**Why it exists.** HTAS is deliberately monolithic: no plugin, no loose
+extension point. The rules below are what lets CaWaQS-ViZ, a script and the
+command line all see the same backend.
+
+**What you will find.** The invariant, the entry points, the layers, the
+nine macro-verbs, the lifecycle, the rules.
+
+**Who it is for.** Developers, and anyone deciding where new code goes.
+
+**What you need to do with it.** Check a change against *Rules* before
+writing it.
+
+```mermaid
+graph TD
+    CLI["cli/ · L0"] --> C["ht/client/ · L1"]
+    C --> D["ht/developer/ · L2<br/>HydrologicalTwin"]
+    D --> S["services/ · L3"]
+    S --> DOM["domain/<br/>Compartment"]
+    DOC["canonical_monolith.md<br/>YOU ARE HERE"] -.-> D
+
+    classDef here fill:#1565C0,color:#fff,stroke:#111,stroke-width:2px;
+    class DOC here;
+```
 
 ---
 
-## Public Entry Point
+## Core invariant
 
-`HydrologicalTwin` is the **single public entry point** for all backend operations.
+> HTAS exposes one canonical object, `HydrologicalTwin`, which manages a
+> domain made of `Compartment` aggregates. Every public operation acts on
+> compartments, never on low-level artefacts directly.
+
+## Entry points
 
 ```python
 from HydrologicalTwinAlphaSeries import HydrologicalTwin
+from HydrologicalTwinAlphaSeries.ht.client import HydrologicalTwinClient
 ```
 
-No other import is required for normal usage.
+`HydrologicalTwinClient` holds one `HydrologicalTwin` and offers one method
+per CaWaQS-ViZ operation; the `htas` command line calls the client. See
+[api_capabilities.md](api_capabilities.md).
 
----
+## Layers
 
-## Domain Model
+| Layer | Package | Purpose |
+|---|---|---|
+| L0 | `cli/` | Command line: collects arguments, calls the client, prints |
+| L1 | `ht/client/` | One method per operation, chaining the verbs; `*Result` types |
+| L2 | `ht/developer/` | The facade, its verbs, their dispatch on `kind`; `*Request`/`*Response` types |
+| L3 | `services/` | Operations, with no global state |
+| | `domain/` | State and entities, no orchestration ([domain_model.md](domain_model.md)) |
+| | `config/`, `tools/` | Configuration models and constants; generic utilities |
 
-`Compartment` is the **primary domain aggregate**. All data flows through
-compartments. See `docs/domain_model.md` for the full hierarchy.
+Imports point downward only. The full layout is in
+[developer_guide.md](developer_guide.md).
 
-```
-HydrologicalTwin
-  └── compartments : Dict[int, Compartment]
-        ├── mesh         : Mesh (1)
-        ├── observations : Observation (0..1)
-        ├── extraction   : Extraction (0..1)
-        └── timeframe    : TimeFrame (0..1)
-```
+## The nine macro-verbs
 
----
+| Verb | Purpose |
+|---|---|
+| `configure` | Attach the project and geometry configuration |
+| `load` | Build and register the compartments, and cache the simulation outputs |
+| `describe` | Return the twin's description and its catalog |
+| `fetch` | Read data out of the twin, by `kind` |
+| `mask` | Select by a polygon: cells, values, boundaries, by `kind` |
+| `transform` | Compute on fetched data, by `kind` |
+| `assemble` | Shape computed blocks into a payload ready to write, by `kind` |
+| `render` | Draw figures, by `kind` |
+| `export` | Write data files (`npy`, `geopackage`), by `kind` |
 
-## Internal Layers (not part of the public API)
+Each verb checks the lifecycle. `configure`, `load` and `describe` act in
+the facade itself; each of the six other verbs builds its request and hands
+it to `dispatch.py`, which calls `services/` and `domain/` for the work.
 
-| Layer        | Purpose                                     |
-|------------- |---------------------------------------------|
-| `domain/`    | State & entities (no orchestration)         |
-| `services/`  | Operations (no global state)                |
-| `config/`    | Configuration models and constants          |
-| `tools/`     | Generic utilities only                      |
-| `ht/`        | Façade + public result types                |
-
----
-
-## Public API — Macro-Methods (≤ 8)
-
-The facade exposes only high-level macro-capabilities:
-
-| Method                  | Purpose                                          |
-|------------------------ |--------------------------------------------------|
-| `configure`             | Set project and geometry configuration           |
-| `load`                  | Register compartments in bulk                    |
-| `describe`              | Return twin metadata and the frontend catalog    |
-| `fetch`                 | Fetch workflow payloads through typed requests  |
-| `transform`             | Compute workflow transformations                 |
-| `render`                | Produce final visualization/report artefacts     |
-| `export`                | Export data to files (CSV, pickle, GeoDataFrame) |
-
-These methods **delegate** to `services/` and `domain/` — they contain no heavy logic.
-
----
-
-## Internal State Model
-
-`HydrologicalTwin` enforces an explicit lifecycle via an internal state machine:
+## Lifecycle
 
 ```
 EMPTY → CONFIGURED → LOADED → READY
 ```
 
-- **EMPTY**: Instance created, no configuration.
-- **CONFIGURED**: Configuration attached, no data loaded.
-- **LOADED**: Compartments registered, data accessible. All macro-methods are operational.
-- **READY**: All compartments validated and cross-checked. Reserved for future
-  validation logic (e.g., CRS consistency checks, observation coverage verification).
-  Currently, the transition from LOADED → READY is not yet automated.
+- **EMPTY**: created, no configuration.
+- **CONFIGURED**: configuration attached, nothing loaded.
+- **LOADED**: compartments registered, outputs cached; every verb works.
+- **READY**: follows `LOADED` in `TwinState`; no verb moves a twin to it yet.
 
-Invalid call sequences raise `InvalidStateError`.
-
----
+A verb called before the state it needs raises `InvalidStateError`.
 
 ## Rules
 
-- **Compartment is the primary aggregate.** All operations flow through compartments.
-- **domain/** holds state, no orchestration.
-- **services/** holds operations, no global state. Services accept Compartment objects.
-- **tools/** holds generic utilities with no domain meaning.
-- **ht/** holds the façade, public result types, and persistence.
-- Public API returns **structured result types** and accepts structured public request types.
-- No direct numerical logic inside the façade.
-- No direct file I/O inside the façade (delegated to services).
-- External consumers must not build `Compartment` aggregates or call `services/` directly.
-- Frontend integration must target only `configure`, `load`, `describe`, `fetch`, `transform`, `render`, and `export`.
+- `Compartment` is the primary aggregate; operations flow through it.
+- `domain/` holds state, no orchestration. `services/` holds operations, no
+  global state. `tools/` holds utilities with no domain meaning.
+- The public API takes and returns structured types (`*Request`,
+  `*Response`, `*Result` dataclasses).
+- External code goes through the client or the facade and never calls
+  `services/` directly; the one exception is `FileGeoProvider`
+  (`services.public`), the layer provider it passes to `load`. Compartments
+  are built by `load`; `load(compartments=...)` registers compartments built
+  beforehand, for tests and advanced use.
+- No module under `src/` imports QGIS or PyQt
+  (`tests/unit/test_qgis_free.py`).
 
----
+## Transport
 
-## Transport / API Layer
-
-No web framework dependency exists in core. HTTP/REST/FastAPI/Django concerns are
-explicitly deferred. The Python-level canonical API is the only contract at this stage.
-
-See also: `docs/api_capabilities.md` for the list of façade methods and their intent.
+HTAS has no web framework and no HTTP interface. The Python API and the
+`htas` command line are its only contracts.

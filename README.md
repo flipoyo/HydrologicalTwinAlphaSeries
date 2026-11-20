@@ -1,379 +1,159 @@
 # HydrologicalTwinAlphaSeries
 
-HydrologicalTwinAlphaSeries is the standalone scientific backend supporting CaWaQS-ViZ.
+## The scientific backend of CaWaQS-ViZ
 
-> **Looking to read and explore your CaWaQS simulation results?**
-> This repository is intended mainly for developers. If you want to use it to
-> read and visualize your results, go through CaWaQS-ViZ instead:
->
-> * [CaWaQS-ViZ README](https://gitlab.com/cawaqs/gviz/cawaqsviz/-/blob/main/README.md): installation and overview
-> * CaWaQS-ViZ user guide: [English](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_ENG.tex) | [French](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_FR.tex)
->
-> The documentation for this backend is still a work in progress.
+HydrologicalTwinAlphaSeries (HTAS) reads the outputs of a
+[CaWaQS](https://gitlab.com/cawaqs) simulation and turns them into the
+products a hydrologist works with: water budgets, hydrological regimes,
+spatial maps, simulation-versus-observation comparisons with their
+statistical criteria, and selections of a domain by a polygon (its internal
+values and its river and aquifer boundaries). It returns typed results and
+writes figures (PNG, PDF, HTML), GeoPackages and NumPy arrays.
 
-It serves as a proof-of-concept (POC) for the HydrologicalTwin framework and is dedicated to the definition, validation, and consolidation of its core computational structures.
+HTAS has no user interface and needs no QGIS. It is the backend that
+[CaWaQS-ViZ](https://gitlab.com/cawaqs/gviz/cawaqsviz), the QGIS plugin,
+calls for every computation, and it can be used on its own: from Python, or
+from the command line with `htas`.
 
-The repository provides the backend layer required to structure hydrological simulation outputs, expose controlled programmatic interfaces, and support post-processing workflows required by the visualization layer. It focuses strictly on the backend domain, including data structuring and transformation, computational services, configuration models, and API exposure for external consumers. It does not include user interface components, QGIS integration logic, or visualization responsibilities.
+> **Looking to read and explore your CaWaQS results in QGIS?** Use
+> CaWaQS-ViZ, which installs HTAS for you:
+> [CaWaQS-ViZ README](https://gitlab.com/cawaqs/gviz/cawaqsviz/-/blob/main/README.md),
+> user guide in [English](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_ENG.tex)
+> or [French](https://github.com/flipoyo/user_guide_CaWaQS-Viz/blob/main/main_FR.tex).
 
-It is intentionally developed independently from the QGIS application layer, which consumes it as an external dependency.
-
-HydrologicalTwinAlphaSeries constitutes the AlphaSeries of the HydrologicalTwin framework. In this context, Alpha does not denote instability in the conventional software sense, but a phase in which the system is under formal construction. Core assumptions, data structures, and computational behaviors are actively explored and stress-tested.
-
-The term Series designates a coherent progression of such states. Each iteration contributes to the convergence toward a stable and reproducible backend foundation, ensuring that future versions rely on explicitly validated principles rather than implicit design choices.
-
----
-
-## Status
-
-This repository is part of the AlphaSeries phase.
-
-This phase is dedicated to:
-
-* defining core architectural invariants,
-* validating backend behaviors under real use cases,
-* stabilizing interfaces with the visualization environment.
-
-No long-term API stability is guaranteed at this stage.
-
----
-
-## Relationship with CaWaQS-ViZ
-
-CaWaQS-ViZ is the primary consumer of this repository.
-
-The integration follows a clear separation of concerns:
-
-* HydrologicalTwinAlphaSeries → backend computation and data structuring
-* CaWaQS-ViZ → visualization, interaction, and GIS integration
-
-The backend is intended to be integrated as an external dependency (e.g. Git submodule), avoiding duplication and ensuring consistency between computation and visualization layers.
-
----
-
-## Repository Structure
-
-* `src/HydrologicalTwinAlphaSeries/domain`
-  Core domain entities (e.g. compartments, meshes, observations)
-
-* `src/HydrologicalTwinAlphaSeries/services`
-  Computational services and transformation operators
-
-* `src/HydrologicalTwinAlphaSeries/ht/client`
-  Consumer-facing surface. `HydrologicalTwinClient` exposes one coarse-grained
-  method per dialog operation, `operations.py` chains
-  fetch → transform → render, and `api_types.py` defines the user-facing
-  result dataclasses. Zero `qgis.*` / `PyQt5` imports.
-
-* `src/HydrologicalTwinAlphaSeries/ht/developer`
-  Developer-side facade (formerly `ht/`). Holds the `HydrologicalTwin`
-  class with the 8 canonical macro-verbs (`configure`, `load`, `describe`,
-  `fetch`, `mask`, `transform`, `render`, `export`), its `api_types`
-  (Request / Response dataclasses), and the dispatching internals
-  (`dispatch.py`, `handlers.py`, `accessors.py`).
-
-* `src/HydrologicalTwinAlphaSeries/ht/persistence.py`
-  Pickle save/load mixin shared by the facade.
-
-* `src/HydrologicalTwinAlphaSeries/config`
-  Configuration models and constants
-
-* `src/HydrologicalTwinAlphaSeries/tools`
-  Shared utilities
-
-* `tests`
-  Backend validation and integration checks
-
-* `docs`
-  Technical notes and backend-oriented documentation
-  (see [canonical_monolith.md](docs/canonical_monolith.md) for the target architecture,
-  [domain_model.md](docs/domain_model.md) for the compartment-centric domain model)
-
----
-
-## Conceptual Diagram
-
-A high-level view of how scripts inside HydrologicalTwinAlphaSeries connect to
-each other, what enters from outside (a consumer such as CaWaQS-Viz, plus
-on-disk CaWaQS output files), and what leaves (plots and exports). The diagram
-is intentionally script-level: it shows package boundaries and import
-direction, not function-call sequences.
+## How it works
 
 ```mermaid
-flowchart TD
-    consumer(["External consumer<br/><i>e.g. CaWaQS-Viz</i>"])
-    disk_in[("CaWaQS output files<br/><i>.bin / .npy</i>")]
-    disk_out[("Plots & exports<br/><i>PNG / PDF / HTML</i>")]
-
-    subgraph HT ["ht/"]
-        subgraph HTClient ["client/"]
-            client["HydrologicalTwinClient<br/><i>dialog-shaped API</i>"]
-            ops["operations<br/><i>fetch → transform → render<br/>chaining</i>"]
-            client_api["api_types<br/><i>user-facing Result<br/>dataclasses</i>"]
-        end
-        subgraph HTDeveloper ["developer/"]
-            facade["HydrologicalTwin<br/><i>macro-verb facade</i>"]
-            api["api_types<br/><i>Request / Response<br/>dataclasses</i>"]
-            dispatch["dispatch · handlers · accessors<br/><i>internal verbs</i>"]
-        end
-        persist["persistence<br/><i>pickle save / load mixin</i>"]
-    end
-
-    subgraph Services ["services/"]
-        manage["Manage<br/><i>data I/O, temporal aggregation,<br/>budget computation</i>"]
-        vecop["Vec_Operator<br/><i>Operator · Extractor · Comparator</i>"]
-        renderer["Renderer<br/><i>Matplotlib + Plotly plotting</i>"]
-    end
-
-    subgraph Domain ["domain/"]
-        compartment["Compartment<br/><i>CaWaQS module: SUR, RIV, AQU…</i>"]
-        mesh["Mesh<br/><i>geometry per compartment</i>"]
-        obs["Observations<br/><i>Observation · ObsPoint</i>"]
-        extraction["Extraction<br/><i>ExtractionPoint + binary readers</i>"]
-        timeframe["TimeFrame<br/><i>simulation date axis</i>"]
-    end
-
-    subgraph Config ["config/"]
-        configmod["Config · ConfigGeometry · ConfigProject"]
-        constants["constants<br/><i>module_caw, obs_config, paramRecs</i>"]
-        factory["FactoryClass"]
-    end
-
-    subgraph Tools ["tools/"]
-        spatial["spatial_utils<br/><i>CRS checks, nearest-row queries</i>"]
-    end
-
-    consumer -- "Operation call" --> client
-    client -. "Result objects<br/>(paths + metadata)" .-> consumer
-    client --- client_api
-    client --> ops
-    ops --> facade
-
-    facade -- "Request / Response" --> api
-    facade --- persist
-    facade --- dispatch
-
-    facade --> manage
-    facade --> vecop
-    facade --> renderer
-    facade --> compartment
-    facade --> configmod
-    facade --> spatial
-
-    manage --> compartment
-    manage --> constants
-    manage --> spatial
-    vecop --> compartment
-
-    compartment --> mesh
-    compartment --> obs
-    compartment --> extraction
-    compartment --> configmod
-    obs --> extraction
-    obs --> spatial
-    obs --> constants
-    extraction --> constants
-    extraction --> spatial
-    mesh --> constants
-
-    configmod --> factory
-    configmod --> constants
-
-    manage -- "reads" --> disk_in
-    renderer -- "writes" --> disk_out
-
-    classDef htclient fill:#ede7f6,stroke:#673AB7,stroke-width:2px
-    classDef htlayer fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px
-    classDef services fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
-    classDef domain fill:#fff3e0,stroke:#FF9800,stroke-width:2px
-    classDef config fill:#e8f4f8,stroke:#2196F3,stroke-width:2px
-    classDef tools fill:#fce4ec,stroke:#E91E63,stroke-width:1px
-    classDef external fill:#f5f5f5,stroke:#9E9E9E,stroke-width:1px,stroke-dasharray: 5 5
-
-    class client,ops,client_api htclient
-    class facade,api,dispatch,persist htlayer
-    class manage,vecop,renderer services
-    class compartment,mesh,obs,extraction,timeframe domain
-    class configmod,constants,factory config
-    class spatial tools
-    class consumer,disk_in,disk_out external
+flowchart LR
+    OUT[("CaWaQS outputs<br/>OUT_CAW directory<br/>+ GIS layers, observations")]
+    OUT ==>|"<b>1. Detect</b><br/>the project's settings"| CFG["settings<br/>(htas.toml)"]
+    CFG ==>|"<b>2. Build</b><br/>configure · load"| TWIN["<b>the twin</b><br/>one object per project,<br/>its compartments loaded"]
+    TWIN ==>|"<b>3. Ask</b><br/>budget · regime · map ·<br/>compare · criteria · mask"| RES["typed results"]
+    RES -.->|"<b>4. Files</b>"| FILES[("PNG · PDF · HTML<br/>GeoPackage · NumPy")]
 ```
 
-| Layer | Role |
-|-------|------|
-| **`ht/client/`** (deep purple) | Consumer-facing surface. `HydrologicalTwinClient` exposes one dialog-shaped method per operation; `operations` chains fetch → transform → render; `api_types` defines the user-facing Result dataclasses. |
-| **`ht/developer/`** (purple) | Developer-side facade. `HydrologicalTwin` owns the 8 canonical macro-verbs; `api_types` defines the Request/Response contract; `dispatch`/`handlers`/`accessors` carry the internal verbs. `persistence` (at `ht/` top level) adds pickle save/load. |
-| **`services/`** (green) | Stateless computation. `Manage` handles binary I/O and temporal aggregation, `Vec_Operator` groups vectorized operators (transform / extract / compare), `Renderer` produces plots. |
-| **`domain/`** (orange) | Domain entities. `Compartment` aggregates `Mesh`, `Observations`, and `Extraction`; `TimeFrame` carries the simulation date axis. |
-| **`config/`** (blue) | Configuration models (`ConfigGeometry`, `ConfigProject`), shared `constants` (CaWaQS module names, observation types), and a generic JSON-backed `FactoryClass`. |
-| **`tools/`** (pink) | Cross-cutting helpers — currently CRS validation and nearest-row spatial queries. |
+1. **Detect.** HTAS reads a CaWaQS `OUT_CAW` directory, and the QGIS
+   project beside it if there is one, and finds the compartments, the
+   simulated years, the layers and the observations.
+2. **Build.** These settings build the *twin*: one object that holds the
+   project's compartments (surface, river network, aquifer, ...), their
+   meshes and their observations. Simulation outputs are read once and
+   cached.
+3. **Ask.** Each operation acts on the twin's compartments and returns a
+   typed result: the data, the paths of the files it wrote, and what was
+   computed.
+4. **Files.** Figures, GeoPackages and arrays are written where the
+   operation was told to write them.
 
-**Reading the arrows.** Solid arrows are import / "calls into" relationships in
-the direction of dependency. The dashed arrow back to the consumer represents
-typed Response objects returned synchronously from the facade. The two
-cylinders (`disk_in`, `disk_out`) are the only filesystem boundaries — every
-other node is pure Python.
+HTAS can be driven at three levels:
 
-**What this reveals.**
-- External consumers only see `ht/client/`. The client is a thin
-  orchestration layer that calls into `ht/developer/`; nothing outside
-  `ht/` imports the developer facade directly. This two-step boundary is
-  what lets the client surface evolve independently (e.g. for future HTTP
-  transport) while the developer facade remains the stable computational
-  entry point.
-- The developer facade reaches every other package directly. This is the
-  property that lets the backend be lifted into a separate process or
-  server later.
-- `Renderer` is the only writer to `disk_out`. In the long-term server
-  scenario, this responsibility is expected to move to the frontend so the
-  backend returns data instead of files.
-- `domain/` depends only on `config/` and `tools/` — it never imports from
-  `services/` or `ht/`, which keeps the entity model reusable independently of
-  the facade.
+- **`htas`**, the command line: it detects a project's settings and
+  describes its twin.
+- **`HydrologicalTwinClient`**, in Python: one method per CaWaQS-ViZ
+  operation, such as `budget_barplot` or `compare_sim_obs`. This is what
+  CaWaQS-ViZ calls.
+- **`HydrologicalTwin`**, in Python, for developers: the building blocks
+  the operations are made of. There are nine verbs (`configure`, `load`,
+  `describe`, `fetch`, `mask`, `transform`, `assemble`, `render`, `export`),
+  and each one does one kind of work, chosen by a `kind`.
 
----
+## Use cases
 
-## Development Principles
+| Use case | Main entry points | Read |
+|---|---|---|
+| Find a project's compartments, years and layers from its CaWaQS outputs | `htas detect run`, `htas detect neighbors` | [API capabilities](docs/api_capabilities.md#command-line-l0) |
+| Build a twin and list what it holds | `htas describe`, `HydrologicalTwinClient.build` | [API examples](docs/api_examples.md) |
+| Plot the water budget of a compartment | `budget_barplot` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Plot the hydrological regime at observation points | `hydrological_regime` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Map the water balance or the aquifer budget | `spatial_map_watbal`, `spatial_map_aq` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Compare simulation with observations, and compute the criteria | `compare_sim_obs`, `statistical_criteria` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Select a domain by a polygon: its values and its river and aquifer boundaries, as GeoPackages | `mask_internal_values`, `mask_hyd_boundary`, `mask_aq_boundary` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Build your own workflow from the verbs | `fetch`, `mask`, `transform`, `assemble`, `render`, `export` | [API capabilities](docs/api_capabilities.md#developer-verbs-l2) |
+| Use GIS layers from files, without QGIS | `FileGeoProvider` | [API examples](docs/api_examples.md#file-based-provider-and-the-command-line) |
 
-* strict separation between computation and visualization layers,
-* reproducible backend behavior,
-* explicit configuration-driven workflows,
-* minimal coupling with external applications.
+## Installation
 
----
+HTAS requires [Git](https://git-scm.com) and [Pixi](https://pixi.sh), and
+runs only through Pixi:
 
-## Integration Workflow
+```bash
+git clone https://github.com/flipoyo/HydrologicalTwinAlphaSeries.git
+cd HydrologicalTwinAlphaSeries
+pixi install
+pixi run htas --version
+```
 
-When used within CaWaQS-ViZ:
+From there, Python scripts run with `pixi run python`, and the command line
+with `pixi run htas`.
 
-* this repository is mounted as an external dependency,
-* development can occur independently on both sides,
-* synchronization is handled through version control (submodule or equivalent mechanism).
+**Inside CaWaQS-ViZ.** CaWaQS-ViZ carries HTAS as a Git submodule, at
+`external/HydrologicalTwinAlphaSeries`, and installs it at the plugin's
+first launch. Nothing else is needed.
 
----
+## Getting help
+
+```bash
+pixi run htas --help            # every command
+pixi run htas detect --help     # one command: its subcommands, with an example each
+pixi run htas --version         # the version and the build
+```
+
+A mistyped command gets a "did you mean". `--json` prints a command's
+result as JSON, for scripts.
+
+## Version and stability
+
+HTAS follows [Semantic Versioning](https://semver.org) since `1.0.0`. The
+version is in `pixi.toml`, and every commit and release is named
+`HydrologicalTwinAlphaSeries-<version>`. The promise covers the public
+interface: the `HydrologicalTwinClient` methods, the `HydrologicalTwin`
+verbs and their kinds, the request and result types they exchange, and the
+`htas` commands, their options, their exit codes and their `--json` output.
+
+- **MAJOR** changes when that interface breaks: something is removed or
+  renamed, or a result changes meaning.
+- **MINOR** changes when something is added without breaking it: a method,
+  a command, a kind, an optional field.
+- **PATCH** changes for a fix that adds nothing.
+
+Anything else, every module below the facade included, may change at any
+version.
+
+*AlphaSeries* names the series, not instability. HTAS is the first public
+implementation of the HydrologicalTwin framework, the series in which its
+core structures are defined and validated on real cases. The White Book,
+in [docs/hydrological_twin](docs/hydrological_twin/), describes the whole
+framework and says which part of it HTAS implements.
+
+## Further reading
+
+- [docs/api_capabilities.md](docs/api_capabilities.md): everything HTAS can
+  do, at each of its three levels.
+- [docs/api_examples.md](docs/api_examples.md): short examples to copy.
+- [docs/domain_model.md](docs/domain_model.md): compartments, meshes,
+  observations, extraction points.
+- [docs/canonical_monolith.md](docs/canonical_monolith.md): why HTAS is one
+  object, and its rules.
+- [docs/hydrological_twin/](docs/hydrological_twin/): the user guide
+  (`HTAS_user_guide.tex`) and the HydrologicalTwin White Book (`MASTER.tex`),
+  in LaTeX. They are a repository of their own, fetched with the developer
+  install.
+- [docs/developer_guide.md](docs/developer_guide.md): the architecture and
+  the development workflow, for contributors.
 
 ## Authorship
 
-* Contact: hydrologicaltwin@minesparis.psl.eu
-* Project Manager: Nicolas Flipo
-* Main Developer: Simone Mazzarelli
-* Proto implementation (CaWaQS-ViZ backend): Lise-Marie Girod
+- Contact: hydrologicaltwin@minesparis.psl.eu
+- Project Manager: Nicolas Flipo
+- Main Developer: Simone Mazzarelli
+- Proto implementation (CaWaQS-ViZ backend): Lise-Marie Girod
 
 Contributors (ongoing):
 Tristan Bourgeois, Nicolas Gallois, Fulvia Baratelli, Pierre Guillou, Fabien Ors, Mariam Taki
 
----
+## License
 
-## Positioning
-
-HydrologicalTwinAlphaSeries is not a generic Python package.
-
-It is the computational foundation of a hydrological twin system, currently under active definition and validation.
-
----
-
-## Getting Started
-
-After cloning the repository, run:
-
-```bash
-pixi install
-pixi run dev-setup
-```
-
-`pixi install` resolves the environment. `pixi run dev-setup` activates the
-pre-commit git hook, which runs [ruff](https://docs.astral.sh/ruff/) on staged
-files before each commit, auto-fixing what it can. This catches the same
-linting issues enforced by CI, one step earlier.
-
-The `dev-setup` step is required only once per clone.
-
----
-
-## Developer Workflow
-
-CaWaQS-ViZ (frontend, GitLab) consumes HydrologicalTwinAlphaSeries (backend, GitHub)
-as a Git submodule. Three scenarios arise depending on where changes are needed.
-
-### 1. Frontend-only changes
-
-Create a branch on the GitLab repository (CaWaQS-ViZ) and work from there.
-The submodule is not affected.
-
-### 2. Backend-only changes (no CaWaQS-ViZ testing needed)
-
-Create a branch on the GitHub repository (HydrologicalTwinAlphaSeries) and work
-from there. The frontend does not need to be updated until the work is merged.
-
-### 3. Coordinated frontend + backend changes
-
-When both sides need to evolve together — or when backend changes must be
-continuously tested through CaWaQS-ViZ — open **two branches with the same name**:
-one on GitLab (frontend) and one on GitHub (backend).
-
-#### Initial setup (once per coordinated branch)
-
-1. **Switch the submodule to the target branch**:
-
-   ```bash
-   cd external/HydrologicalTwinAlphaSeries
-   git checkout <branch-name>
-   cd -
-   ```
-
-2. **After backend edits, commit and push inside the submodule first.**
-   The submodule is its own repository, so its history lives on GitHub
-   independently of the parent repo:
-
-   ```bash
-   cd external/HydrologicalTwinAlphaSeries
-   git add <files>
-   git commit -m "<backend commit message>"
-   git push origin <branch-name>
-   cd -
-   ```
-
-3. **Then commit the pointer update** in the parent repo so GitLab
-   records the new submodule state:
-
-   ```bash
-   git add external/HydrologicalTwinAlphaSeries
-   git commit -m "Track backend branch <branch-name>"
-   ```
-
-> **Tip:** commit the pointer update frequently. It keeps the frontend
-> aligned with the latest backend and avoids large, hard-to-debug jumps.
-
-#### Alternative: track the branch via `.gitmodules`
-
-Instead of running `cd … && git checkout` manually, you can declare the
-branch in `.gitmodules`. The `branch` field tells
-`git submodule update --remote` which remote branch to fetch the latest
-commit from:
-
-```ini
-[submodule "external/HydrologicalTwinAlphaSeries"]
-    branch = <branch-name>
-```
-
-Then, to pull new backend commits into the submodule:
-
-```bash
-git submodule update --remote external/HydrologicalTwinAlphaSeries
-git add external/HydrologicalTwinAlphaSeries
-git commit -m "Update submodule to latest <branch-name>"
-```
-
-Note that `git submodule update --remote` only moves the submodule's
-working tree to the latest commit of `<branch-name>`. You still need to
-`git add` + `git commit` in the parent repo to record the new pointer.
-
-When both branches are merged, reset the field back to `main`:
-
-
-### Key concepts
-
-| Term | Meaning |
-|---|---|
-| **Submodule pointer** | A commit hash stored in the parent repo. It pins the exact backend version used. It does not update automatically. |
-| `.gitmodules` `branch` field | Tells `git submodule update --remote` which remote branch to fetch. Has no effect without `--remote`. |
-| **Detached HEAD** | Normal state for a submodule — it checks out a specific commit, not a branch. |
+HTAS is distributed under the
+[Eclipse Public License 2.0](LICENSE.md) (EPL-2.0). See
+[NOTICE.md](NOTICE.md) for the notices that come with it. The
+[LICENSE.md](LICENSE.md) file is the binding text.

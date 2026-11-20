@@ -22,8 +22,8 @@ easy to audit.
 
 ## The data-leak risk of the mask operations
 
-The mask operations (`mask_watbal`, `mask_hyd_boundary`, `mask_aq_boundary`
-on `HydrologicalTwinClient`) take a user-supplied polygon and return the
+The mask operations (`mask_internal_values`, `mask_hyd_boundary`,
+`mask_aq_boundary` on `HydrologicalTwinClient`) take a user-supplied polygon and return the
 subset of server-resident data that intersects it. Spatial-map operations,
 by contrast, return whole-mesh **aggregated** values and carry no
 user-geometry-scoped raw data — they are not a leak surface.
@@ -42,16 +42,19 @@ rebuilt configuration JSONs for the selected area. This *is* a model that
 can be re-instantiated and run. **Must be in `services/private/`.**
 
 - *Today:* `services/private/submodel_export.py::save_area_values_npy` —
-  the `.npy` write of the per-cell value array for a masked WATBAL area,
-  invoked by `ht/client/operations.py::run_mask_watbal`. This is the
-  precursor of the full submodel-numpy + rebuilt-config writer.
+  the `.npy` write of the per-cell value array for a masked area. It is
+  reached only through `twin.export(kind="npy")`
+  (`ht/developer/dispatch.py::export`), which
+  `ht/client/operations_client.py::run_mask_internal_values` calls. This is
+  the precursor of the full submodel-numpy + rebuilt-config writer.
 - *Today:* `services/private/submodel_export.py::save_area_geopackage` —
   the transportable GeoPackage bundling masked-cells geometry, long-form
-  per-(cell, date, param) values, and run provenance for a masked WATBAL
-  area; also invoked by `ht/client/operations.py::run_mask_watbal` when
-  the `write_geopackage=True` opt-in flag is set. Same Tier-1 leak
-  surface as the `.npy` writer: user-supplied geometry combined with raw
-  per-cell numeric arrays on disk.
+  per-(cell, date, param) values, and run provenance for a masked area. It
+  is reached only through `twin.export(kind="geopackage")`, which
+  `run_mask_internal_values` and `run_mask_aq_boundary` call when the
+  `write_geopackage=True` opt-in flag is set. Same Tier-1 leak surface as
+  the `.npy` writer: user-supplied geometry combined with raw per-cell
+  numeric arrays on disk.
 
 ### Tier 2 — raw per-cell time series (CSV form)
 
@@ -109,10 +112,10 @@ The following code is leak-relevant but knowingly still public in the
 current change, to keep that change scoped to structure + Tier-1 only.
 A follow-up change should migrate it:
 
-- **Tier 2 — raw per-cell CSV writes.** `run_mask_watbal` writes a raw
-  per-cell WATBAL CSV alongside the `.npy`; `run_mask_hyd_boundary` and
+- **Tier 2 — raw per-cell CSV writes.** `run_mask_internal_values` writes
+  a raw per-cell CSV alongside each `.npy`; `run_mask_hyd_boundary` and
   `run_mask_aq_boundary` write raw boundary-flux CSVs. These remain in the
-  public `ht/client/operations.py`.
+  public `ht/client/operations_client.py`.
 - **Tier 3 — cell-ID builders.** `services/public/spatial.py::Spatial`
   (`getCatchmentCellsIds`, `getUpStreamSection`, `buildAqOutcropping`) and
   the `kind="catchment_cells"` / `kind="aquifer_outcropping_map"` dispatch
