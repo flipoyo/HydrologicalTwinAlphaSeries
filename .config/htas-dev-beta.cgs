@@ -49,7 +49,7 @@ repos = [
     { repository = "github:flipoyo/hydrological_twin", relative_path = "docs/hydrological_twin", fallback_branch = "main" },
 
     # the tool — read-only, pinned to its own alpha line
-    { repository = "github:flipoyo/ComplexGitSync", default_branch = "CGS-ALPHA", fallback_branch = "CGS-ALPHA", nested_config = "disabled", private = true },
+    { repository = "github:flipoyo/ComplexGitSync", fallback_branch = "CGS-ALPHA", nested_config = "disabled", private = true },
 
     { repository = "github:flipoyo/omniscience", relative_path = ".omniscience", fallback_branch = "main", private = true, writable = true, nested_config = "disabled" },
     { repository = "github:flipoyo/.memory", relative_path = ".cgitsync/.memory", fallback_branch = "main", private = true, writable = true, nested_config = "disabled" },
