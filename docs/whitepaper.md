@@ -6,7 +6,12 @@
 
 **What this document is.** Where the line between HTAS (the backend) and
 CaWaQS-ViZ (the QGIS plugin) runs, and how the two repositories fit
-together.
+together. HTAS is the first implementation of HydrologicalTwin, a systemic
+framework for the study of socio-hydrological systems that favours
+consistency across scales between interconnected social and hydrological
+compartments; it is the framework's scientific backend for the hydrological
+model CaWaQS. The Beta series, in development, adds the orchestration of
+hydrological models, with CaWaQS as its proof of concept.
 
 **Why it exists.** HTAS was cut out of CaWaQS-ViZ. Which side owns what,
 QGIS layers in particular, is the question every change across the two

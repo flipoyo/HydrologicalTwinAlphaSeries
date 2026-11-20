@@ -1,14 +1,23 @@
 # HydrologicalTwinAlphaSeries
 
-## The scientific backend of CaWaQS-ViZ
+## The first implementation of HydrologicalTwin: the scientific backend of CaWaQS-ViZ
 
-HydrologicalTwinAlphaSeries (HTAS) reads the outputs of a
-[CaWaQS](https://gitlab.com/cawaqs) simulation and turns them into the
-products a hydrologist works with: water budgets, hydrological regimes,
-spatial maps, simulation-versus-observation comparisons with their
-statistical criteria, and selections of a domain by a polygon (its internal
-values and its river and aquifer boundaries). It returns typed results and
-writes figures (PNG, PDF, HTML), GeoPackages and NumPy arrays.
+HydrologicalTwin is a systemic framework for the study of socio-hydrological
+systems. It favours consistency across scales between interconnected social
+and hydrological compartments. HydrologicalTwinAlphaSeries (HTAS) is its
+first implementation: a scientific backend for the hydrological model
+[CaWaQS](https://gitlab.com/cawaqs). The Beta series, now in development,
+adds the orchestration of hydrological models, with CaWaQS as its proof of
+concept; HTAS does not do this.
+
+HTAS covers the hydrological side. It reads the outputs of a CaWaQS
+simulation and turns them into the products a hydrologist works with: water
+budgets, hydrological regimes, spatial maps, simulation-versus-observation
+comparisons with their statistical criteria, and selections of a domain by a
+polygon (its internal values and its river and aquifer boundaries). Each
+operation acts on a CaWaQS compartment (aquifer, river network, surface
+water balance, non-saturated zone). It returns typed results and writes
+figures (PNG, PDF, HTML), GeoPackages and NumPy arrays.
 
 HTAS has no user interface and needs no QGIS. It is the backend that
 [CaWaQS-ViZ](https://gitlab.com/cawaqs/gviz/cawaqsviz), the QGIS plugin,
@@ -120,11 +129,10 @@ verbs and their kinds, the request and result types they exchange, and the
 Anything else, every module below the facade included, may change at any
 version.
 
-*AlphaSeries* names the series, not instability. HTAS is the first public
-implementation of the HydrologicalTwin framework, the series in which its
-core structures are defined and validated on real cases. The White Book,
-in [docs/hydrological_twin](docs/hydrological_twin/), describes the whole
-framework and says which part of it HTAS implements.
+*AlphaSeries* names the series, not instability: the series in which the
+framework's core structures are defined and validated on real cases. The
+White Book, in [docs/hydrological_twin](docs/hydrological_twin/), describes
+the whole framework and says which part of it HTAS implements.
 
 ## Further reading
 
