@@ -47,8 +47,8 @@ flowchart LR
 
 HTAS can be driven at three levels:
 
-- **`htas`**, the command line: it detects a project's settings and
-  describes its twin.
+- **`htas`**, the command line: it detects a project's settings, describes
+  its twin, and runs each CaWaQS-ViZ operation as a command.
 - **`HydrologicalTwinClient`**, in Python: one method per CaWaQS-ViZ
   operation, such as `budget_barplot` or `compare_sim_obs`. This is what
   CaWaQS-ViZ calls.
@@ -63,11 +63,11 @@ HTAS can be driven at three levels:
 |---|---|---|
 | Find a project's compartments, years and layers from its CaWaQS outputs | `htas detect run`, `htas detect neighbors` | [API capabilities](docs/api_capabilities.md#command-line-l0) |
 | Build a twin and list what it holds | `htas describe`, `HydrologicalTwinClient.build` | [API examples](docs/api_examples.md) |
-| Plot the water budget of a compartment | `budget_barplot` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
-| Plot the hydrological regime at observation points | `hydrological_regime` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
-| Map the water balance or the aquifer budget | `spatial_map_watbal`, `spatial_map_aq` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
-| Compare simulation with observations, and compute the criteria | `compare_sim_obs`, `statistical_criteria` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
-| Select a domain by a polygon: its values and its river and aquifer boundaries, as GeoPackages | `mask_internal_values`, `mask_hyd_boundary`, `mask_aq_boundary` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Plot the water budget of a compartment | `htas budget barplot`, `budget_barplot` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Plot the hydrological regime at observation points | `htas regime show`, `hydrological_regime` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Map the water balance or the aquifer budget | `htas map watbal`, `htas map aq`, `spatial_map_watbal`, `spatial_map_aq` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Compare simulation with observations, and compute the criteria | `htas compare simobs`, `htas criteria compute`, `compare_sim_obs`, `statistical_criteria` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
+| Select a domain by a polygon: its values and its river and aquifer boundaries, as GeoPackages | `htas mask internal`, `htas mask hyd`, `htas mask aq`, `mask_internal_values`, `mask_hyd_boundary`, `mask_aq_boundary` | [API capabilities](docs/api_capabilities.md#client-operations-l1) |
 | Build your own workflow from the verbs | `fetch`, `mask`, `transform`, `assemble`, `render`, `export` | [API capabilities](docs/api_capabilities.md#developer-verbs-l2) |
 | Use GIS layers from files, without QGIS | `FileGeoProvider` | [API examples](docs/api_examples.md#file-based-provider-and-the-command-line) |
 

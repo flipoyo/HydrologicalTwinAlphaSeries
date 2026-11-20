@@ -39,6 +39,8 @@ def _to_jsonable(value: Any) -> Any:
         return {str(k): _to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(v) for v in value]
+    if hasattr(value, "columns") and hasattr(value, "__len__"):  # a (Geo)DataFrame: its shape
+        return {"rows": len(value), "columns": [str(c) for c in value.columns]}
     if hasattr(value, "tolist"):
         return value.tolist()
     if hasattr(value, "value") and not isinstance(value, (str, int, float)):
@@ -46,7 +48,7 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
-def _emit(args: argparse.Namespace, payload: Any, report: list[str]) -> None:
+def emit(args: argparse.Namespace, payload: Any, report: list[str]) -> None:
     if args.json:
         print(json.dumps(_to_jsonable(payload), indent=2, default=str))
     else:
@@ -68,7 +70,7 @@ def _detect_run(args: argparse.Namespace) -> int:
             "regime": found["regime"],
         })
         report.append(f"wrote {args.write}")
-    _emit(args, {**found, "written": args.write}, report)
+    emit(args, {**found, "written": args.write}, report)
     return 0
 
 
@@ -82,7 +84,7 @@ def _detect_neighbors(args: argparse.Namespace) -> int:
             "project_name": found["project_name"],
         })
         report.append(f"wrote {args.write}")
-    _emit(args, {**found, "written": args.write}, report)
+    emit(args, {**found, "written": args.write}, report)
     return 0
 
 
@@ -93,7 +95,7 @@ def _describe(args: argparse.Namespace) -> int:
         f"  {c.id_compartment} {c.name}: {c.n_layers} layer(s), {c.n_cells} cells"
         for c in description.compartments
     ]
-    _emit(args, description, report)
+    emit(args, description, report)
     return 0
 
 

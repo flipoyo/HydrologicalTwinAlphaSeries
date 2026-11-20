@@ -13,21 +13,23 @@ import sys
 from collections.abc import Sequence
 
 from .. import __build__, __version__
-from . import suggest, twin
+from . import operations, suggest, twin
 from .exit_codes import EXIT_OK, EXIT_UNUSABLE, diagnostic, exit_code_for
 
-COMMANDS: dict[str, dict[str | None, str]] = {**twin.COMMANDS}
+COMMANDS: dict[str, dict[str | None, str]] = {**twin.COMMANDS, **operations.COMMANDS}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="htas",
         description="HydrologicalTwinAlphaSeries CLI. Start with 'detect run' on a CaWaQS "
-        "OUT_CAW directory, then 'describe'. Use 'htas <command> --help' for examples.",
+        "OUT_CAW directory, then 'describe', then run an operation. Use 'htas <command> --help' "
+        "for examples.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__} (build {__build__})")
     subparsers = parser.add_subparsers(dest="command")
     twin.register_parsers(subparsers)
+    operations.register_parsers(subparsers)
     return parser
 
 

@@ -109,7 +109,12 @@ def build_client(settings: dict[str, Any]) -> HydrologicalTwinClient:
         "regime": settings.get("regime", "Transient"),
     })
     return HydrologicalTwinClient.build(
-        {"project_name": settings.get("project_name", "")},
+        {
+            "project_name": settings.get("project_name", ""),
+            # every client operation reads the simulated years from the metadata
+            "start_year": settings["start_year"],
+            "end_year": settings["end_year"],
+        },
         configure_kwargs={
             "config_geom": config_geom,
             "config_proj": config_proj,

@@ -63,6 +63,38 @@ result; `--json` prints it as JSON.
 | `htas detect run OUT_CAW` | `detect_from_out_caw` | Detects the settings of a CaWaQS output directory; `--write FILE` saves them to a project file |
 | `htas detect neighbors QGIS_PROJECT` | `detect_project_neighbors` | Detects the files around a QGIS project; `--write FILE` saves them |
 | `htas describe` | `describe` | Builds the twin and lists its compartments |
+| `htas budget barplot` | `budget_barplot` | Water-balance budget bar plot and CSV |
+| `htas regime show` | `hydrological_regime` | Hydrological regime plot |
+| `htas map watbal` | `spatial_map_watbal` | Water-balance map; `--output GPKG` saves it |
+| `htas map aq` | `spatial_map_aq` | Aquifer map; `--output GPKG` saves it |
+| `htas compare simobs` | `compare_sim_obs` | Simulation against observations: `--mode pdf`, `interactive` or `csv` (`--csv-file` saves the table) |
+| `htas criteria compute` | `statistical_criteria` | Statistical criteria at observation points |
+| `htas mask internal` | `mask_internal_values` | Values of the cells inside `--polygon`, one `--spec` per series |
+| `htas mask hyd` | `mask_hyd_boundary` | River reaches on and inside the polygon's boundary, and their fluxes |
+| `htas mask aq` | `mask_aq_boundary` | Aquifer faces on the polygon's boundary, and their fluxes |
+
+The operation commands take the options of their client method, named after
+its keyword (`output_dir` is `--output-dir`); the required ones of the method
+are required, and one left out is not passed. `htas <command> <subcommand>
+--help` lists them, with an example.
+
+- A period is two dates, `--period 2000-01-01 2010-12-31`.
+- `--agg` takes `sum`, `mean`, `max`, `min` or a number (a quantile).
+- `htas mask` reads its polygon from a vector file (`--polygon FILE`, all its
+  features merged; `--polygon-crs` when the file has none) and the simulated
+  years from the project file or `--years`.
+- `htas mask internal` takes its series as `--spec COMPARTMENT:OUTTYPE:PARAM:UNIT`
+  (repeatable), or as `--specs-file`, a JSON list of 4-element lists; both
+  may be given.
+- `htas map aq` takes its `mode` as `--mode KEY=VALUE` (repeatable; values
+  are text, and `null` is `None`) or `--mode-file`, a JSON object. The mode
+  needs `kind` (`spatial_map` or `aquifer_outcropping_map`) and `label`, and
+  `layer` when `kind=spatial_map`; `layer=null` selects no resolution layer
+  for `aquifer_outcropping_map`.
+- Yes/no options come in pairs, `--weighted` and `--no-weighted`; left out,
+  the client's default applies.
+- `--json` prints the result as JSON; data frames appear as their row count
+  and columns.
 
 The twin comes from an `htas.toml` project file (`--project`, or the one in
 the current directory), and each option overrides one of its keys:

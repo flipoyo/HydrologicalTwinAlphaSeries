@@ -143,4 +143,6 @@ pixi run htas detect run /data/OUT_CAW --write htas.toml
 pixi run htas detect neighbors /data/project.qgz --write htas.toml
 pixi run htas describe --project htas.toml --layer AQ_LAYER=/data/gis/aq.gpkg
 pixi run htas describe --project htas.toml --json
+pixi run htas budget barplot --period 2000-01-01 2010-12-31 --frequency Y --agg sum --output-dir /data/out
+pixi run htas mask internal --polygon /data/area.gpkg --spec AQ:MB:recharge:m3/j --output-dir /data/out --temp-dir /data/tmp --area-name basin
 ```

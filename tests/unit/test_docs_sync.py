@@ -64,7 +64,7 @@ EXTERNAL_NAMES = {
     "Dict", "List", "Optional", "Any", "self", "cls", "kwargs", "args",
     "CaWaQS", "QGIS", "qgis", "PyQt", "PyQt5", "GitHub", "GitLab",
     "OUT_CAW", "CWAQS_FIXTURE_ROOT", "CGSHOME", "HEAD",
-    "SemVer", "MAJOR", "MINOR", "PATCH", "main", "branch", "gitmodules",
+    "SemVer", "MAJOR", "MINOR", "PATCH", "null", "true", "false", "main", "branch", "gitmodules",
 }
 
 # The HydrologicalTwin target's vocabulary, which HTAS does not implement.
