@@ -1,6 +1,6 @@
 [workspace]
 name = "HydrologicalTwinAlphaSeries"
-version = "1.2.0"
+version = "1.2.2"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
@@ -13,6 +13,7 @@ lint = "ruff check src tests"
 dev-setup = "pre-commit install"
 bump-version = "python .agent/.local/.dev/scripts/bump_version.py"
 bump-build = "python scripts/bump_build.py"
+check-build-version = "python scripts/check_build_version.py --range"
 
 [dependencies]
 python = "3.11.*"

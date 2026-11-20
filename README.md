@@ -1,4 +1,4 @@
-# HydrologicalTwinAlphaSeries
+# HydrologicalTwinAlphaSeries v1.2.2
 
 ## The first implementation of HydrologicalTwin: the scientific backend of CaWaQS-ViZ
 
